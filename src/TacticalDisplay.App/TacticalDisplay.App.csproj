@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\TacticalDisplay.Core\TacticalDisplay.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <KnownSimConnectDll Include="$(MSFS_SIMCONNECT_DLL)"
+                        Condition=" '$(MSFS_SIMCONNECT_DLL)' != '' and Exists('$(MSFS_SIMCONNECT_DLL)') " />
+    <KnownSimConnectDll Include="$(MSBuildProjectDirectory)\simconnect\SimConnect.dll"
+                        Condition=" Exists('$(MSBuildProjectDirectory)\simconnect\SimConnect.dll') " />
+  </ItemGroup>
+
+  <ItemGroup Condition="'@(KnownSimConnectDll)' != ''">
+    <Content Include="@(KnownSimConnectDll)">
+      <Link>SimConnect.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+  </PropertyGroup>
+</Project>

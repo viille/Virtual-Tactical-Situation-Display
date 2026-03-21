@@ -1,0 +1,160 @@
+<Window x:Class="TacticalDisplay.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:controls="clr-namespace:TacticalDisplay.App.Controls"
+        mc:Ignorable="d"
+        Title="VSOA Tactical Situation Display"
+        Width="1280"
+        Height="840"
+        MinWidth="980"
+        MinHeight="640"
+        Background="#071015">
+    <Window.InputBindings>
+        <KeyBinding Modifiers="Control"
+                    Key="H"
+                    Command="{Binding ToggleSettingsCommand}" />
+        <KeyBinding Modifiers="Control"
+                    Key="D"
+                    Command="{Binding ToggleDeclutterCommand}" />
+        <KeyBinding Modifiers="Control"
+                    Key="T"
+                    Command="{Binding ToggleAlwaysOnTopCommand}" />
+    </Window.InputBindings>
+    <Grid Margin="10">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="ScopeColumn" Width="3*" />
+            <ColumnDefinition x:Name="SettingsColumn" Width="1.2*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0"
+                Grid.Column="0"
+                Grid.ColumnSpan="2"
+                Padding="10"
+                Margin="0,0,0,10"
+                Background="#102028"
+                BorderBrush="#355A56"
+                BorderThickness="1">
+            <DockPanel LastChildFill="False">
+                <TextBlock Text="{Binding HeaderText}"
+                           FontFamily="Consolas"
+                           FontSize="18"
+                           Foreground="#9AFAD7"
+                           FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           Margin="0,0,12,0" />
+                <Button Content="{Binding SettingsToggleText}"
+                        Command="{Binding ToggleSettingsCommand}"
+                        Margin="0,0,8,0"
+                        Padding="10,4" />
+                <Button Content="{Binding TopMostToggleText}"
+                        Command="{Binding ToggleAlwaysOnTopCommand}"
+                        Padding="10,4" />
+            </DockPanel>
+        </Border>
+
+        <Border x:Name="ScopeBorder"
+                Grid.Row="1"
+                Grid.Column="0"
+                Margin="0,0,10,0"
+                Background="#071015"
+                BorderBrush="#355A56"
+                BorderThickness="1">
+            <Grid>
+                <controls:TacticalScopeControl x:Name="ScopeControl"
+                                               Picture="{Binding Picture}"
+                                               Settings="{Binding Settings}" />
+                <StackPanel Orientation="Vertical"
+                            HorizontalAlignment="Left"
+                            VerticalAlignment="Top"
+                            Margin="10">
+                    <Button Content="Range +"
+                            Width="88"
+                            Margin="0,0,0,6"
+                            Command="{Binding IncreaseRangeCommand}" />
+                    <Button Content="Range -"
+                            Width="88"
+                            Command="{Binding DecreaseRangeCommand}" />
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <Border x:Name="SettingsBorder"
+                Grid.Row="1"
+                Grid.Column="1"
+                Padding="10"
+                Background="#102028"
+                BorderBrush="#355A56"
+                BorderThickness="1">
+            <Border.Style>
+                <Style TargetType="Border">
+                    <Setter Property="Visibility" Value="Visible" />
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding ShowSettings}" Value="False">
+                            <Setter Property="Visibility" Value="Collapsed" />
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </Border.Style>
+            <StackPanel>
+                <TextBlock Text="Controls"
+                           FontFamily="Consolas"
+                           Foreground="#9AFAD7"
+                           FontSize="16"
+                           Margin="0,0,0,8" />
+
+                <UniformGrid Columns="2" Rows="3" Margin="0,0,0,8">
+                    <Button Content="N/HDG" Margin="4" Command="{Binding ToggleOrientationCommand}" />
+                    <Button Content="{Binding DeclutterToggleText}" Margin="4" Command="{Binding ToggleDeclutterCommand}" />
+                    <Button Content="Labels" Margin="4" Command="{Binding ToggleLabelsCommand}" />
+                    <Button Content="Trails" Margin="4" Command="{Binding ToggleTrailsCommand}" />
+                    <Button Content="{Binding DirectCallsignsToggleText}" Margin="4" Command="{Binding ToggleDirectCallsignsCommand}" />
+                </UniformGrid>
+
+                <TextBlock Text="Source" Foreground="#7CB9A9" Margin="0,8,0,0" />
+                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                    <ComboBox Width="150"
+                              ItemsSource="{Binding AvailableDataSources}"
+                              SelectedItem="{Binding SelectedDataSource}" />
+                    <Button Content="Apply Source"
+                            Margin="8,0,0,0"
+                            Command="{Binding ApplyDataSourceCommand}" />
+                </StackPanel>
+                <TextBlock Text="{Binding SourceText}" Foreground="#9AFAD7" Margin="0,4,0,0" />
+                <TextBlock Text="Filters" Foreground="#7CB9A9" Margin="0,8,0,0" />
+                <TextBlock Text="Range/Alt/Category filters from display.json" Foreground="#9AFAD7" TextWrapping="Wrap" Margin="0,2,0,0" />
+
+                <Button Content="Save Settings"
+                        Command="{Binding SaveSettingsCommand}"
+                        Margin="0,10,0,0" />
+            </StackPanel>
+        </Border>
+
+        <Border Grid.Row="2"
+                Grid.Column="0"
+                Grid.ColumnSpan="2"
+                Margin="0,10,0,0"
+                Padding="8"
+                Background="#102028"
+                BorderBrush="#355A56"
+                BorderThickness="1">
+            <DockPanel>
+                <TextBlock Text="{Binding ConnectionText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
+                <TextBlock Text="{Binding TrafficText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
+                <TextBlock Text="SimConnect:" Foreground="#7CB9A9" Margin="0,0,4,0" />
+                <TextBlock Text="{Binding SimConnectText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
+                <TextBlock Text="vPilot traffic seen:" Foreground="#7CB9A9" Margin="0,0,4,0" />
+                <TextBlock Text="{Binding VPilotText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
+                <TextBlock Text="Refresh:" Foreground="#7CB9A9" Margin="0,0,4,0" />
+                <TextBlock Text="{Binding RefreshRateText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
+                <TextBlock Text="{Binding SourceText}" Foreground="#9AFAD7" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

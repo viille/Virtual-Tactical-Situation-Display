@@ -1,0 +1,18 @@
+{
+  "DataSourceMode": "Demo",
+  "RangeScaleOptionsNm": [10, 20, 40, 80, 120],
+  "SelectedRangeNm": 40,
+  "OrientationMode": 1,
+  "ShowRangeRings": true,
+  "Declutter": false,
+  "TrailsEnabled": true,
+  "LabelMode": 1,
+  "RangeFilter": 0,
+  "AltitudeFilter": 0,
+  "CategoryFilter": 0,
+  "TrailLengthSamples": 15,
+  "PollRateHz": 8,
+  "RenderRateFps": 24,
+  "StaleSeconds": 4,
+  "RemoveAfterSeconds": 12
+}

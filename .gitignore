@@ -1,0 +1,31 @@
+# Build output
+bin/
+obj/
+
+# Local publish/output folders
+publish/
+artifacts/
+
+# Local .NET SDK/cache folder
+.dotnet/
+
+# Visual Studio / Rider / VS Code
+.vs/
+.idea/
+.vscode/
+
+# User-specific files
+*.user
+*.rsuser
+*.suo
+
+# Logs and temp files
+*.log
+*.tmp
+*.temp
+
+# Test and coverage output
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
