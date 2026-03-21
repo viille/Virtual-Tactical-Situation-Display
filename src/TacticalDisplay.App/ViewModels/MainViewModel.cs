@@ -24,7 +24,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private string _simConnectText = "N/A";
     private string _trafficText = "0 contacts";
     private string _sourceText = string.Empty;
-    private string _vPilotText = "No";
     private bool _simConnected;
     private int _refreshCounter;
     private DateTimeOffset _rateWindowStart = DateTimeOffset.UtcNow;
@@ -53,7 +52,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ToggleDeclutterCommand = new RelayCommand(ToggleDeclutter);
         ToggleLabelsCommand = new RelayCommand(ToggleLabels);
         ToggleTrailsCommand = new RelayCommand(ToggleTrails);
-        ToggleDirectCallsignsCommand = new RelayCommand(ToggleDirectCallsigns);
         SaveSettingsCommand = new RelayCommand(() => _configStore.SaveDisplaySettings(Settings));
         ApplyDataSourceCommand = new RelayCommand(() => _ = SwitchDataSourceAsync(SelectedDataSource, forceRestart: false));
         ToggleSettingsCommand = new RelayCommand(ToggleSettingsPanel);
@@ -110,12 +108,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         private set => SetField(ref _sourceText, value);
     }
 
-    public string VPilotText
-    {
-        get => _vPilotText;
-        private set => SetField(ref _vPilotText, value);
-    }
-
     public string RefreshRateText
     {
         get => _refreshRateText;
@@ -157,7 +149,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string SettingsToggleText => ShowSettings ? "Hide Settings" : "Show Settings";
     public string TopMostToggleText => IsAlwaysOnTop ? "Unpin Window" : "Pin On Top";
     public string DeclutterToggleText => Settings.Declutter ? "Declutter ON" : "Declutter OFF";
-    public string DirectCallsignsToggleText => Settings.ShowDirectCallsigns ? "Callsigns ON" : "Callsigns OFF";
 
     public ObservableCollection<int> RangeOptions { get; } = [10, 20, 40, 80, 120];
     public ObservableCollection<string> AvailableDataSources { get; } = ["Demo", "SimConnect"];
@@ -167,7 +158,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ToggleDeclutterCommand { get; }
     public RelayCommand ToggleLabelsCommand { get; }
     public RelayCommand ToggleTrailsCommand { get; }
-    public RelayCommand ToggleDirectCallsignsCommand { get; }
     public RelayCommand SaveSettingsCommand { get; }
     public RelayCommand ApplyDataSourceCommand { get; }
     public RelayCommand ToggleSettingsCommand { get; }
@@ -233,12 +223,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private void ToggleTrails() => Settings.TrailsEnabled = !Settings.TrailsEnabled;
 
-    private void ToggleDirectCallsigns()
-    {
-        Settings.ShowDirectCallsigns = !Settings.ShowDirectCallsigns;
-        Raise(nameof(DirectCallsignsToggleText));
-    }
-    
     private void ToggleSettingsPanel() => ShowSettings = !ShowSettings;
 
     private void ToggleAlwaysOnTop() => IsAlwaysOnTop = !IsAlwaysOnTop;
@@ -311,7 +295,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _repository = new TrafficRepository();
         Picture = null;
         TrafficText = "0 contacts";
-        VPilotText = "No";
         _refreshCounter = 0;
         _rateWindowStart = DateTimeOffset.UtcNow;
         RefreshRateText = "0.0 Hz";
@@ -445,7 +428,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
         _repository.ApplySnapshot(snapshot, _classification, Settings);
         TrafficText = $"{_repository.Count} contacts";
-        VPilotText = snapshot.Contacts.Any(c => c.Callsign?.Length > 2) ? "Yes" : "No";
         _refreshCounter++;
     }
 

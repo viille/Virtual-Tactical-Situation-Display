@@ -31,9 +31,7 @@ public sealed class TacticalComputationEngine
             return null;
         }
 
-        var label = settings.ShowDirectCallsigns
-            ? contact.Callsign ?? contact.Id
-            : contact.Id;
+        var label = contact.Id;
         var history = settings.TrailsEnabled ? tracked.History : [];
         return new ComputedTarget(
             contact.Id,

@@ -1,0 +1,87 @@
+name: Create Release Tag
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: Version bump type
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      target_branch:
+        description: Branch to tag
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  create-tag:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_branch }}
+          fetch-depth: 0
+
+      - name: Configure Git
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Calculate Next Version
+        id: version
+        shell: pwsh
+        run: |
+          $latestTag = git tag --list "v*" --sort=-v:refname | Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($latestTag)) {
+            $major = 0
+            $minor = 1
+            $patch = 0
+          }
+          else {
+            $latestVersion = [Version]($latestTag.TrimStart('v', 'V'))
+            $major = $latestVersion.Major
+            $minor = $latestVersion.Minor
+            $patch = $latestVersion.Build
+          }
+
+          switch ("${{ inputs.bump_type }}") {
+            "major" {
+              $major += 1
+              $minor = 0
+              $patch = 0
+            }
+            "minor" {
+              $minor += 1
+              $patch = 0
+            }
+            default {
+              $patch += 1
+            }
+          }
+
+          $version = "{0}.{1}.{2}" -f $major, $minor, $patch
+          $tag = "v$version"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+
+      - name: Create And Push Tag
+        shell: pwsh
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          if (git rev-parse $tag 2>$null) {
+            throw "Tag $tag already exists."
+          }
+
+          git tag $tag
+          git push origin $tag

@@ -3,6 +3,7 @@ using System.ComponentModel;
 using System.Windows.Controls;
 using System.Windows.Input;
 using TacticalDisplay.App.Controls;
+using TacticalDisplay.App.Services;
 using TacticalDisplay.App.ViewModels;
 
 namespace TacticalDisplay.App;
@@ -10,6 +11,8 @@ namespace TacticalDisplay.App;
 public partial class MainWindow : Window
 {
     private readonly MainViewModel _viewModel = new();
+    private readonly UpdateCheckService _updateCheckService = new();
+    private int _updateCheckStarted;
 
     public MainWindow()
     {
@@ -19,7 +22,45 @@ public partial class MainWindow : Window
         ScopeControl.TargetClicked += OnScopeTargetClicked;
         Topmost = _viewModel.IsAlwaysOnTop;
         ApplyLayoutState();
+        Loaded += OnLoaded;
         Closing += async (_, _) => await _viewModel.DisposeAsync();
+    }
+
+    private async void OnLoaded(object sender, RoutedEventArgs e)
+    {
+        if (Interlocked.Exchange(ref _updateCheckStarted, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            var result = await _updateCheckService.CheckForUpdateAsync(CancellationToken.None);
+            if (result is null)
+            {
+                return;
+            }
+
+            var message =
+                $"A new version is available.\n\n" +
+                $"Current: v{result.CurrentVersion}\n" +
+                $"Latest: {result.LatestTag}\n\n" +
+                "Open GitHub Releases page?";
+
+            if (MessageBox.Show(
+                    this,
+                    message,
+                    "Update Available",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Information) == MessageBoxResult.Yes)
+            {
+                UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
+            }
+        }
+        catch
+        {
+            // Silent failure: update checks should never block app startup.
+        }
     }
 
     private void OnViewModelPropertyChanged(object? sender, PropertyChangedEventArgs e)

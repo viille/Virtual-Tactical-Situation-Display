@@ -11,7 +11,6 @@ public sealed class TacticalDisplaySettings
     public bool ShowRangeRings { get; set; } = true;
     public bool Declutter { get; set; }
     public bool TrailsEnabled { get; set; } = true;
-    public bool ShowDirectCallsigns { get; set; } = true;
     public LabelMode LabelMode { get; set; } = LabelMode.Minimal;
     public RangeFilterMode RangeFilter { get; set; } = RangeFilterMode.All;
     public AltitudeFilterMode AltitudeFilter { get; set; } = AltitudeFilterMode.All;
@@ -33,7 +32,6 @@ public sealed class ClassificationConfig
 public sealed class RuntimeStatus
 {
     public bool SimConnected { get; set; }
-    public bool VatsimLikeTrafficSeen { get; set; }
     public int TrafficCount { get; set; }
     public double ActualPollRateHz { get; set; }
 }

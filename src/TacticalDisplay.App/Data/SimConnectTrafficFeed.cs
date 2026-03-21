@@ -154,7 +154,6 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE ALTITUDE", "feet", (uint)SimConnectDataType.Float64, 0, 13);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE HEADING DEGREES TRUE", "degrees", (uint)SimConnectDataType.Float64, 0, 14);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "GROUND VELOCITY", "knots", (uint)SimConnectDataType.Float64, 0, 15);
-        api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "ATC ID", "NULL", (uint)SimConnectDataType.String32, 0, 16);
     }
 
     private void DrainDispatch(NativeSimConnectApi api, IntPtr simHandle)
@@ -243,7 +242,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 _ghostHitCounts.Remove(recv.dwObjectID);
                 _latestTraffic[recv.dwObjectID] = new TrafficContactState(
                     recv.dwObjectID.ToString(),
-                    NormalizeCallsign(trafficRaw.Callsign),
+                    null,
                     trafficRaw.Latitude,
                     trafficRaw.Longitude,
                     trafficRaw.AltitudeFt,
@@ -318,16 +317,6 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         if (d > 180.0) d -= 360.0;
         if (d < -180.0) d += 360.0;
         return d;
-    }
-
-    private static string? NormalizeCallsign(string? callsign)
-    {
-        if (string.IsNullOrWhiteSpace(callsign))
-        {
-            return null;
-        }
-
-        return callsign.Trim();
     }
 
     private string? ResolveNativeDllPath()

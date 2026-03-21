@@ -109,12 +109,11 @@
                            FontSize="16"
                            Margin="0,0,0,8" />
 
-                <UniformGrid Columns="2" Rows="3" Margin="0,0,0,8">
+                <UniformGrid Columns="2" Rows="2" Margin="0,0,0,8">
                     <Button Content="N/HDG" Margin="4" Command="{Binding ToggleOrientationCommand}" />
                     <Button Content="{Binding DeclutterToggleText}" Margin="4" Command="{Binding ToggleDeclutterCommand}" />
                     <Button Content="Labels" Margin="4" Command="{Binding ToggleLabelsCommand}" />
                     <Button Content="Trails" Margin="4" Command="{Binding ToggleTrailsCommand}" />
-                    <Button Content="{Binding DirectCallsignsToggleText}" Margin="4" Command="{Binding ToggleDirectCallsignsCommand}" />
                 </UniformGrid>
 
                 <TextBlock Text="Source" Foreground="#7CB9A9" Margin="0,8,0,0" />
@@ -149,8 +148,6 @@
                 <TextBlock Text="{Binding TrafficText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
                 <TextBlock Text="SimConnect:" Foreground="#7CB9A9" Margin="0,0,4,0" />
                 <TextBlock Text="{Binding SimConnectText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
-                <TextBlock Text="vPilot traffic seen:" Foreground="#7CB9A9" Margin="0,0,4,0" />
-                <TextBlock Text="{Binding VPilotText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
                 <TextBlock Text="Refresh:" Foreground="#7CB9A9" Margin="0,0,4,0" />
                 <TextBlock Text="{Binding RefreshRateText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
                 <TextBlock Text="{Binding SourceText}" Foreground="#9AFAD7" />

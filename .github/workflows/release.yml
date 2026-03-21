@@ -1,7 +1,6 @@
 name: Build And Release
 
 on:
-  workflow_dispatch:
   push:
     tags:
       - "v*"
@@ -10,12 +9,28 @@ permissions:
   contents: write
 
 jobs:
+  resolve-version:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Resolve Version From Tag
+        id: version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart('v', 'V')
+          "version=$version" >> $env:GITHUB_OUTPUT
+
   build-release:
+    needs: resolve-version
     runs-on: windows-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup .NET 8
         uses: actions/setup-dotnet@v4
@@ -26,16 +41,19 @@ jobs:
         run: dotnet restore tactical-situation-display.sln
 
       - name: Publish App
-        run: dotnet publish src/TacticalDisplay.App/TacticalDisplay.App.csproj -c Release -r win-x64 -o out/app
+        run: dotnet publish src/TacticalDisplay.App/TacticalDisplay.App.csproj -c Release -r win-x64 -o out/app -p:Version=${{ needs.resolve-version.outputs.version }}
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: TacticalDisplay.App-win-x64-exe
+          name: TacticalDisplay.App-${{ github.ref_name }}-win-x64-exe
           path: out/app/TacticalDisplay.App.exe
 
-      - name: Publish GitHub Release Asset
-        if: startsWith(github.ref, 'refs/tags/')
+      - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
           files: out/app/TacticalDisplay.App.exe
