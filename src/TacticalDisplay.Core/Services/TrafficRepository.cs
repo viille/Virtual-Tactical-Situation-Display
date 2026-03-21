@@ -6,6 +6,7 @@ namespace TacticalDisplay.Core.Services;
 public sealed class TrafficRepository
 {
     private readonly Dictionary<string, TrackedContact> _contacts = new(StringComparer.OrdinalIgnoreCase);
+    private OwnshipState? _previousOwnship;
     private OwnshipState? _ownship;
 
     public OwnshipState? Ownship => _ownship;
@@ -15,6 +16,7 @@ public sealed class TrafficRepository
         ClassificationConfig classification,
         TacticalDisplaySettings settings)
     {
+        _previousOwnship = _ownship;
         _ownship = snapshot.Ownship;
         foreach (var contact in snapshot.Contacts)
         {
@@ -58,7 +60,7 @@ public sealed class TrafficRepository
 
         foreach (var contact in _contacts.Values)
         {
-            var computed = engine.Compute(_ownship, contact, settings);
+            var computed = engine.Compute(_previousOwnship, _ownship, contact, settings);
             if (computed is null)
             {
                 continue;
@@ -113,6 +115,7 @@ public sealed class TrafficRepository
         public bool IsStale { get; set; }
         public DateTimeOffset LastUpdate { get; private set; }
         public List<PositionHistoryPoint> History { get; }
+        public double? LastKnownClosureKt { get; private set; }
 
         public void Update(TrafficContactState update, int trailLength, TargetCategory category)
         {
@@ -126,24 +129,26 @@ public sealed class TrafficRepository
             }
         }
 
-        public double? EstimateClosureKt(OwnshipState ownship)
+        public double? EstimateClosureKt(OwnshipState? previousOwnship, OwnshipState ownship)
         {
-            if (History.Count < 2)
+            if (previousOwnship is null || History.Count < 2)
             {
-                return null;
+                return LastKnownClosureKt;
             }
 
             var prev = History[^2];
             var curr = History[^1];
-            var ownToPrev = GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, prev.LatitudeDeg, prev.LongitudeDeg);
+            var ownToPrev = GeoMath.DistanceNm(previousOwnship.LatitudeDeg, previousOwnship.LongitudeDeg, prev.LatitudeDeg, prev.LongitudeDeg);
             var ownToCurr = GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, curr.LatitudeDeg, curr.LongitudeDeg);
             var dtHours = (curr.Timestamp - prev.Timestamp).TotalHours;
             if (dtHours <= 0)
             {
-                return null;
+                return LastKnownClosureKt;
             }
 
-            return (ownToPrev - ownToCurr) / dtHours;
+            var closureKt = (ownToPrev - ownToCurr) / dtHours;
+            LastKnownClosureKt = closureKt;
+            return closureKt;
         }
     }
 }

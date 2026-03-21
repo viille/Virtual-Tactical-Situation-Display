@@ -51,7 +51,7 @@ public sealed class TacticalScopeControl : FrameworkElement
 
         var center = new Point(RenderSize.Width / 2.0, RenderSize.Height / 2.0);
         var radius = System.Math.Min(RenderSize.Width, RenderSize.Height) * 0.45;
-        DrawRings(dc, center, radius);
+        DrawRings(dc, center, radius, Picture.Ownship.HeadingDeg);
         DrawOwnship(dc, center, radius, Picture.Ownship.HeadingDeg);
         DrawTargets(dc, center, radius);
     }
@@ -67,7 +67,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         dc.DrawRectangle(brush, null, rect);
     }
 
-    private void DrawRings(DrawingContext dc, Point center, double radius)
+    private void DrawRings(DrawingContext dc, Point center, double radius, double ownHeadingDeg)
     {
         if (Settings is null || !Settings.ShowRangeRings)
         {
@@ -82,6 +82,40 @@ public sealed class TacticalScopeControl : FrameworkElement
             dc.DrawEllipse(null, pen, center, ringRadius, ringRadius);
             var label = $"{Settings.SelectedRangeNm * i / ringCount:0} NM";
             DrawText(dc, label, center.X + 5, center.Y - ringRadius - 16, Colors.LightGreen, 11);
+        }
+
+        DrawCompassRose(dc, center, radius, ownHeadingDeg);
+    }
+
+    private void DrawCompassRose(DrawingContext dc, Point center, double radius, double ownHeadingDeg)
+    {
+        if (Settings is null)
+        {
+            return;
+        }
+
+        var directions = new (string label, double bearingDeg)[]
+        {
+            ("360", 0),
+            ("045", 45),
+            ("090", 90),
+            ("135", 135),
+            ("180", 180),
+            ("225", 225),
+            ("270", 270),
+            ("315", 315)
+        };
+
+        foreach (var direction in directions)
+        {
+            var displayBearing = Settings.OrientationMode == ScopeOrientationMode.HeadingUp
+                ? GeoMath.NormalizeDegrees(direction.bearingDeg - ownHeadingDeg)
+                : direction.bearingDeg;
+            var rad = displayBearing * System.Math.PI / 180.0;
+            var textRadius = radius - 18;
+            var x = center.X + textRadius * System.Math.Sin(rad);
+            var y = center.Y - textRadius * System.Math.Cos(rad);
+            DrawCenteredText(dc, direction.label, x, y, Colors.LightSeaGreen, 12, FontWeights.SemiBold);
         }
     }
 
@@ -293,15 +327,31 @@ public sealed class TacticalScopeControl : FrameworkElement
 
     private static void DrawText(DrawingContext dc, string text, double x, double y, Color color, double size)
     {
-        var formatted = new FormattedText(
+        DrawText(dc, text, x, y, color, size, FontWeights.Normal);
+    }
+
+    private static void DrawCenteredText(DrawingContext dc, string text, double x, double y, Color color, double size, FontWeight weight)
+    {
+        var formatted = CreateFormattedText(text, color, size, weight);
+        dc.DrawText(formatted, new Point(x - formatted.Width / 2.0, y - formatted.Height / 2.0));
+    }
+
+    private static void DrawText(DrawingContext dc, string text, double x, double y, Color color, double size, FontWeight weight)
+    {
+        var formatted = CreateFormattedText(text, color, size, weight);
+        dc.DrawText(formatted, new Point(x, y));
+    }
+
+    private static FormattedText CreateFormattedText(string text, Color color, double size, FontWeight weight)
+    {
+        return new FormattedText(
             text,
             CultureInfo.InvariantCulture,
             FlowDirection.LeftToRight,
-            new Typeface("Consolas"),
+            new Typeface(new FontFamily("Consolas"), FontStyles.Normal, weight, FontStretches.Normal),
             size,
             new SolidColorBrush(color),
             1.0);
-        dc.DrawText(formatted, new Point(x, y));
     }
 
     protected override void OnMouseDown(MouseButtonEventArgs e)

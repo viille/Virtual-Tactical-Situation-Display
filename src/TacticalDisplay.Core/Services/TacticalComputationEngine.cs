@@ -6,6 +6,7 @@ namespace TacticalDisplay.Core.Services;
 public sealed class TacticalComputationEngine
 {
     public ComputedTarget? Compute(
+        OwnshipState? previousOwnship,
         OwnshipState ownship,
         TrafficRepository.TrackedContact tracked,
         TacticalDisplaySettings settings)
@@ -44,7 +45,7 @@ public sealed class TacticalComputationEngine
             relAltFt,
             contact.HeadingDeg,
             contact.SpeedKt,
-            tracked.EstimateClosureKt(ownship),
+            tracked.EstimateClosureKt(previousOwnship, ownship),
             history,
             contact.Timestamp);
     }
