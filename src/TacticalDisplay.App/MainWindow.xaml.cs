@@ -10,9 +10,14 @@ namespace TacticalDisplay.App;
 
 public partial class MainWindow : Window
 {
+    private const double MinWidthWithSettings = 980;
+    private const double MinWidthWithoutSettings = 640;
+    private const double ScopeSettingsGapWidth = 10;
+
     private readonly MainViewModel _viewModel = new();
     private readonly UpdateCheckService _updateCheckService = new();
     private int _updateCheckStarted;
+    private double _cachedSettingsPanelWidth = 320;
 
     public MainWindow()
     {
@@ -21,7 +26,7 @@ public partial class MainWindow : Window
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         ScopeControl.TargetClicked += OnScopeTargetClicked;
         Topmost = _viewModel.IsAlwaysOnTop;
-        ApplyLayoutState();
+        ApplyLayoutState(resizeWindow: false);
         Loaded += OnLoaded;
         Closing += async (_, _) => await _viewModel.DisposeAsync();
     }
@@ -71,16 +76,41 @@ public partial class MainWindow : Window
         }
         else if (e.PropertyName == nameof(MainViewModel.ShowSettings))
         {
-            ApplyLayoutState();
+            ApplyLayoutState(resizeWindow: true);
         }
     }
 
-    private void ApplyLayoutState()
+    private void ApplyLayoutState(bool resizeWindow)
     {
         var showSettings = _viewModel.ShowSettings;
+        var measuredPanelWidth = SettingsBorder.ActualWidth;
+        if (measuredPanelWidth > 1)
+        {
+            _cachedSettingsPanelWidth = measuredPanelWidth;
+        }
+
+        if (resizeWindow)
+        {
+            var widthDelta = _cachedSettingsPanelWidth + ScopeSettingsGapWidth;
+            if (showSettings)
+            {
+                MinWidth = MinWidthWithSettings;
+                Width = System.Math.Max(Width + widthDelta, MinWidthWithSettings);
+            }
+            else
+            {
+                MinWidth = MinWidthWithoutSettings;
+                Width = System.Math.Max(Width - widthDelta, MinWidthWithoutSettings);
+            }
+        }
+        else
+        {
+            MinWidth = showSettings ? MinWidthWithSettings : MinWidthWithoutSettings;
+        }
+
         SettingsColumn.Width = showSettings ? new GridLength(1.2, GridUnitType.Star) : new GridLength(0);
         ScopeColumn.Width = showSettings ? new GridLength(3, GridUnitType.Star) : new GridLength(1, GridUnitType.Star);
-        ScopeBorder.Margin = showSettings ? new Thickness(0, 0, 10, 0) : new Thickness(0);
+        ScopeBorder.Margin = showSettings ? new Thickness(0, 0, ScopeSettingsGapWidth, 0) : new Thickness(0);
     }
 
     private void OnScopeTargetClicked(object? sender, ScopeTargetClickEventArgs e)
