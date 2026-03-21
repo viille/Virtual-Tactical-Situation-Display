@@ -1,8 +1,9 @@
-# Tactical Situation Display
+# Virtual Tactical Situation Display
 
-Tactical Situation Display is a Windows application that shows the air picture around your aircraft in a clear 2D view.
+Virtual Tactical Situation Display is a Windows application that shows the air picture around your aircraft in a clear 2D view.
 
-This application is intended for simulator use only. It is not intended for real-world aviation, air traffic control, or operational decision-making.
+**This application is intended for simulator use only.
+It is not intended for real-world aviation, air traffic control, or operational decision-making.**
 
 ![Tactical Situation Display screenshot](TacticalDisplay.App.png)
 
@@ -25,9 +26,6 @@ The application is designed to present a tactical air picture and can show, for 
 - a Windows PC
 - Microsoft Flight Simulator, if you want to use live MSFS data
 - X-Plane 10, 11, or 12 with XPUIPC installed, if you want to use live X-Plane data
-
-You can also use the application without a simulator connection in demo mode.
-The application is intended for simulator use only even when using live simulator data.
 
 ## Download And Launch
 
@@ -65,23 +63,20 @@ You can change the mode from the settings panel:
 
 SimConnect is bundled with the application. The user does not need to install or copy `SimConnect.dll` separately.
 
-The SimConnect integration is intended for simulator use only.
-
 If Microsoft Flight Simulator is running and the application is set to `MSFS`, the connection should work normally without extra setup.
 
 If the connection cannot be established, the application may ask you to select the Microsoft Flight Simulator `exe` file or a SimConnect library. This is intended only for troubleshooting.
 
 ## X-Plane Support
 
-X-Plane support uses XPUIPC. The FSHub XPUIPC guide says the plugin supports X-Plane 10, 11, and 12 and should be installed into `X-Plane\Resources\plugins\XPUIPC`.
+X-Plane support uses XPUIPC.
 
 Basic setup:
 
-1. Install X-Plane.
-2. Download XPUIPC from [schiratti.com/xpuipc.html](http://www.schiratti.com/xpuipc.html).
-3. Extract the `XPUIPC` folder into `X-Plane\Resources\plugins`.
-4. Start X-Plane and load into a flight.
-5. In Tactical Situation Display, select `Source = XPlane` and click `Apply Source`.
+1. Download XPUIPC from [schiratti.com/xpuipc.html](http://www.schiratti.com/xpuipc.html).
+2. Extract the `XPUIPC` folder into `X-Plane\Resources\plugins`.
+3. Start X-Plane and load into a flight.
+4. In Tactical Situation Display, select `Source = XPlane` and click `Apply Source`.
 
 If X-Plane is already running with XPUIPC installed, the application should connect automatically.
 
@@ -114,8 +109,8 @@ Labels have three modes:
 
 You can edit a single target directly in the display:
 
-- left mouse button on a target changes the target affiliation: normal -> friendly -> enemy -> normal
-- right mouse button on a target opens target renaming
+- **left mouse button** on a target changes the target affiliation: normal -> friendly -> enemy -> normal
+- **right mouse button** on a target opens target renaming
 
 These changes are saved to the application config files.
 
@@ -164,11 +159,11 @@ First check:
 - you are using the latest published version
 
 If the connection still does not work:
-1. close Tactical Situation Display
+1. close Virtual Tactical Situation Display
 2. make sure the simulator is running
 3. start Tactical Situation Display again
 
 ## Intended Use
 
 This application is intended for users who want a quick, readable tactical picture around their own aircraft without heavy setup or separate SimConnect configuration.
-The application is intended for simulator use only and not for real-world aviation use.
+**The application is intended for simulator use only and not for real-world aviation use.**
