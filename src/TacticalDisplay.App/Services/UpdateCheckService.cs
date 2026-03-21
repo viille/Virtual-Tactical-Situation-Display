@@ -7,8 +7,8 @@ namespace TacticalDisplay.App.Services;
 
 public sealed class UpdateCheckService
 {
-    private static readonly Uri LatestReleaseApiUri = new("https://api.github.com/repos/viille/vFiAF-Tactical-Situation-Display/releases/latest");
-    private static readonly Uri ReleasesPageUri = new("https://github.com/viille/vFiAF-Tactical-Situation-Display/releases/latest");
+    private static readonly Uri LatestReleaseApiUri = new("https://api.github.com/repos/viille/Virtual-Tactical-Situation-Display/releases/latest");
+    private static readonly Uri ReleasesPageUri = new("https://github.com/viille/Virtual-Tactical-Situation-Display/releases/latest");
 
     public async Task<UpdateCheckResult?> CheckForUpdateAsync(CancellationToken cancellationToken)
     {
@@ -22,7 +22,7 @@ public sealed class UpdateCheckService
         {
             Timeout = TimeSpan.FromSeconds(5)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("VSOA-Tactical-Display/0.1.0");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display/0.1.0");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
 
         using var response = await client.GetAsync(LatestReleaseApiUri, cancellationToken);

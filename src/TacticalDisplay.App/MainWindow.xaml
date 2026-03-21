@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:controls="clr-namespace:TacticalDisplay.App.Controls"
         mc:Ignorable="d"
-        Title="VSOA Tactical Situation Display"
+        Title="Tactical Situation Display"
         Width="1280"
         Height="840"
         MinWidth="980"
@@ -47,6 +47,13 @@
                            FontSize="18"
                            Foreground="#9AFAD7"
                            FontWeight="SemiBold"
+                           VerticalAlignment="Center"
+                           Margin="0,0,12,0" />
+                <TextBlock Text="SIMULATOR USE ONLY"
+                           FontFamily="Consolas"
+                           FontSize="14"
+                           Foreground="#F7C873"
+                           FontWeight="Bold"
                            VerticalAlignment="Center"
                            Margin="0,0,12,0" />
                 <Button Content="{Binding SettingsToggleText}"
@@ -148,6 +155,7 @@
                 <TextBlock Text="{Binding TrafficText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
                 <TextBlock Text="SimConnect:" Foreground="#7CB9A9" Margin="0,0,4,0" />
                 <TextBlock Text="{Binding SimConnectText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
+                <TextBlock Text="Simulator Use Only" Foreground="#F7C873" Margin="0,0,16,0" />
                 <TextBlock Text="Refresh:" Foreground="#7CB9A9" Margin="0,0,4,0" />
                 <TextBlock Text="{Binding RefreshRateText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
                 <TextBlock Text="{Binding SourceText}" Foreground="#9AFAD7" />
