@@ -4,10 +4,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <KnownSimConnectDll Include="$(MSFS_SIMCONNECT_DLL)"
-                        Condition=" '$(MSFS_SIMCONNECT_DLL)' != '' and Exists('$(MSFS_SIMCONNECT_DLL)') " />
-    <KnownSimConnectDll Include="$(MSBuildProjectDirectory)\simconnect\SimConnect.dll"
-                        Condition=" Exists('$(MSBuildProjectDirectory)\simconnect\SimConnect.dll') " />
+    <KnownSimConnectDll Include="$(MSFS_SIMCONNECT_DLL)" Condition=" '$(MSFS_SIMCONNECT_DLL)' != '' and Exists('$(MSFS_SIMCONNECT_DLL)') " />
+    <KnownSimConnectDll Include="$(MSBuildProjectDirectory)\simconnect\SimConnect.dll" Condition=" Exists('$(MSBuildProjectDirectory)\simconnect\SimConnect.dll') " />
   </ItemGroup>
 
   <ItemGroup Condition="'@(KnownSimConnectDll)' != ''">
@@ -19,13 +17,17 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <PackageReference Include="FSUIPCClientDLL" Version="3.3.16" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>0.1.0</Version>
+    <Version>0.4.0</Version>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>

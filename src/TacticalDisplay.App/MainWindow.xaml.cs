@@ -18,6 +18,8 @@ public partial class MainWindow : Window
     private readonly UpdateCheckService _updateCheckService = new();
     private int _updateCheckStarted;
     private double _cachedSettingsPanelWidth = 320;
+    private bool _isClosing;
+    private bool _shutdownCompleted;
 
     public MainWindow()
     {
@@ -28,7 +30,7 @@ public partial class MainWindow : Window
         Topmost = _viewModel.IsAlwaysOnTop;
         ApplyLayoutState(resizeWindow: false);
         Loaded += OnLoaded;
-        Closing += async (_, _) => await _viewModel.DisposeAsync();
+        Closing += OnClosingAsync;
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -131,6 +133,35 @@ public partial class MainWindow : Window
             {
                 _viewModel.SetManualName(e.TargetId, dialog.Value);
             }
+        }
+    }
+
+    private async void OnClosingAsync(object? sender, CancelEventArgs e)
+    {
+        if (_shutdownCompleted)
+        {
+            return;
+        }
+
+        if (_isClosing)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        e.Cancel = true;
+        _isClosing = true;
+
+        try
+        {
+            await _viewModel.DisposeAsync();
+            _shutdownCompleted = true;
+            Closing -= OnClosingAsync;
+            Close();
+        }
+        finally
+        {
+            _isClosing = false;
         }
     }
 }

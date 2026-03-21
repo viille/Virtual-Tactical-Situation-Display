@@ -153,7 +153,7 @@
             <DockPanel>
                 <TextBlock Text="{Binding ConnectionText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
                 <TextBlock Text="{Binding TrafficText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
-                <TextBlock Text="SimConnect:" Foreground="#7CB9A9" Margin="0,0,4,0" />
+                <TextBlock Text="{Binding SimulatorStatusLabel}" Foreground="#7CB9A9" Margin="0,0,4,0" />
                 <TextBlock Text="{Binding SimConnectText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
                 <TextBlock Text="Simulator Use Only" Foreground="#F7C873" Margin="0,0,16,0" />
                 <TextBlock Text="Refresh:" Foreground="#7CB9A9" Margin="0,0,4,0" />

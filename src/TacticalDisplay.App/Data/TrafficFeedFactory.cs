@@ -7,9 +7,16 @@ public static class TrafficFeedFactory
 {
     public static ITrafficDataFeed Create(TacticalDisplaySettings settings)
     {
-        if (string.Equals(settings.DataSourceMode, "SimConnect", StringComparison.OrdinalIgnoreCase))
+        settings.DataSourceMode = DataSourceModes.Normalize(settings.DataSourceMode);
+
+        if (DataSourceModes.IsMsfs(settings.DataSourceMode))
         {
             return new SimConnectTrafficFeed(settings);
+        }
+
+        if (DataSourceModes.IsXPlane(settings.DataSourceMode))
+        {
+            return new XPlaneTrafficFeed(settings);
         }
 
         return new DemoTrafficFeed();

@@ -11,6 +11,12 @@ namespace TacticalDisplay.App.Controls;
 
 public sealed class TacticalScopeControl : FrameworkElement
 {
+    private const double LabelPaddingX = 4;
+    private const double LabelPaddingY = 2;
+    private const double LabelMargin = 8;
+    private const double LabelLineGap = 1;
+    private const double LabelSeparation = 4;
+
     private readonly List<(string id, Point point)> _hitTargets = [];
 
     public static readonly DependencyProperty PictureProperty = DependencyProperty.Register(
@@ -162,7 +168,10 @@ public sealed class TacticalScopeControl : FrameworkElement
                 .Take(12);
         }
 
-        foreach (var target in visibleTargets)
+        var targetsToDraw = visibleTargets.ToList();
+        var labelRects = new List<Rect>(targetsToDraw.Count);
+
+        foreach (var target in targetsToDraw)
         {
             var projected = ScopeProjection.ProjectToScope(
                 center.X,
@@ -190,7 +199,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             var effectiveLabelMode = Settings.Declutter ? LabelMode.Minimal : Settings.LabelMode;
             if (effectiveLabelMode != LabelMode.Off)
             {
-                DrawTargetLabel(dc, target, projected.x + 8, projected.y - 14, effectiveLabelMode);
+                DrawTargetLabel(dc, target, projectedPoint, effectiveLabelMode, labelRects);
             }
         }
     }
@@ -291,23 +300,23 @@ public sealed class TacticalScopeControl : FrameworkElement
         dc.DrawLine(pen, p, end);
     }
 
-    private static void DrawTargetLabel(DrawingContext dc, ComputedTarget target, double x, double y, LabelMode mode)
+    private void DrawTargetLabel(
+        DrawingContext dc,
+        ComputedTarget target,
+        Point symbolPoint,
+        LabelMode mode,
+        ICollection<Rect> occupiedRects)
     {
-        var altitude = AviationFormat.RelativeAltitudeHundreds(target.RelativeAltitudeFt);
-        var min = $"{target.DisplayName} {target.RangeNm:0.0} {altitude}";
-        var aspect = target.HeadingDeg.HasValue
-            ? AviationFormat.TargetAspect(target.HeadingDeg.Value, target.BearingDegTrue)
-            : "---";
-        var heading = target.HeadingDeg.HasValue ? $"{target.HeadingDeg.Value:000}" : "---";
-        var closure = target.ClosureKt.HasValue ? $"{target.ClosureKt.Value:0}" : "---";
-        var full = $"ASP {aspect,-5} HDG {heading} CLS {closure}";
-        DrawText(dc, target.IsStale ? $"{min} STALE" : min, x, y, Colors.PaleTurquoise, 14);
-        if (target.IsStale || mode == LabelMode.Minimal)
+        var lines = BuildTargetLabelLines(target, mode);
+        if (lines.Count == 0)
         {
             return;
         }
 
-        DrawText(dc, full, x, y + 15, Colors.LightGray, 12);
+        var placement = FindLabelPlacement(symbolPoint, lines, occupiedRects);
+        DrawLabelBox(dc, placement.Lines, placement);
+        DrawLeaderLine(dc, symbolPoint, placement.Bounds);
+        occupiedRects.Add(placement.Bounds);
     }
 
     private static void DrawDiamond(DrawingContext dc, Point p, Pen pen)
@@ -349,6 +358,155 @@ public sealed class TacticalScopeControl : FrameworkElement
         dc.DrawText(formatted, new Point(x, y));
     }
 
+    private static IReadOnlyList<LabelLine> BuildTargetLabelLines(ComputedTarget target, LabelMode mode)
+    {
+        var altitude = AviationFormat.RelativeAltitudeHundreds(target.RelativeAltitudeFt);
+        var min = $"{target.DisplayName} {target.RangeNm:0.0} {altitude}";
+        var primary = new LabelLine(target.IsStale ? $"{min} STALE" : min, Colors.PaleTurquoise, 14, FontWeights.Normal);
+
+        if (target.IsStale || mode == LabelMode.Minimal)
+        {
+            return [primary];
+        }
+
+        var aspect = target.HeadingDeg.HasValue
+            ? AviationFormat.TargetAspect(target.HeadingDeg.Value, target.BearingDegTrue)
+            : "---";
+        var heading = target.HeadingDeg.HasValue ? $"{target.HeadingDeg.Value:000}" : "---";
+        var closure = target.ClosureKt.HasValue ? $"{target.ClosureKt.Value:0}" : "---";
+        var full = $"ASP {aspect,-5} HDG {heading} CLS {closure}";
+        var secondary = new LabelLine(full, Colors.LightGray, 12, FontWeights.Normal);
+        return [primary, secondary];
+    }
+
+    private LabelPlacement FindLabelPlacement(
+        Point symbolPoint,
+        IReadOnlyList<LabelLine> lines,
+        ICollection<Rect> occupiedRects)
+    {
+        var layout = MeasureLabel(lines);
+        var viewport = new Rect(0, 0, RenderSize.Width, RenderSize.Height);
+        var candidateOffsets = new[]
+        {
+            new Vector(LabelMargin, -14),
+            new Vector(LabelMargin, 10),
+            new Vector(-(layout.Size.Width + LabelMargin), -14),
+            new Vector(-(layout.Size.Width + LabelMargin), 10),
+            new Vector(LabelMargin, -(layout.Size.Height + 6)),
+            new Vector(-(layout.Size.Width / 2.0), -(layout.Size.Height + 12)),
+            new Vector(-(layout.Size.Width / 2.0), 12),
+            new Vector(-(layout.Size.Width + LabelMargin), -(layout.Size.Height + 6))
+        };
+
+        for (var pass = 0; pass < 24; pass++)
+        {
+            var extraShift = pass * (layout.Size.Height + LabelSeparation);
+            foreach (var baseOffset in candidateOffsets)
+            {
+                var offset = baseOffset;
+                if (pass > 0)
+                {
+                    var direction = baseOffset.Y <= 0 ? -1.0 : 1.0;
+                    offset.Y += direction * extraShift;
+                }
+
+                var candidate = new Rect(symbolPoint + offset, layout.Size);
+                candidate = ClampToViewport(candidate, viewport);
+                if (OverlapsAny(candidate, occupiedRects))
+                {
+                    continue;
+                }
+
+                return new LabelPlacement(candidate, layout.Lines);
+            }
+        }
+
+        var fallback = ClampToViewport(new Rect(symbolPoint + new Vector(LabelMargin, -14), layout.Size), viewport);
+        for (var i = 0; i < 64 && OverlapsAny(fallback, occupiedRects); i++)
+        {
+            fallback = ClampToViewport(
+                new Rect(fallback.X, fallback.Bottom + LabelSeparation, fallback.Width, fallback.Height),
+                viewport);
+        }
+
+        return new LabelPlacement(fallback, layout.Lines);
+    }
+
+    private static MeasuredLabel MeasureLabel(IReadOnlyList<LabelLine> lines)
+    {
+        var measured = new List<MeasuredLabelLine>(lines.Count);
+        var width = 0.0;
+        var textHeight = 0.0;
+
+        foreach (var line in lines)
+        {
+            var formatted = CreateFormattedText(line.Text, line.Color, line.Size, line.Weight);
+            measured.Add(new MeasuredLabelLine(line, formatted));
+            width = Math.Max(width, formatted.Width);
+            textHeight += formatted.Height;
+        }
+
+        if (measured.Count > 1)
+        {
+            textHeight += LabelLineGap * (measured.Count - 1);
+        }
+
+        var totalSize = new Size(
+            width + (LabelPaddingX * 2),
+            textHeight + (LabelPaddingY * 2));
+
+        return new MeasuredLabel(totalSize, measured);
+    }
+
+    private static void DrawLabelBox(DrawingContext dc, IReadOnlyList<MeasuredLabelLine> lines, LabelPlacement placement)
+    {
+        var background = new SolidColorBrush(Color.FromArgb(168, 3, 10, 16));
+        var border = new Pen(new SolidColorBrush(Color.FromArgb(96, 110, 180, 170)), 1);
+        dc.DrawRoundedRectangle(background, border, placement.Bounds, 3, 3);
+
+        var y = placement.Bounds.Y + LabelPaddingY;
+        foreach (var line in lines)
+        {
+            dc.DrawText(line.Formatted, new Point(placement.Bounds.X + LabelPaddingX, y));
+            y += line.Formatted.Height + LabelLineGap;
+        }
+    }
+
+    private static void DrawLeaderLine(DrawingContext dc, Point symbolPoint, Rect labelRect)
+    {
+        var anchor = new Point(
+            Math.Clamp(symbolPoint.X, labelRect.Left, labelRect.Right),
+            Math.Clamp(symbolPoint.Y, labelRect.Top, labelRect.Bottom));
+
+        if ((anchor - symbolPoint).Length < 2)
+        {
+            return;
+        }
+
+        var pen = new Pen(new SolidColorBrush(Color.FromArgb(110, 120, 210, 200)), 0.8);
+        dc.DrawLine(pen, symbolPoint, anchor);
+    }
+
+    private static Rect ClampToViewport(Rect rect, Rect viewport)
+    {
+        var x = Math.Clamp(rect.X, viewport.Left, Math.Max(viewport.Left, viewport.Right - rect.Width));
+        var y = Math.Clamp(rect.Y, viewport.Top, Math.Max(viewport.Top, viewport.Bottom - rect.Height));
+        return new Rect(x, y, rect.Width, rect.Height);
+    }
+
+    private static bool OverlapsAny(Rect candidate, ICollection<Rect> occupiedRects)
+    {
+        foreach (var rect in occupiedRects)
+        {
+            if (candidate.IntersectsWith(rect))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static FormattedText CreateFormattedText(string text, Color color, double size, FontWeight weight)
     {
         return new FormattedText(
@@ -376,4 +534,9 @@ public sealed class TacticalScopeControl : FrameworkElement
             e.Handled = true;
         }
     }
+
+    private sealed record LabelLine(string Text, Color Color, double Size, FontWeight Weight);
+    private sealed record MeasuredLabelLine(LabelLine Line, FormattedText Formatted);
+    private sealed record MeasuredLabel(Size Size, IReadOnlyList<MeasuredLabelLine> Lines);
+    private sealed record LabelPlacement(Rect Bounds, IReadOnlyList<MeasuredLabelLine> Lines);
 }

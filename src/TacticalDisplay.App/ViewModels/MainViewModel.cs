@@ -28,7 +28,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private int _refreshCounter;
     private DateTimeOffset _rateWindowStart = DateTimeOffset.UtcNow;
     private string _refreshRateText = "0.0 Hz";
-    private string _selectedDataSource = "Demo";
+    private string _selectedDataSource = DataSourceModes.Demo;
     private bool _showSettings = true;
     private bool _isAlwaysOnTop;
     private readonly Dictionary<string, ManualTargetMetadata> _manualTargetMetadata;
@@ -42,6 +42,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Settings = _configStore.LoadDisplaySettings();
         _classification = _configStore.LoadClassification();
         _manualTargetMetadata = _configStore.LoadManualTargetMetadata();
+        Settings.DataSourceMode = DataSourceModes.Normalize(Settings.DataSourceMode);
         _feed = TrafficFeedFactory.Create(Settings);
         _feed.ConnectionChanged += OnConnectionChanged;
         _feed.SnapshotReceived += OnSnapshotReceived;
@@ -66,15 +67,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _renderTimer.Start();
         _ = _feed.StartAsync(_runCts.Token);
 
-        SelectedDataSource = Settings.DataSourceMode;
-        SourceText = $"Source: {Settings.DataSourceMode}";
-        SimConnectText = string.Equals(Settings.DataSourceMode, "SimConnect", StringComparison.OrdinalIgnoreCase)
-            ? "Checking..."
-            : "N/A (Demo)";
-        _showSimConnectDebugOnFailure = string.Equals(Settings.DataSourceMode, "SimConnect", StringComparison.OrdinalIgnoreCase);
-        _simConnectCheckingStartedAt = string.Equals(Settings.DataSourceMode, "SimConnect", StringComparison.OrdinalIgnoreCase)
-            ? DateTimeOffset.UtcNow
-            : null;
+        UpdateSourceState(Settings.DataSourceMode);
     }
 
     public TacticalDisplaySettings Settings { get; }
@@ -149,9 +142,10 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string SettingsToggleText => ShowSettings ? "Hide Settings" : "Show Settings";
     public string TopMostToggleText => IsAlwaysOnTop ? "Unpin Window" : "Pin On Top";
     public string DeclutterToggleText => Settings.Declutter ? "Declutter ON" : "Declutter OFF";
+    public string SimulatorStatusLabel => DataSourceModes.IsXPlane(Settings.DataSourceMode) ? "XPUIPC:" : "Simulator:";
 
     public ObservableCollection<int> RangeOptions { get; } = [10, 20, 40, 80, 120];
-    public ObservableCollection<string> AvailableDataSources { get; } = ["Demo", "SimConnect"];
+    public ObservableCollection<string> AvailableDataSources { get; } = [DataSourceModes.Demo, DataSourceModes.Msfs, DataSourceModes.XPlane];
     public RelayCommand ToggleOrientationCommand { get; }
     public RelayCommand IncreaseRangeCommand { get; }
     public RelayCommand DecreaseRangeCommand { get; }
@@ -237,7 +231,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
         SimConnected = connected;
         ConnectionText = connected ? "Connected" : "Disconnected";
-        var simMode = string.Equals(Settings.DataSourceMode, "SimConnect", StringComparison.OrdinalIgnoreCase);
+        var simMode = DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode);
         SimConnectText = simMode ? (connected ? "Connected" : "Disconnected") : "N/A (Demo)";
         if (!simMode)
         {
@@ -248,6 +242,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         {
             _showSimConnectDebugOnFailure = false;
             _simConnectCheckingStartedAt = null;
+            return;
+        }
+
+        if (DataSourceModes.IsXPlane(Settings.DataSourceMode))
+        {
             return;
         }
 
@@ -281,6 +280,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private async Task SwitchDataSourceAsync(string source, bool forceRestart)
     {
+        source = DataSourceModes.Normalize(source);
         if (!forceRestart && string.Equals(Settings.DataSourceMode, source, StringComparison.OrdinalIgnoreCase))
         {
             return;
@@ -304,14 +304,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _feed.SnapshotReceived += OnSnapshotReceived;
         await _feed.StartAsync(_runCts.Token);
 
-        SourceText = $"Source: {Settings.DataSourceMode}";
-        SimConnectText = string.Equals(Settings.DataSourceMode, "SimConnect", StringComparison.OrdinalIgnoreCase)
-            ? "Checking..."
-            : "N/A (Demo)";
-        _showSimConnectDebugOnFailure = string.Equals(Settings.DataSourceMode, "SimConnect", StringComparison.OrdinalIgnoreCase);
-        _simConnectCheckingStartedAt = string.Equals(Settings.DataSourceMode, "SimConnect", StringComparison.OrdinalIgnoreCase)
-            ? DateTimeOffset.UtcNow
-            : null;
+        UpdateSourceState(Settings.DataSourceMode);
     }
 
     private async Task SelectMsfsExeAndReconnectAsync()
@@ -348,7 +341,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
 
         _configStore.SaveDisplaySettings(Settings);
-        await SwitchDataSourceAsync("SimConnect", forceRestart: true);
+        await SwitchDataSourceAsync(DataSourceModes.Msfs, forceRestart: true);
     }
 
     private async Task SelectSimConnectDllAndReconnectAsync()
@@ -378,12 +371,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
         Settings.PreferredSimConnectDllPath = dllDialog.FileName;
         _configStore.SaveDisplaySettings(Settings);
-        await SwitchDataSourceAsync("SimConnect", forceRestart: true);
+        await SwitchDataSourceAsync(DataSourceModes.Msfs, forceRestart: true);
     }
 
     private void UpdateSimConnectCheckingTimeout()
     {
-        if (!string.Equals(Settings.DataSourceMode, "SimConnect", StringComparison.OrdinalIgnoreCase))
+        if (!DataSourceModes.IsMsfs(Settings.DataSourceMode))
         {
             return;
         }
@@ -500,6 +493,26 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         metadata.DisplayName = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
         _configStore.SaveManualTargetMetadata(_manualTargetMetadata);
         RefreshPicture();
+    }
+
+    private void UpdateSourceState(string sourceMode)
+    {
+        Settings.DataSourceMode = DataSourceModes.Normalize(sourceMode);
+        SelectedDataSource = Settings.DataSourceMode;
+        SourceText = $"Source: {Settings.DataSourceMode}";
+        Raise(nameof(SimulatorStatusLabel));
+
+        if (!DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode))
+        {
+            SimConnectText = "N/A (Demo)";
+            _showSimConnectDebugOnFailure = false;
+            _simConnectCheckingStartedAt = null;
+            return;
+        }
+
+        SimConnectText = "Checking...";
+        _showSimConnectDebugOnFailure = DataSourceModes.IsMsfs(Settings.DataSourceMode);
+        _simConnectCheckingStartedAt = DateTimeOffset.UtcNow;
     }
 
     private ComputedTarget ApplyManualOverride(ComputedTarget target)

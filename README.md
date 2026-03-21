@@ -4,6 +4,8 @@ Tactical Situation Display is a Windows application that shows the air picture a
 
 This application is intended for simulator use only. It is not intended for real-world aviation, air traffic control, or operational decision-making.
 
+![Tactical Situation Display screenshot](TacticalDisplay.App.png)
+
 The application is designed to present a tactical air picture and can show, for example:
 - your own aircraft position and heading
 - nearby traffic
@@ -16,15 +18,16 @@ The application is designed to present a tactical air picture and can show, for 
 2. Extract the package to any folder you want.
 3. Start `TacticalDisplay.App.exe`.
 4. Try `Demo` mode first.
-5. If you want to use simulator data, switch `Source` to `SimConnect` and click `Apply Source`.
+5. If you want to use simulator data, switch `Source` to `MSFS` or `XPlane` and click `Apply Source`.
 
 ## Requirements
 
 - a Windows PC
-- Microsoft Flight Simulator, if you want to use live simulator data
+- Microsoft Flight Simulator, if you want to use live MSFS data
+- X-Plane 10, 11, or 12 with XPUIPC installed, if you want to use live X-Plane data
 
 You can also use the application without a simulator connection in demo mode.
-The application is intended for simulator use only even when using SimConnect data.
+The application is intended for simulator use only even when using live simulator data.
 
 ## Download And Launch
 
@@ -49,7 +52,8 @@ Demo mode is useful for checking how the display looks and how the controls work
 The application has two operating modes:
 
 - `Demo` shows test data
-- `SimConnect` uses Microsoft Flight Simulator data
+- `MSFS` uses Microsoft Flight Simulator data through SimConnect
+- `XPlane` uses X-Plane data through XPUIPC
 
 You can change the mode from the settings panel:
 
@@ -57,15 +61,29 @@ You can change the mode from the settings panel:
 2. Click `Apply Source`.
 3. If you want to keep the selection for the next launch, click `Save Settings`.
 
-## SimConnect Included
+## MSFS Support
 
 SimConnect is bundled with the application. The user does not need to install or copy `SimConnect.dll` separately.
 
 The SimConnect integration is intended for simulator use only.
 
-If Microsoft Flight Simulator is running and the application is set to `SimConnect`, the connection should work normally without extra setup.
+If Microsoft Flight Simulator is running and the application is set to `MSFS`, the connection should work normally without extra setup.
 
 If the connection cannot be established, the application may ask you to select the Microsoft Flight Simulator `exe` file or a SimConnect library. This is intended only for troubleshooting.
+
+## X-Plane Support
+
+X-Plane support uses XPUIPC. The FSHub XPUIPC guide says the plugin supports X-Plane 10, 11, and 12 and should be installed into `X-Plane\Resources\plugins\XPUIPC`.
+
+Basic setup:
+
+1. Install X-Plane.
+2. Download XPUIPC from [schiratti.com/xpuipc.html](http://www.schiratti.com/xpuipc.html).
+3. Extract the `XPUIPC` folder into `X-Plane\Resources\plugins`.
+4. Start X-Plane and load into a flight.
+5. In Tactical Situation Display, select `Source = XPlane` and click `Apply Source`.
+
+If X-Plane is already running with XPUIPC installed, the application should connect automatically.
 
 ## Using The Display
 
@@ -115,7 +133,7 @@ The bottom status bar shows current status information such as:
 
 - whether the connection is established
 - how many targets are visible
-- SimConnect status
+- simulator link status
 - refresh rate
 - active data source
 
@@ -141,8 +159,8 @@ For most users, the built-in UI is enough and the files do not need to be edited
 ## If The Connection Does Not Work
 
 First check:
-- Microsoft Flight Simulator is running
-- the application is in `SimConnect` mode
+- Microsoft Flight Simulator is running when using `MSFS`, or X-Plane is running with XPUIPC when using `XPlane`
+- the application is in the correct simulator mode
 - you are using the latest published version
 
 If the connection still does not work:
