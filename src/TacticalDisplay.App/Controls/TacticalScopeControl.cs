@@ -94,6 +94,8 @@ public sealed class TacticalScopeControl : FrameworkElement
             return;
         }
 
+        var radialPen = new Pen(new SolidColorBrush(Color.FromArgb(32, 150, 220, 205)), 0.8);
+
         var directions = new (string label, double bearingDeg)[]
         {
             ("360", 0),
@@ -112,9 +114,14 @@ public sealed class TacticalScopeControl : FrameworkElement
                 ? GeoMath.NormalizeDegrees(direction.bearingDeg - ownHeadingDeg)
                 : direction.bearingDeg;
             var rad = displayBearing * System.Math.PI / 180.0;
-            var textRadius = radius - 18;
+            var lineEndRadius = radius - 8;
+            var textRadius = radius + 14;
+            var lineEnd = new Point(
+                center.X + lineEndRadius * System.Math.Sin(rad),
+                center.Y - lineEndRadius * System.Math.Cos(rad));
             var x = center.X + textRadius * System.Math.Sin(rad);
             var y = center.Y - textRadius * System.Math.Cos(rad);
+            dc.DrawLine(radialPen, center, lineEnd);
             DrawCenteredText(dc, direction.label, x, y, Colors.LightSeaGreen, 12, FontWeights.SemiBold);
         }
     }
