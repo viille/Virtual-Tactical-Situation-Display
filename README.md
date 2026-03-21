@@ -5,13 +5,17 @@ Virtual Tactical Situation Display is a Windows application that shows the air p
 **This application is intended for simulator use only.
 It is not intended for real-world aviation, air traffic control, or operational decision-making.**
 
-![Tactical Situation Display screenshot](TacticalDisplay.App.png)
+![VTSD logo](VTSD.png)
 
 The application is designed to present a tactical air picture and can show, for example:
 - your own aircraft position and heading
 - nearby traffic
 - separately marked friends, package members, and support aircraft
 - target range, altitude difference, and bearing
+
+## Screenshot
+
+![Tactical Situation Display screenshot](TacticalDisplay.App.png)
 
 ## Quick Start
 

@@ -6,6 +6,7 @@
         xmlns:controls="clr-namespace:TacticalDisplay.App.Controls"
         mc:Ignorable="d"
         Title="Tactical Situation Display"
+        Icon="Assets/VTSD.png"
         Width="1280"
         Height="840"
         MinWidth="980"
