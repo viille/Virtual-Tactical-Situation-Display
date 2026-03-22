@@ -158,6 +158,20 @@ If the connection still does not work:
 2. make sure the simulator is running
 3. start Tactical Situation Display again
 
+## Debug Logging
+
+When using `MSFS` or `XPlane`, the application writes a datasource debug log to:
+
+- `config/logs/data-source-debug.log`
+
+The log includes:
+- connection open and close attempts
+- simulator feed errors and reconnects
+- throttled ownship and traffic sample summaries
+- snapshot and traffic refresh summaries
+
+Debug logging is controlled by the in-app setting `Enable datasource debug log` and persisted in `config/display.json` as `EnableDataSourceDebugLogging`.
+
 ## Intended Use
 
 This application is intended for users who want a quick, readable tactical picture around their own aircraft without heavy setup or separate SimConnect configuration.

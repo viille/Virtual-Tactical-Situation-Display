@@ -5,6 +5,7 @@ public sealed class TacticalDisplaySettings
     public string DataSourceMode { get; set; } = "Demo";
     public string? MsfsExePath { get; set; }
     public string? PreferredSimConnectDllPath { get; set; }
+    public bool EnableDataSourceDebugLogging { get; set; }
     public int[] RangeScaleOptionsNm { get; init; } = [10, 20, 40, 80, 120];
     public int SelectedRangeNm { get; set; } = 40;
     public ScopeOrientationMode OrientationMode { get; set; } = ScopeOrientationMode.HeadingUp;

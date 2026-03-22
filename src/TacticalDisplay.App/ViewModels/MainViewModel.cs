@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Threading;
 using TacticalDisplay.App.Commands;
 using TacticalDisplay.App.Data;
+using TacticalDisplay.App.Services;
 using TacticalDisplay.Core.Config;
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
@@ -38,8 +39,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public MainViewModel()
     {
         var configPath = ResolveConfigDirectory();
+        DataSourceDebugLog.Info("App", $"Application startup | configDir={configPath} logFile={DataSourceDebugLog.CurrentLogFilePath}");
         _configStore = new JsonConfigStore(configPath);
         Settings = _configStore.LoadDisplaySettings();
+        DataSourceDebugLog.SetEnabled(Settings.EnableDataSourceDebugLogging);
+        DataSourceDebugLog.Info("App", $"Data source debug logging enabled={Settings.EnableDataSourceDebugLogging}");
         _classification = _configStore.LoadClassification();
         _manualTargetMetadata = _configStore.LoadManualTargetMetadata();
         Settings.DataSourceMode = DataSourceModes.Normalize(Settings.DataSourceMode);
@@ -119,6 +123,23 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         set => SetField(ref _selectedDataSource, value);
     }
 
+    public bool DataSourceDebugLoggingEnabled
+    {
+        get => Settings.EnableDataSourceDebugLogging;
+        set
+        {
+            if (Settings.EnableDataSourceDebugLogging == value)
+            {
+                return;
+            }
+
+            Settings.EnableDataSourceDebugLogging = value;
+            DataSourceDebugLog.SetEnabled(value);
+            DataSourceDebugLog.Info("App", $"Data source debug logging toggled | enabled={value}");
+            Raise();
+        }
+    }
+
     public bool ShowSettings
     {
         get => _showSettings;
@@ -162,6 +183,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        DataSourceDebugLog.Info("App", "Application shutdown");
         _renderTimer.Stop();
         _runCts.Cancel();
         await _feed.StopAsync();
@@ -285,6 +307,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         {
             return;
         }
+
+        DataSourceDebugLog.Info("App", $"Switching data source | from={Settings.DataSourceMode} to={source} forceRestart={forceRestart}");
 
         _feed.ConnectionChanged -= OnConnectionChanged;
         _feed.SnapshotReceived -= OnSnapshotReceived;
@@ -501,6 +525,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         SelectedDataSource = Settings.DataSourceMode;
         SourceText = $"Source: {Settings.DataSourceMode}";
         Raise(nameof(SimulatorStatusLabel));
+        Raise(nameof(DataSourceDebugLoggingEnabled));
 
         if (!DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode))
         {

@@ -1,5 +1,6 @@
 using System.IO;
 using System.Runtime.InteropServices;
+using TacticalDisplay.App.Services;
 using TacticalDisplay.Core.Math;
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
@@ -9,6 +10,7 @@ namespace TacticalDisplay.App.Data;
 public sealed class SimConnectTrafficFeed : ITrafficDataFeed
 {
     private const string NativeSimConnectDllName = "SimConnect.dll";
+    private const string LogSource = "MSFS";
     private readonly TacticalDisplaySettings _settings;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(3);
     private readonly object _stateLock = new();
@@ -35,6 +37,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             return Task.CompletedTask;
         }
 
+        DataSourceDebugLog.Info(LogSource, $"Start requested | pollRateHz={_settings.PollRateHz:0.##} rangeNm={_settings.SelectedRangeNm}");
         _isRunning = true;
         _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _ = Task.Run(() => RunAsync(_loopCts.Token), CancellationToken.None);
@@ -43,6 +46,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
 
     public Task StopAsync()
     {
+        DataSourceDebugLog.Info(LogSource, "Stop requested");
         _isRunning = false;
         _loopCts?.Cancel();
         SetConnected(false);
@@ -58,6 +62,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             var dllPath = ResolveNativeDllPath();
             if (string.IsNullOrWhiteSpace(dllPath))
             {
+                DataSourceDebugLog.Warn(LogSource, "No usable SimConnect DLL found");
                 SetConnected(false, forceNotify: true);
                 await Task.Delay(_reconnectDelay, cancellationToken);
                 continue;
@@ -65,9 +70,11 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
 
             try
             {
+                DataSourceDebugLog.Info(LogSource, $"Attempting SimConnect init using DLL '{dllPath}'");
                 using var api = NativeSimConnectApi.TryCreate(dllPath);
                 if (api is null)
                 {
+                    DataSourceDebugLog.Warn(LogSource, $"Failed to load SimConnect API from '{dllPath}'");
                     SetConnected(false, forceNotify: true);
                     await Task.Delay(_reconnectDelay, cancellationToken);
                     continue;
@@ -77,10 +84,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             }
             catch (OperationCanceledException)
             {
+                DataSourceDebugLog.Info(LogSource, "Run loop canceled");
                 break;
             }
-            catch
+            catch (Exception ex)
             {
+                DataSourceDebugLog.Error(LogSource, "Unhandled exception in run loop", ex);
                 SetConnected(false, forceNotify: true);
                 await Task.Delay(_reconnectDelay, cancellationToken);
             }
@@ -89,14 +98,17 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
 
     private async Task PollLoopAsync(NativeSimConnectApi api, CancellationToken cancellationToken)
     {
-        if (api.Open(out var simHandle, "TacticalDisplay", IntPtr.Zero, 0, IntPtr.Zero, 0) != 0)
+        var openHr = api.Open(out var simHandle, "TacticalDisplay", IntPtr.Zero, 0, IntPtr.Zero, 0);
+        if (openHr != 0)
         {
+            DataSourceDebugLog.Warn(LogSource, $"SimConnect open failed with HRESULT 0x{openHr:X8}");
             SetConnected(false, forceNotify: true);
             return;
         }
 
         try
         {
+            DataSourceDebugLog.Info(LogSource, "SimConnect session opened");
             ConfigureDataDefinitions(api, simHandle);
             SetConnected(true);
 
@@ -121,6 +133,11 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 if ((now - lastTrafficRequestAt).TotalMilliseconds >= 500)
                 {
                     var radiusMeters = (uint)System.Math.Clamp(_settings.SelectedRangeNm * 1852.0, 18520.0, 222240.0);
+                    DataSourceDebugLog.ThrottledDebug(
+                        LogSource,
+                        "traffic-request",
+                        TimeSpan.FromSeconds(5),
+                        () => $"Requesting traffic scan | radiusMeters={radiusMeters} rangeNm={_settings.SelectedRangeNm}");
                     api.RequestDataOnSimObjectType(
                         simHandle,
                         (uint)RequestId.TrafficByType,
@@ -136,6 +153,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         }
         finally
         {
+            DataSourceDebugLog.Info(LogSource, "Closing SimConnect session");
             api.Close(simHandle);
             SetConnected(false, forceNotify: true);
         }
@@ -169,6 +187,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             switch ((SimConnectRecvId)header.dwID)
             {
                 case SimConnectRecvId.Quit:
+                    DataSourceDebugLog.Warn(LogSource, "Received SimConnect quit event");
                     SetConnected(false, forceNotify: true);
                     return;
                 case SimConnectRecvId.SimobjectData:
@@ -200,6 +219,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     ownshipRaw.SpeedKt,
                     now);
             }
+
+            DataSourceDebugLog.ThrottledDebug(
+                LogSource,
+                "ownship-sample",
+                TimeSpan.FromSeconds(2),
+                () => $"Ownship sample | lat={ownshipRaw.Latitude:F5} lon={ownshipRaw.Longitude:F5} altFt={ownshipRaw.AltitudeFt:F0} hdg={GeoMath.NormalizeDegrees(ownshipRaw.HeadingDeg):F1} spdKt={ownshipRaw.SpeedKt:F0}");
             return;
         }
 
@@ -231,6 +256,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     if (hits >= 2)
                     {
                         _suppressedTrafficIds.Add(recv.dwObjectID);
+                        DataSourceDebugLog.Debug(LogSource, $"Suppressing likely ownship ghost target | objectId={recv.dwObjectID}");
                     }
                     _latestTraffic.Remove(recv.dwObjectID);
                 }
@@ -250,6 +276,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     trafficRaw.SpeedKt,
                     now);
             }
+
+            DataSourceDebugLog.ThrottledDebug(
+                LogSource,
+                "traffic-sample",
+                TimeSpan.FromSeconds(3),
+                () => $"Traffic sample | objectId={recv.dwObjectID} lat={trafficRaw.Latitude:F5} lon={trafficRaw.Longitude:F5} altFt={trafficRaw.AltitudeFt:F0} hdg={GeoMath.NormalizeDegrees(trafficRaw.HeadingDeg):F1} spdKt={trafficRaw.SpeedKt:F0}");
         }
     }
 
@@ -294,6 +326,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         var filteredTraffic = traffic
             .Where(t => !IsLikelyOwnshipMirror(ownship, t))
             .ToList();
+
+        DataSourceDebugLog.ThrottledDebug(
+            LogSource,
+            "snapshot-summary",
+            TimeSpan.FromSeconds(2),
+            () => $"Snapshot emitted | trafficCount={filteredTraffic.Count} rawTrafficCount={traffic.Count}");
 
         SnapshotReceived?.Invoke(this, new TrafficSnapshot(ownship, filteredTraffic, DateTimeOffset.UtcNow));
     }
@@ -355,6 +393,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         }
 
         IsConnected = value;
+        DataSourceDebugLog.Info(LogSource, $"Connection state changed | connected={value}");
         ConnectionChanged?.Invoke(this, value);
     }
 
@@ -370,8 +409,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             using var api = NativeSimConnectApi.TryCreate(dllPath);
             return api is not null;
         }
-        catch
+        catch (Exception ex)
         {
+            DataSourceDebugLog.Error(LogSource, $"Failed to probe DLL '{dllPath}'", ex);
             return false;
         }
     }
@@ -389,6 +429,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             "Mode: SimConnect Native API",
             $"Process: {(Environment.Is64BitProcess ? "x64" : "x86")}",
             $"OS: {Environment.OSVersion}",
+            $"Debug log: {DataSourceDebugLog.CurrentLogFilePath}",
             $"Bundled SimConnect.dll: {CanUseDll(NativeSimConnectDllName)}",
             $"Configured MSFS.exe: {settings?.MsfsExePath ?? "<not set>"}",
             $"Configured SimConnect.dll: {configured ?? "<not set>"}",
@@ -555,8 +596,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 var getNextDispatch = GetDelegate<SimConnectGetNextDispatchDelegate>(handle, "SimConnect_GetNextDispatch");
                 return new NativeSimConnectApi(handle, open, close, addToDef, requestOnObject, requestByType, getNextDispatch);
             }
-            catch
+            catch (Exception ex)
             {
+                DataSourceDebugLog.Error(LogSource, $"Native API load failed for '{dllPath}'", ex);
                 return null;
             }
         }

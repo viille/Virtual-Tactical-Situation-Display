@@ -1,4 +1,5 @@
 using FSUIPC;
+using TacticalDisplay.App.Services;
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
 
@@ -6,6 +7,7 @@ namespace TacticalDisplay.App.Data;
 
 public sealed class XPlaneTrafficFeed : ITrafficDataFeed
 {
+    private const string LogSource = "XPlane";
     private readonly TacticalDisplaySettings _settings;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(3);
     private CancellationTokenSource? _loopCts;
@@ -30,6 +32,7 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
             return Task.CompletedTask;
         }
 
+        DataSourceDebugLog.Info(LogSource, $"Start requested | pollRateHz={_settings.PollRateHz:0.##} rangeNm={_settings.SelectedRangeNm}");
         _isRunning = true;
         _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _ = Task.Run(() => RunAsync(_loopCts.Token), CancellationToken.None);
@@ -38,6 +41,7 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
 
     public Task StopAsync()
     {
+        DataSourceDebugLog.Info(LogSource, "Stop requested");
         _isRunning = false;
         _loopCts?.Cancel();
         CloseConnection();
@@ -57,15 +61,18 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
             }
             catch (OperationCanceledException)
             {
+                DataSourceDebugLog.Info(LogSource, "Run loop canceled");
                 break;
             }
-            catch (FSUIPCException)
+            catch (FSUIPCException ex)
             {
+                DataSourceDebugLog.Error(LogSource, "FSUIPC error in run loop", ex);
                 CloseConnection();
                 await Task.Delay(_reconnectDelay, cancellationToken);
             }
-            catch
+            catch (Exception ex)
             {
+                DataSourceDebugLog.Error(LogSource, "Unhandled exception in run loop", ex);
                 CloseConnection();
                 await Task.Delay(_reconnectDelay, cancellationToken);
             }
@@ -95,12 +102,22 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
         var now = DateTimeOffset.UtcNow;
         var ownship = ReadOwnship(now);
         RefreshTrafficIfDue(now);
+        DataSourceDebugLog.ThrottledDebug(
+            LogSource,
+            "snapshot-summary",
+            TimeSpan.FromSeconds(2),
+            () => $"Snapshot emitted | trafficCount={_latestTraffic.Count}");
         SnapshotReceived?.Invoke(this, new TrafficSnapshot(ownship, _latestTraffic, now));
     }
 
     private OwnshipState ReadOwnship(DateTimeOffset now)
     {
         var snapshot = FSUIPCConnection.GetPositionSnapshot();
+        DataSourceDebugLog.ThrottledDebug(
+            LogSource,
+            "ownship-sample",
+            TimeSpan.FromSeconds(2),
+            () => $"Ownship sample | lat={snapshot.Location.Latitude.DecimalDegrees:F5} lon={snapshot.Location.Longitude.DecimalDegrees:F5} altFt={snapshot.Altitude.Feet:F0} hdg={NormalizeDegrees(snapshot.HeadingDegreesTrue):F1} iasKt={snapshot.IndicatedAirspeedKnots:F0}");
         return new OwnshipState(
             "OWN",
             snapshot.Location.Latitude.DecimalDegrees,
@@ -140,6 +157,8 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
                 now))
             .ToList();
 
+        DataSourceDebugLog.Debug(LogSource, $"Traffic refresh complete | count={_latestTraffic.Count} rangeNm={_settings.SelectedRangeNm}");
+
         _lastTrafficRefreshAt = now;
     }
 
@@ -151,6 +170,7 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
             return;
         }
 
+        DataSourceDebugLog.Info(LogSource, "Opening FSUIPC/XPUIPC connection");
         FSUIPCConnection.Open();
         SetConnected(true);
     }
@@ -161,11 +181,13 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
         {
             if (FSUIPCConnection.IsOpen)
             {
+                DataSourceDebugLog.Info(LogSource, "Closing FSUIPC/XPUIPC connection");
                 FSUIPCConnection.Close();
             }
         }
-        catch
+        catch (Exception ex)
         {
+            DataSourceDebugLog.Error(LogSource, "Close connection failed", ex);
             // ignore close failures during reconnect/dispose
         }
 
@@ -182,6 +204,7 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
         }
 
         _isConnected = value;
+        DataSourceDebugLog.Info(LogSource, $"Connection state changed | connected={value}");
         ConnectionChanged?.Invoke(this, value);
     }
 

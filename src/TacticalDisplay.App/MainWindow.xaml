@@ -134,6 +134,14 @@
                             Command="{Binding ApplyDataSourceCommand}" />
                 </StackPanel>
                 <TextBlock Text="{Binding SourceText}" Foreground="#9AFAD7" Margin="0,4,0,0" />
+                <CheckBox Content="Enable datasource debug log"
+                          IsChecked="{Binding DataSourceDebugLoggingEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                          Foreground="#9AFAD7"
+                          Margin="0,8,0,0" />
+                <TextBlock Text="Writes MSFS/XPlane feed diagnostics to config/logs/data-source-debug.log"
+                           Foreground="#7CB9A9"
+                           TextWrapping="Wrap"
+                           Margin="0,2,0,0" />
                 <TextBlock Text="Filters" Foreground="#7CB9A9" Margin="0,8,0,0" />
                 <TextBlock Text="Range/Alt/Category filters from display.json" Foreground="#9AFAD7" TextWrapping="Wrap" Margin="0,2,0,0" />
 
