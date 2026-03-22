@@ -12,11 +12,17 @@ public static class DataSourceDebugLog
     private static volatile bool _isEnabled;
 
     public static string CurrentLogFilePath => LogFilePath;
+    public static string CurrentLogDirectoryPath => Path.GetDirectoryName(LogFilePath)!;
     public static bool IsEnabled => _isEnabled;
 
     public static void SetEnabled(bool enabled)
     {
         _isEnabled = enabled;
+    }
+
+    public static void EnsureLogDirectoryExists()
+    {
+        Directory.CreateDirectory(CurrentLogDirectoryPath);
     }
 
     public static void Debug(string source, string message) => Write("DEBUG", source, message);

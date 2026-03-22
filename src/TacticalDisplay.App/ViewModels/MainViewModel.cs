@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using Microsoft.Win32;
 using System.Windows;
@@ -61,6 +62,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ApplyDataSourceCommand = new RelayCommand(() => _ = SwitchDataSourceAsync(SelectedDataSource, forceRestart: false));
         ToggleSettingsCommand = new RelayCommand(ToggleSettingsPanel);
         ToggleAlwaysOnTopCommand = new RelayCommand(ToggleAlwaysOnTop);
+        OpenDebugLogFolderCommand = new RelayCommand(OpenDebugLogFolder);
 
         _renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000.0 / Settings.RenderRateFps) };
         _renderTimer.Tick += (_, _) =>
@@ -177,6 +179,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ApplyDataSourceCommand { get; }
     public RelayCommand ToggleSettingsCommand { get; }
     public RelayCommand ToggleAlwaysOnTopCommand { get; }
+    public RelayCommand OpenDebugLogFolderCommand { get; }
 
     public string HeaderText =>
         $"{(Settings.OrientationMode == ScopeOrientationMode.NorthUp ? "N-UP" : "HDG-UP")}  |  RANGE {Settings.SelectedRangeNm} NM";
@@ -242,6 +245,33 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private void ToggleSettingsPanel() => ShowSettings = !ShowSettings;
 
     private void ToggleAlwaysOnTop() => IsAlwaysOnTop = !IsAlwaysOnTop;
+
+    private void OpenDebugLogFolder()
+    {
+        try
+        {
+            DataSourceDebugLog.EnsureLogDirectoryExists();
+            var logPath = DataSourceDebugLog.CurrentLogFilePath;
+            var targetPath = File.Exists(logPath)
+                ? $"/select,\"{logPath}\""
+                : $"\"{DataSourceDebugLog.CurrentLogDirectoryPath}\"";
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = targetPath,
+                UseShellExecute = true
+            });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Could not open debug log folder.\n\n{ex.Message}",
+                "Open Debug Log Folder",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
 
     private void OnConnectionChanged(object? _, bool connected)
     {

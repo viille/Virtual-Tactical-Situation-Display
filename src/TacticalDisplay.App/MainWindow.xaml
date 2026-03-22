@@ -138,6 +138,9 @@
                           IsChecked="{Binding DataSourceDebugLoggingEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                           Foreground="#9AFAD7"
                           Margin="0,8,0,0" />
+                <Button Content="Open Debug Log Folder"
+                        Command="{Binding OpenDebugLogFolderCommand}"
+                        Margin="0,8,0,0" />
                 <TextBlock Text="Writes MSFS/XPlane feed diagnostics to config/logs/data-source-debug.log"
                            Foreground="#7CB9A9"
                            TextWrapping="Wrap"
