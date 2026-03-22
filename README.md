@@ -20,10 +20,9 @@ The application is designed to present a tactical air picture and can show, for 
 ## Quick Start
 
 1. Download the latest release from the GitHub Releases page.
-2. Extract the package to any folder you want.
-3. Start `TacticalDisplay.App.exe`.
-4. Try `Demo` mode first.
-5. If you want to use simulator data, switch `Source` to `MSFS` or `XPlane` and click `Apply Source`.
+2. Start `TacticalDisplay.App.exe`.
+3. Try `Demo` mode first.
+4. If you want to use simulator data, switch `Source` to `MSFS` or `XPlane` and click `Apply Source`.
 
 ## Requirements
 
