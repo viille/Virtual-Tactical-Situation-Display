@@ -30,14 +30,6 @@ The application is designed to present a tactical air picture and can show, for 
 - Microsoft Flight Simulator, if you want to use live MSFS data
 - X-Plane 10, 11, or 12 with XPUIPC installed, if you want to use live X-Plane data
 
-## Download And Launch
-
-1. Download the latest published version from the project's GitHub Releases page.
-2. Extract the package to any folder you want.
-3. Start `TacticalDisplay.App.exe`.
-
-The release package already contains everything the application needs. You do not need to build it yourself.
-
 ## First Use
 
 When the application starts for the first time:
