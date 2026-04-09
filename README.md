@@ -107,6 +107,8 @@ You can edit a single target directly in the display:
 
 - **left mouse button** on a target changes the target affiliation: normal -> friendly -> enemy -> normal
 - **right mouse button** on a target opens target renaming
+- **drag label with left mouse button** to move a single label
+- **middle mouse button** on a target or label toggles that label visible/hidden
 
 These changes are saved to the application config files.
 

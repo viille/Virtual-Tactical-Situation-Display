@@ -171,6 +171,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         "Simulator:";
 
     public ObservableCollection<int> RangeOptions { get; } = [10, 20, 40, 80, 120];
+    public IReadOnlyDictionary<string, ManualTargetMetadata> ManualTargetMetadata => _manualTargetMetadata;
     public ObservableCollection<string> AvailableDataSources { get; } =
     [
         DataSourceModes.Demo,
@@ -320,19 +321,20 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
                 _configStore.SaveDisplaySettings(Settings);
             }
 
-            var result = MessageBox.Show(
+            var dialog = new SimConnectDebugDialog(
                 "SimConnect connection could not be established.\n\n" +
-                SimConnectTrafficFeed.BuildDiagnosticReport(Settings) +
-                "\n\nYes = select MSFS.exe\nNo = select SimConnect DLL directly",
-                "SimConnect Debug",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning);
+                SimConnectTrafficFeed.BuildDiagnosticReport(Settings))
+            {
+                Owner = Application.Current.MainWindow
+            };
 
-            if (result == MessageBoxResult.Yes)
+            dialog.ShowDialog();
+
+            if (dialog.Choice == SimConnectDebugChoice.SelectMsfs)
             {
                 _ = SelectMsfsExeAndReconnectAsync();
             }
-            else
+            else if (dialog.Choice == SimConnectDebugChoice.SelectDll)
             {
                 _ = SelectSimConnectDllAndReconnectAsync();
             }
@@ -539,6 +541,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         };
 
         _configStore.SaveManualTargetMetadata(_manualTargetMetadata);
+        Raise(nameof(ManualTargetMetadata));
         RefreshPicture();
     }
 
@@ -555,6 +558,36 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
         metadata.DisplayName = string.IsNullOrWhiteSpace(name) ? null : name.Trim();
         _configStore.SaveManualTargetMetadata(_manualTargetMetadata);
+        Raise(nameof(ManualTargetMetadata));
+        RefreshPicture();
+    }
+
+    public void SetTargetLabelOffset(string targetId, double offsetX, double offsetY)
+    {
+        if (!_manualTargetMetadata.TryGetValue(targetId, out var metadata))
+        {
+            metadata = new ManualTargetMetadata { Id = targetId };
+            _manualTargetMetadata[targetId] = metadata;
+        }
+
+        metadata.LabelOffsetX = Math.Abs(offsetX) < 0.5 ? 0 : offsetX;
+        metadata.LabelOffsetY = Math.Abs(offsetY) < 0.5 ? 0 : offsetY;
+        _configStore.SaveManualTargetMetadata(_manualTargetMetadata);
+        Raise(nameof(ManualTargetMetadata));
+        RefreshPicture();
+    }
+
+    public void ToggleTargetLabelVisibility(string targetId)
+    {
+        if (!_manualTargetMetadata.TryGetValue(targetId, out var metadata))
+        {
+            metadata = new ManualTargetMetadata { Id = targetId };
+            _manualTargetMetadata[targetId] = metadata;
+        }
+
+        metadata.LabelHidden = !metadata.LabelHidden;
+        _configStore.SaveManualTargetMetadata(_manualTargetMetadata);
+        Raise(nameof(ManualTargetMetadata));
         RefreshPicture();
     }
 

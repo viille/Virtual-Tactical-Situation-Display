@@ -27,6 +27,7 @@ public partial class MainWindow : Window
         DataContext = _viewModel;
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         ScopeControl.TargetClicked += OnScopeTargetClicked;
+        ScopeControl.LabelMoved += OnScopeLabelMoved;
         Topmost = _viewModel.IsAlwaysOnTop;
         ApplyLayoutState(resizeWindow: false);
         Loaded += OnLoaded;
@@ -123,6 +124,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Button == MouseButton.Middle)
+        {
+            _viewModel.ToggleTargetLabelVisibility(e.TargetId);
+            return;
+        }
+
         if (e.Button == MouseButton.Right)
         {
             var dialog = new InputDialog("Rename Target", $"Name for {e.TargetId}:", _viewModel.GetManualName(e.TargetId) ?? string.Empty)
@@ -134,6 +141,11 @@ public partial class MainWindow : Window
                 _viewModel.SetManualName(e.TargetId, dialog.Value);
             }
         }
+    }
+
+    private void OnScopeLabelMoved(object? sender, ScopeLabelMovedEventArgs e)
+    {
+        _viewModel.SetTargetLabelOffset(e.TargetId, e.OffsetX, e.OffsetY);
     }
 
     private async void OnClosingAsync(object? sender, CancelEventArgs e)

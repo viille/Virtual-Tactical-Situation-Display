@@ -77,7 +77,8 @@
             <Grid>
                 <controls:TacticalScopeControl x:Name="ScopeControl"
                                                Picture="{Binding Picture}"
-                                               Settings="{Binding Settings}" />
+                                               Settings="{Binding Settings}"
+                                               ManualTargetMetadata="{Binding ManualTargetMetadata}" />
                 <StackPanel Orientation="Vertical"
                             HorizontalAlignment="Left"
                             VerticalAlignment="Top"

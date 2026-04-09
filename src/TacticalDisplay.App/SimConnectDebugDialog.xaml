@@ -1,0 +1,56 @@
+<Window x:Class="TacticalDisplay.App.SimConnectDebugDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SimConnect Debug"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        SizeToContent="WidthAndHeight"
+        Background="#102028">
+    <Grid Margin="14">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="Auto" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0"
+                   Grid.Column="0"
+                   FontSize="24"
+                   Margin="0,0,12,0"
+                   VerticalAlignment="Top"
+                   Text="⚠"
+                   Foreground="#F7C873" />
+
+        <TextBlock x:Name="MessageText"
+                   Grid.Row="0"
+                   Grid.Column="1"
+                   MinWidth="420"
+                   MaxWidth="620"
+                   TextWrapping="Wrap"
+                   FontFamily="Consolas"
+                   Foreground="#9AFAD7" />
+
+        <StackPanel Grid.Row="1"
+                    Grid.Column="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,12,0,0">
+            <Button Content="Select MSFS"
+                    Width="96"
+                    Margin="0,0,8,0"
+                    IsDefault="True"
+                    Click="OnSelectMsfsClicked" />
+            <Button Content="Select DLL"
+                    Width="96"
+                    Margin="0,0,8,0"
+                    Click="OnSelectDllClicked" />
+            <Button Content="Cancel"
+                    Width="96"
+                    IsCancel="True"
+                    Click="OnCancelClicked" />
+        </StackPanel>
+    </Grid>
+</Window>

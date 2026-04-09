@@ -18,6 +18,8 @@ public sealed class TacticalScopeControl : FrameworkElement
     private const double LabelSeparation = 4;
 
     private readonly List<(string id, Point point)> _hitTargets = [];
+    private readonly List<HitLabel> _hitLabels = [];
+    private DragState? _dragState;
 
     public static readonly DependencyProperty PictureProperty = DependencyProperty.Register(
         nameof(Picture),
@@ -28,6 +30,12 @@ public sealed class TacticalScopeControl : FrameworkElement
     public static readonly DependencyProperty SettingsProperty = DependencyProperty.Register(
         nameof(Settings),
         typeof(TacticalDisplaySettings),
+        typeof(TacticalScopeControl),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty ManualTargetMetadataProperty = DependencyProperty.Register(
+        nameof(ManualTargetMetadata),
+        typeof(IReadOnlyDictionary<string, ManualTargetMetadata>),
         typeof(TacticalScopeControl),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
@@ -43,12 +51,20 @@ public sealed class TacticalScopeControl : FrameworkElement
         set => SetValue(SettingsProperty, value);
     }
 
+    public IReadOnlyDictionary<string, ManualTargetMetadata>? ManualTargetMetadata
+    {
+        get => (IReadOnlyDictionary<string, ManualTargetMetadata>?)GetValue(ManualTargetMetadataProperty);
+        set => SetValue(ManualTargetMetadataProperty, value);
+    }
+
     public event EventHandler<ScopeTargetClickEventArgs>? TargetClicked;
+    public event EventHandler<ScopeLabelMovedEventArgs>? LabelMoved;
 
     protected override void OnRender(DrawingContext dc)
     {
         base.OnRender(dc);
         _hitTargets.Clear();
+        _hitLabels.Clear();
         DrawBackground(dc);
         if (Picture is null || Settings is null)
         {
@@ -202,7 +218,7 @@ public sealed class TacticalScopeControl : FrameworkElement
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
             _hitTargets.Add((target.Id, projectedPoint));
             var effectiveLabelMode = Settings.Declutter ? LabelMode.Minimal : Settings.LabelMode;
-            if (effectiveLabelMode != LabelMode.Off)
+            if (effectiveLabelMode != LabelMode.Off && !IsLabelHidden(target.Id))
             {
                 DrawTargetLabel(dc, target, projectedPoint, effectiveLabelMode, labelRects);
             }
@@ -319,9 +335,14 @@ public sealed class TacticalScopeControl : FrameworkElement
         }
 
         var placement = FindLabelPlacement(symbolPoint, lines, occupiedRects);
-        DrawLabelBox(dc, placement.Lines, placement);
-        DrawLeaderLine(dc, symbolPoint, placement.Bounds);
-        occupiedRects.Add(placement.Bounds);
+        var finalPlacement = ApplyLabelOffset(target.Id, placement);
+        DrawLabelBox(dc, finalPlacement.Lines, finalPlacement);
+        DrawLeaderLine(dc, symbolPoint, finalPlacement.Bounds);
+        occupiedRects.Add(finalPlacement.Bounds);
+        var currentOffset = new Vector(
+            finalPlacement.Bounds.X - placement.Bounds.X,
+            finalPlacement.Bounds.Y - placement.Bounds.Y);
+        _hitLabels.Add(new HitLabel(target.Id, symbolPoint, placement.Bounds.TopLeft, finalPlacement.Bounds, currentOffset));
     }
 
     private static void DrawDiamond(DrawingContext dc, Point p, Pen pen)
@@ -437,6 +458,15 @@ public sealed class TacticalScopeControl : FrameworkElement
         return new LabelPlacement(fallback, layout.Lines);
     }
 
+    private LabelPlacement ApplyLabelOffset(string targetId, LabelPlacement placement)
+    {
+        var viewport = new Rect(0, 0, RenderSize.Width, RenderSize.Height);
+        var offset = GetLabelOffset(targetId);
+        var adjusted = new Rect(placement.Bounds.TopLeft + offset, placement.Bounds.Size);
+        adjusted = ClampToViewport(adjusted, viewport);
+        return placement with { Bounds = adjusted };
+    }
+
     private MeasuredLabel MeasureLabel(IReadOnlyList<LabelLine> lines)
     {
         var measured = new List<MeasuredLabelLine>(lines.Count);
@@ -540,6 +570,25 @@ public sealed class TacticalScopeControl : FrameworkElement
     {
         base.OnMouseDown(e);
         var pos = e.GetPosition(this);
+        var labelHit = _hitLabels.LastOrDefault(t => t.Bounds.Contains(pos));
+        if (labelHit is not null)
+        {
+            if (e.ChangedButton == MouseButton.Left)
+            {
+                CaptureMouse();
+                _dragState = new DragState(labelHit.TargetId, pos, labelHit.BaseTopLeft, labelHit.CurrentOffset);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.ChangedButton == MouseButton.Middle)
+            {
+                TargetClicked?.Invoke(this, new ScopeTargetClickEventArgs(labelHit.TargetId, e.ChangedButton));
+                e.Handled = true;
+                return;
+            }
+        }
+
         var hit = _hitTargets
             .Select(t => (t.id, distance: (t.point - pos).Length))
             .OrderBy(t => t.distance)
@@ -552,8 +601,59 @@ public sealed class TacticalScopeControl : FrameworkElement
         }
     }
 
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        if (_dragState is null || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        InvalidateVisual();
+        e.Handled = true;
+    }
+
+    protected override void OnMouseUp(MouseButtonEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (_dragState is null || e.ChangedButton != MouseButton.Left)
+        {
+            return;
+        }
+
+        var offset = GetLabelOffset(_dragState.TargetId);
+        LabelMoved?.Invoke(this, new ScopeLabelMovedEventArgs(_dragState.TargetId, offset.X, offset.Y));
+        _dragState = null;
+        ReleaseMouseCapture();
+        e.Handled = true;
+    }
+
+    private bool IsLabelHidden(string targetId) =>
+        ManualTargetMetadata is not null &&
+        ManualTargetMetadata.TryGetValue(targetId, out var metadata) &&
+        metadata.LabelHidden;
+
+    private Vector GetLabelOffset(string targetId)
+    {
+        if (_dragState is not null && string.Equals(_dragState.TargetId, targetId, StringComparison.OrdinalIgnoreCase))
+        {
+            var mousePosition = Mouse.GetPosition(this);
+            return _dragState.StartOffset + (mousePosition - _dragState.StartPosition);
+        }
+
+        if (ManualTargetMetadata is not null &&
+            ManualTargetMetadata.TryGetValue(targetId, out var metadata))
+        {
+            return new Vector(metadata.LabelOffsetX, metadata.LabelOffsetY);
+        }
+
+        return new Vector();
+    }
+
     private sealed record LabelLine(string Text, Color Color, double Size, FontWeight Weight);
     private sealed record MeasuredLabelLine(LabelLine Line, FormattedText Formatted);
     private sealed record MeasuredLabel(Size Size, IReadOnlyList<MeasuredLabelLine> Lines);
     private sealed record LabelPlacement(Rect Bounds, IReadOnlyList<MeasuredLabelLine> Lines);
+    private sealed record HitLabel(string TargetId, Point SymbolPoint, Point BaseTopLeft, Rect Bounds, Vector CurrentOffset);
+    private sealed record DragState(string TargetId, Point StartPosition, Point BaseTopLeft, Vector StartOffset);
 }
