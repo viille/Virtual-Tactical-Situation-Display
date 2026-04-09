@@ -64,6 +64,11 @@ public sealed class TacticalScopeControl : FrameworkElement
 
     private void DrawBackground(DrawingContext dc)
     {
+        if (RenderSize.Width <= 0 || RenderSize.Height <= 0)
+        {
+            return;
+        }
+
         var rect = new Rect(0, 0, RenderSize.Width, RenderSize.Height);
         var brush = new LinearGradientBrush(
             Color.FromRgb(4, 12, 18),
@@ -341,18 +346,18 @@ public sealed class TacticalScopeControl : FrameworkElement
             _ => new SolidColorBrush(Color.FromRgb(255, 100, 100))
         };
 
-    private static void DrawText(DrawingContext dc, string text, double x, double y, Color color, double size)
+    private void DrawText(DrawingContext dc, string text, double x, double y, Color color, double size)
     {
         DrawText(dc, text, x, y, color, size, FontWeights.Normal);
     }
 
-    private static void DrawCenteredText(DrawingContext dc, string text, double x, double y, Color color, double size, FontWeight weight)
+    private void DrawCenteredText(DrawingContext dc, string text, double x, double y, Color color, double size, FontWeight weight)
     {
         var formatted = CreateFormattedText(text, color, size, weight);
         dc.DrawText(formatted, new Point(x - formatted.Width / 2.0, y - formatted.Height / 2.0));
     }
 
-    private static void DrawText(DrawingContext dc, string text, double x, double y, Color color, double size, FontWeight weight)
+    private void DrawText(DrawingContext dc, string text, double x, double y, Color color, double size, FontWeight weight)
     {
         var formatted = CreateFormattedText(text, color, size, weight);
         dc.DrawText(formatted, new Point(x, y));
@@ -432,7 +437,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         return new LabelPlacement(fallback, layout.Lines);
     }
 
-    private static MeasuredLabel MeasureLabel(IReadOnlyList<LabelLine> lines)
+    private MeasuredLabel MeasureLabel(IReadOnlyList<LabelLine> lines)
     {
         var measured = new List<MeasuredLabelLine>(lines.Count);
         var width = 0.0;
@@ -507,7 +512,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         return false;
     }
 
-    private static FormattedText CreateFormattedText(string text, Color color, double size, FontWeight weight)
+    private FormattedText CreateFormattedText(string text, Color color, double size, FontWeight weight)
     {
         return new FormattedText(
             text,
@@ -516,7 +521,19 @@ public sealed class TacticalScopeControl : FrameworkElement
             new Typeface(new FontFamily("Consolas"), FontStyles.Normal, weight, FontStretches.Normal),
             size,
             new SolidColorBrush(color),
-            1.0);
+            GetPixelsPerDip());
+    }
+
+    private double GetPixelsPerDip()
+    {
+        try
+        {
+            return VisualTreeHelper.GetDpi(this).PixelsPerDip;
+        }
+        catch
+        {
+            return 1.0;
+        }
     }
 
     protected override void OnMouseDown(MouseButtonEventArgs e)

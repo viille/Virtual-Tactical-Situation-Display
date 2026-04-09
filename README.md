@@ -22,7 +22,7 @@ The application is designed to present a tactical air picture and can show, for 
 1. Download the latest release from the GitHub Releases page.
 2. Start `TacticalDisplay.App.exe`.
 3. Try `Demo` mode first.
-4. If you want to use simulator data, switch `Source` to `MSFS` or `XPlane` and click `Apply Source`.
+4. If you want to use simulator data, switch `Source` to `MSFS`, `XPlane 12`, or `Xplane Legacy (XPUIPC)` and click `Apply Source`.
 
 ## Requirements
 
@@ -46,7 +46,8 @@ The application has two operating modes:
 
 - `Demo` shows test data
 - `MSFS` uses Microsoft Flight Simulator data through SimConnect
-- `XPlane` uses X-Plane data through XPUIPC
+- `XPlane 12` uses the X-Plane 12 local Web API
+- `Xplane Legacy (XPUIPC)` uses X-Plane data through XPUIPC
 
 You can change the mode from the settings panel:
 
@@ -71,7 +72,7 @@ Basic setup:
 1. Download XPUIPC from [schiratti.com/xpuipc.html](http://www.schiratti.com/xpuipc.html).
 2. Extract the `XPUIPC` folder into `X-Plane\Resources\plugins`.
 3. Start X-Plane and load into a flight.
-4. In Tactical Situation Display, select `Source = XPlane` and click `Apply Source`.
+4. In Tactical Situation Display, select `Source = Xplane Legacy (XPUIPC)` and click `Apply Source`.
 
 If X-Plane is already running with XPUIPC installed, the application should connect automatically.
 
@@ -149,7 +150,9 @@ For most users, the built-in UI is enough and the files do not need to be edited
 ## If The Connection Does Not Work
 
 First check:
-- Microsoft Flight Simulator is running when using `MSFS`, or X-Plane is running with XPUIPC when using `XPlane`
+- Microsoft Flight Simulator is running when using `MSFS`
+- X-Plane 12 is running with the local Web API enabled when using `XPlane 12`
+- X-Plane is running with XPUIPC when using `Xplane Legacy (XPUIPC)`
 - the application is in the correct simulator mode
 - you are using the latest published version
 
@@ -160,7 +163,7 @@ If the connection still does not work:
 
 ## Debug Logging
 
-When using `MSFS` or `XPlane`, the application writes a datasource debug log to:
+When using `MSFS`, `XPlane 12`, or `Xplane Legacy (XPUIPC)`, the application writes a datasource debug log to:
 
 - `config/logs/data-source-debug.log`
 

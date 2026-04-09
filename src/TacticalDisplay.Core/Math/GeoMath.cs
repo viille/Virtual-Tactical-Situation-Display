@@ -44,6 +44,53 @@ public static class GeoMath
         return NormalizeDegrees(bearing);
     }
 
+    public static (double latitudeDeg, double longitudeDeg) DestinationPoint(double latDeg, double lonDeg, double bearingDeg, double distanceNm)
+    {
+        var angularDistance = distanceNm / EarthRadiusNm;
+        var bearingRad = DegreesToRadians(NormalizeDegrees(bearingDeg));
+        var latRad = DegreesToRadians(latDeg);
+        var lonRad = DegreesToRadians(lonDeg);
+
+        var sinLat = System.Math.Sin(latRad);
+        var cosLat = System.Math.Cos(latRad);
+        var sinAd = System.Math.Sin(angularDistance);
+        var cosAd = System.Math.Cos(angularDistance);
+
+        var destLat = System.Math.Asin((sinLat * cosAd) + (cosLat * sinAd * System.Math.Cos(bearingRad)));
+        var destLon = lonRad + System.Math.Atan2(
+            System.Math.Sin(bearingRad) * sinAd * cosLat,
+            cosAd - (sinLat * System.Math.Sin(destLat)));
+
+        return (RadiansToDegrees(destLat), NormalizeLongitude(RadiansToDegrees(destLon)));
+    }
+
+    public static double RadialClosureKt(
+        double ownHeadingDeg,
+        double ownSpeedKt,
+        double targetHeadingDeg,
+        double targetSpeedKt,
+        double bearingFromOwnshipToTargetDeg)
+    {
+        var ownVelocity = VelocityVector(ownHeadingDeg, ownSpeedKt);
+        var targetVelocity = VelocityVector(targetHeadingDeg, targetSpeedKt);
+        var lineOfSight = VelocityVector(bearingFromOwnshipToTargetDeg, 1);
+        var relativeVelocityNorth = ownVelocity.north - targetVelocity.north;
+        var relativeVelocityEast = ownVelocity.east - targetVelocity.east;
+        return (relativeVelocityNorth * lineOfSight.north) + (relativeVelocityEast * lineOfSight.east);
+    }
+
+    private static (double north, double east) VelocityVector(double headingDeg, double speedKt)
+    {
+        var radians = DegreesToRadians(NormalizeDegrees(headingDeg));
+        return (speedKt * System.Math.Cos(radians), speedKt * System.Math.Sin(radians));
+    }
+
+    private static double NormalizeLongitude(double longitudeDeg)
+    {
+        var normalized = (longitudeDeg + 540.0) % 360.0;
+        return normalized - 180.0;
+    }
+
     private static double DegreesToRadians(double degrees) => degrees * System.Math.PI / 180.0;
     private static double RadiansToDegrees(double radians) => radians * 180.0 / System.Math.PI;
 }

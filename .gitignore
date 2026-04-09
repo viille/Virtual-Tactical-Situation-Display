@@ -5,6 +5,7 @@ obj/
 # Local publish/output folders
 publish/
 artifacts/
+out/
 
 # Local .NET SDK/cache folder
 .dotnet/

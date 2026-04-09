@@ -165,10 +165,19 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string SettingsToggleText => ShowSettings ? "Hide Settings" : "Show Settings";
     public string TopMostToggleText => IsAlwaysOnTop ? "Unpin Window" : "Pin On Top";
     public string DeclutterToggleText => Settings.Declutter ? "Declutter ON" : "Declutter OFF";
-    public string SimulatorStatusLabel => DataSourceModes.IsXPlane(Settings.DataSourceMode) ? "XPUIPC:" : "Simulator:";
+    public string SimulatorStatusLabel =>
+        DataSourceModes.IsXPlane12(Settings.DataSourceMode) ? "X-Plane 12:" :
+        DataSourceModes.IsXPlaneLegacy(Settings.DataSourceMode) ? "XPUIPC:" :
+        "Simulator:";
 
     public ObservableCollection<int> RangeOptions { get; } = [10, 20, 40, 80, 120];
-    public ObservableCollection<string> AvailableDataSources { get; } = [DataSourceModes.Demo, DataSourceModes.Msfs, DataSourceModes.XPlane];
+    public ObservableCollection<string> AvailableDataSources { get; } =
+    [
+        DataSourceModes.Demo,
+        DataSourceModes.Msfs,
+        DataSourceModes.XPlane12,
+        DataSourceModes.XPlaneLegacy
+    ];
     public RelayCommand ToggleOrientationCommand { get; }
     public RelayCommand IncreaseRangeCommand { get; }
     public RelayCommand DecreaseRangeCommand { get; }
@@ -297,7 +306,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
 
-        if (DataSourceModes.IsXPlane(Settings.DataSourceMode))
+        if (DataSourceModes.IsAnyXPlane(Settings.DataSourceMode))
         {
             return;
         }

@@ -137,11 +137,11 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
 
         FSUIPCConnection.AITrafficServices.RefreshAITrafficInformation();
         FSUIPCConnection.AITrafficServices.ApplyFilter(
-            ApplyToGroundTraffic: true,
+            ApplyToGroundTraffic: false,
             ApplyToAirborneTraffic: true,
             StartBearing: 0,
             EndBearing: 360,
-            MinAltitude: null,
+            MinAltitude: _settings.MinTrackedAltitudeFt,
             MaxAltitude: null,
             WithinDistance: _settings.SelectedRangeNm);
 

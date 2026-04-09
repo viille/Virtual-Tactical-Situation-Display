@@ -129,8 +129,20 @@ public sealed class TrafficRepository
             }
         }
 
-        public double? EstimateClosureKt(OwnshipState? previousOwnship, OwnshipState ownship)
+        public double? EstimateClosureKt(OwnshipState? previousOwnship, OwnshipState ownship, double bearingFromOwnshipToTargetDeg)
         {
+            if (ownship.SpeedKt.HasValue && Current.SpeedKt.HasValue && Current.HeadingDeg.HasValue)
+            {
+                var closureKt = GeoMath.RadialClosureKt(
+                    ownship.HeadingDeg,
+                    ownship.SpeedKt.Value,
+                    Current.HeadingDeg.Value,
+                    Current.SpeedKt.Value,
+                    bearingFromOwnshipToTargetDeg);
+                LastKnownClosureKt = closureKt;
+                return closureKt;
+            }
+
             if (previousOwnship is null || History.Count < 2)
             {
                 return LastKnownClosureKt;
@@ -146,9 +158,9 @@ public sealed class TrafficRepository
                 return LastKnownClosureKt;
             }
 
-            var closureKt = (ownToPrev - ownToCurr) / dtHours;
-            LastKnownClosureKt = closureKt;
-            return closureKt;
+            var historicalClosureKt = (ownToPrev - ownToCurr) / dtHours;
+            LastKnownClosureKt = historicalClosureKt;
+            return historicalClosureKt;
         }
     }
 }

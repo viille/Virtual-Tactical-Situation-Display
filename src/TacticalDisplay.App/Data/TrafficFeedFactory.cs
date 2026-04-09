@@ -14,7 +14,12 @@ public static class TrafficFeedFactory
             return new SimConnectTrafficFeed(settings);
         }
 
-        if (DataSourceModes.IsXPlane(settings.DataSourceMode))
+        if (DataSourceModes.IsXPlane12(settings.DataSourceMode))
+        {
+            return new XPlane12WebApiTrafficFeed(settings);
+        }
+
+        if (DataSourceModes.IsXPlaneLegacy(settings.DataSourceMode))
         {
             return new XPlaneTrafficFeed(settings);
         }

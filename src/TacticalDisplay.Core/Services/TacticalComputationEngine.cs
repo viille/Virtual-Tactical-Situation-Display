@@ -12,6 +12,11 @@ public sealed class TacticalComputationEngine
         TacticalDisplaySettings settings)
     {
         var contact = tracked.Current;
+        if (!PassMinimumTrackedAltitude(contact.AltitudeFt, settings.MinTrackedAltitudeFt))
+        {
+            return null;
+        }
+
         var rangeNm = GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, contact.LatitudeDeg, contact.LongitudeDeg);
         if (!PassRangeFilter(rangeNm, settings.RangeFilter))
         {
@@ -45,7 +50,7 @@ public sealed class TacticalComputationEngine
             relAltFt,
             contact.HeadingDeg,
             contact.SpeedKt,
-            tracked.EstimateClosureKt(previousOwnship, ownship),
+            tracked.EstimateClosureKt(previousOwnship, ownship, trueBearing),
             history,
             contact.Timestamp);
     }
@@ -65,6 +70,9 @@ public sealed class TacticalComputationEngine
             AltitudeFilterMode.PlusMinus10000Ft => System.Math.Abs(relAltFt) <= 10000,
             _ => true
         };
+
+    private static bool PassMinimumTrackedAltitude(double altitudeFt, double minTrackedAltitudeFt) =>
+        altitudeFt >= minTrackedAltitudeFt;
 
     private static bool PassCategoryFilter(TargetCategory category, CategoryFilterMode mode) =>
         mode switch
