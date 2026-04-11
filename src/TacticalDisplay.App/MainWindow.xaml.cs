@@ -1,5 +1,6 @@
 using System.Windows;
 using System.ComponentModel;
+using System.Reflection;
 using System.Windows.Controls;
 using System.Windows.Input;
 using TacticalDisplay.App.Controls;
@@ -24,6 +25,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Title = $"Tactical Situation Display | ver {GetDisplayVersion()}";
         DataContext = _viewModel;
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         ScopeControl.TargetClicked += OnScopeTargetClicked;
@@ -32,6 +34,20 @@ public partial class MainWindow : Window
         ApplyLayoutState(resizeWindow: false);
         Loaded += OnLoaded;
         Closing += OnClosingAsync;
+    }
+
+    private static string GetDisplayVersion()
+    {
+        var informationalVersion = Assembly.GetExecutingAssembly()
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(informationalVersion))
+        {
+            var separatorIndex = informationalVersion.IndexOfAny(['-', '+']);
+            return separatorIndex >= 0 ? informationalVersion[..separatorIndex] : informationalVersion;
+        }
+
+        return Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
