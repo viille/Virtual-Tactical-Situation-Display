@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using TacticalDisplay.App.Services;
@@ -16,13 +17,17 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     private const double FeetPerMeter = 3.280839895;
     private const double KnotsPerMeterPerSecond = 1.9438444924406;
 
-    private static readonly string[] RequiredDataRefs =
+    private static readonly string[] RequiredOwnshipDataRefs =
     [
         "sim/flightmodel/position/latitude",
         "sim/flightmodel/position/longitude",
         "sim/flightmodel/position/elevation",
         "sim/flightmodel/position/true_psi",
-        "sim/flightmodel/position/groundspeed",
+        "sim/flightmodel/position/groundspeed"
+    ];
+
+    private static readonly string[] OptionalTrafficDataRefs =
+    [
         "sim/cockpit2/tcas/targets/modeS_id",
         "sim/cockpit2/tcas/indicators/relative_bearing_degs",
         "sim/cockpit2/tcas/indicators/relative_distance_mtrs",
@@ -47,6 +52,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         {
             Timeout = TimeSpan.FromSeconds(2)
         };
+        _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
 
     public event EventHandler<TrafficSnapshot>? SnapshotReceived;
@@ -111,12 +117,24 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         _apiVersion = await DiscoverApiVersionAsync(cancellationToken);
         _dataRefIds.Clear();
 
-        foreach (var dataRefName in RequiredDataRefs)
+        foreach (var dataRefName in RequiredOwnshipDataRefs)
         {
             _dataRefIds[dataRefName] = await ResolveDataRefIdAsync(dataRefName, cancellationToken);
         }
 
-        DataSourceDebugLog.Info(LogSource, $"Resolved XP12 datarefs via {_apiVersion} API");
+        foreach (var dataRefName in OptionalTrafficDataRefs)
+        {
+            try
+            {
+                _dataRefIds[dataRefName] = await ResolveDataRefIdAsync(dataRefName, cancellationToken);
+            }
+            catch (Exception ex)
+            {
+                DataSourceDebugLog.Info(LogSource, $"Optional traffic dataref unavailable | name={dataRefName} error={ex.Message}");
+            }
+        }
+
+        DataSourceDebugLog.Info(LogSource, $"Resolved XP12 datarefs via {_apiVersion} API | trafficRefs={OptionalTrafficDataRefs.Count(_dataRefIds.ContainsKey)}/{OptionalTrafficDataRefs.Length}");
     }
 
     private async Task PollLoopAsync(CancellationToken cancellationToken)
@@ -135,12 +153,12 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     {
         var now = DateTimeOffset.UtcNow;
         var ownshipTask = ReadOwnshipAsync(now, cancellationToken);
-        var modeSTask = GetNumericArrayAsync(_dataRefIds["sim/cockpit2/tcas/targets/modeS_id"], cancellationToken);
-        var bearingTask = GetNumericArrayAsync(_dataRefIds["sim/cockpit2/tcas/indicators/relative_bearing_degs"], cancellationToken);
-        var distanceTask = GetNumericArrayAsync(_dataRefIds["sim/cockpit2/tcas/indicators/relative_distance_mtrs"], cancellationToken);
-        var altitudeTask = GetNumericArrayAsync(_dataRefIds["sim/cockpit2/tcas/indicators/relative_altitude_mtrs"], cancellationToken);
-        var headingTask = GetNumericArrayAsync(_dataRefIds["sim/cockpit2/tcas/targets/position/psi"], cancellationToken);
-        var speedTask = GetNumericArrayAsync(_dataRefIds["sim/cockpit2/tcas/targets/position/V_msc"], cancellationToken);
+        var modeSTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/modeS_id", cancellationToken);
+        var bearingTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/indicators/relative_bearing_degs", cancellationToken);
+        var distanceTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/indicators/relative_distance_mtrs", cancellationToken);
+        var altitudeTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/indicators/relative_altitude_mtrs", cancellationToken);
+        var headingTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/position/psi", cancellationToken);
+        var speedTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/position/V_msc", cancellationToken);
 
         await Task.WhenAll(ownshipTask, modeSTask, bearingTask, distanceTask, altitudeTask, headingTask, speedTask);
 
@@ -244,6 +262,12 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     private async Task<string> DiscoverApiVersionAsync(CancellationToken cancellationToken)
     {
         using var response = await _httpClient.GetAsync(new Uri(GetBaseUri(), "api/capabilities"), cancellationToken);
+        if (response.StatusCode == HttpStatusCode.NotFound)
+        {
+            DataSourceDebugLog.Info(LogSource, "Capabilities endpoint unavailable; falling back to X-Plane Web API v1");
+            return "v1";
+        }
+
         if (response.StatusCode == HttpStatusCode.Forbidden)
         {
             throw new InvalidOperationException("X-Plane Web API rejected the connection. Check Network security policy and incoming traffic settings.");
@@ -268,6 +292,13 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             .ToList();
 
         return versions.FirstOrDefault() ?? "v1";
+    }
+
+    private Task<IReadOnlyList<double>> GetOptionalNumericArrayAsync(string dataRefName, CancellationToken cancellationToken)
+    {
+        return _dataRefIds.TryGetValue(dataRefName, out var dataRefId)
+            ? GetNumericArrayAsync(dataRefId, cancellationToken)
+            : Task.FromResult<IReadOnlyList<double>>([]);
     }
 
     private async Task<long> ResolveDataRefIdAsync(string dataRefName, CancellationToken cancellationToken)

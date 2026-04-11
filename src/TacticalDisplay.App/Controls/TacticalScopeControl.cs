@@ -331,6 +331,13 @@ public sealed class TacticalScopeControl : FrameworkElement
 
     private static string BuildAirspaceLabelText(AirspaceArea airspace)
     {
+        if (airspace.IsActive &&
+            airspace.ActiveLowerAltitudeFt.HasValue &&
+            airspace.ActiveUpperAltitudeFt.HasValue)
+        {
+            return $"{airspace.Name} {airspace.ActiveLowerAltitudeFt.Value}-{airspace.ActiveUpperAltitudeFt.Value}";
+        }
+
         var lower = airspace.LowerFlightLevel.HasValue ? $"FL{airspace.LowerFlightLevel.Value:000}" : string.Empty;
         var upper = airspace.UpperFlightLevel.HasValue ? $"FL{airspace.UpperFlightLevel.Value:000}" : string.Empty;
         return string.IsNullOrWhiteSpace(lower) || string.IsNullOrWhiteSpace(upper)

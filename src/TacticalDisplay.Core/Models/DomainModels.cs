@@ -102,6 +102,8 @@ public sealed record AirspaceArea(
     int? LowerFlightLevel,
     int? UpperFlightLevel,
     bool IsActive,
+    int? ActiveLowerAltitudeFt,
+    int? ActiveUpperAltitudeFt,
     IReadOnlyList<AirspacePolygon> Polygons);
 
 public sealed record AirspacePolygon(

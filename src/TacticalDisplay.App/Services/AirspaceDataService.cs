@@ -19,7 +19,7 @@ public sealed class AirspaceDataService
             : settings.AirspaceFirCode.Trim().ToLowerInvariant();
         var baseUrl = settings.AirspaceDataBaseUrl.TrimEnd('/');
         var url = $"{baseUrl}/{firCode}.geojson";
-        var activeAirspaces = await LoadActiveAirspaceNamesAsync(settings, cancellationToken);
+        var activeAirspaces = await LoadActiveAirspacesAsync(settings, cancellationToken);
 
         using var response = await _httpClient.GetAsync(url, cancellationToken);
         response.EnsureSuccessStatusCode();
@@ -28,7 +28,7 @@ public sealed class AirspaceDataService
         return ParseGeoJson(document.RootElement, activeAirspaces);
     }
 
-    private async Task<HashSet<string>> LoadActiveAirspaceNamesAsync(TacticalDisplaySettings settings, CancellationToken cancellationToken)
+    private async Task<Dictionary<string, AirspaceActivation>> LoadActiveAirspacesAsync(TacticalDisplaySettings settings, CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(settings.AirspaceActivationUrl))
         {
@@ -36,12 +36,12 @@ public sealed class AirspaceDataService
         }
 
         var text = await _httpClient.GetStringAsync(settings.AirspaceActivationUrl, cancellationToken);
-        return ParseTopSkyActivationNames(text);
+        return ParseTopSkyActivations(text);
     }
 
-    private static HashSet<string> ParseTopSkyActivationNames(string text)
+    private static Dictionary<string, AirspaceActivation> ParseTopSkyActivations(string text)
     {
-        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var activations = new Dictionary<string, AirspaceActivation>(StringComparer.OrdinalIgnoreCase);
         var tokens = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         foreach (var token in tokens)
         {
@@ -58,13 +58,16 @@ public sealed class AirspaceDataService
                 continue;
             }
 
-            names.Add(parts[0]);
+            var name = parts[0];
+            activations[name] = new AirspaceActivation(
+                ReadNullableIntPart(parts, 6),
+                ReadNullableIntPart(parts, 7));
         }
 
-        return names;
+        return activations;
     }
 
-    private static IReadOnlyList<AirspaceArea> ParseGeoJson(JsonElement root, HashSet<string> activeAirspaces)
+    private static IReadOnlyList<AirspaceArea> ParseGeoJson(JsonElement root, IReadOnlyDictionary<string, AirspaceActivation> activeAirspaces)
     {
         if (!root.TryGetProperty("features", out var features) || features.ValueKind != JsonValueKind.Array)
         {
@@ -95,12 +98,15 @@ public sealed class AirspaceDataService
 
             var properties = feature.TryGetProperty("properties", out var p) ? p : default;
             var name = ReadString(properties, "name");
+            var isActive = activeAirspaces.TryGetValue(name, out var activation);
             airspaces.Add(new AirspaceArea(
                 name,
                 ReadString(properties, "type"),
                 ReadNullableInt(properties, "lowerFL"),
                 ReadNullableInt(properties, "upperFL"),
-                activeAirspaces.Contains(name),
+                isActive,
+                activation?.LowerAltitudeFt,
+                activation?.UpperAltitudeFt,
                 polygons));
         }
 
@@ -196,4 +202,17 @@ public sealed class AirspaceDataService
 
         return null;
     }
+
+    private static int? ReadNullableIntPart(string[] parts, int index)
+    {
+        if (index >= parts.Length ||
+            !int.TryParse(parts[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        {
+            return null;
+        }
+
+        return value;
+    }
+
+    private sealed record AirspaceActivation(int? LowerAltitudeFt, int? UpperAltitudeFt);
 }
