@@ -35,7 +35,7 @@ Virtual Tactical Situation Display is a Windows application for a clear 2D tacti
 - `XPlane 12` uses the X-Plane 12 local Web API.
 - `Xplane Legacy (XPUIPC)` uses X-Plane through XPUIPC.
 
-SimConnect is bundled with the app. For legacy X-Plane support, install XPUIPC into `X-Plane\Resources\plugins`.
+SimConnect is bundled with the app. X-Plane 12 uses `http://localhost:8086/` by default; check that the X-Plane Web API is available and incoming traffic is not disabled. For legacy X-Plane support, install XPUIPC into `X-Plane\Resources\plugins`.
 
 ## Display Controls
 
@@ -93,7 +93,7 @@ If live data does not appear, check:
 - the correct source is selected
 - the simulator is running
 - XPUIPC is installed when using legacy X-Plane
-- X-Plane 12 local Web API is enabled when using `XPlane 12`
+- X-Plane 12 local Web API URL is correct when using `XPlane 12`
 
 Datasource logs are written to `config/logs/data-source-debug.log` when debug logging is enabled in the app.
 

@@ -34,6 +34,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private string _bullseyeLatitudeText = string.Empty;
     private string _bullseyeLongitudeText = string.Empty;
     private string _bullseyeText = "Bullseye: off";
+    private string _xPlane12ApiBaseUrlText = string.Empty;
     private bool _simConnected;
     private int _refreshCounter;
     private DateTimeOffset _rateWindowStart = DateTimeOffset.UtcNow;
@@ -70,7 +71,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ApplyBullseyeCommand = new RelayCommand(ApplyBullseye);
         ClearBullseyeCommand = new RelayCommand(ClearBullseye);
         SaveSettingsCommand = new RelayCommand(() => _configStore.SaveDisplaySettings(Settings));
-        ApplyDataSourceCommand = new RelayCommand(() => _ = SwitchDataSourceAsync(SelectedDataSource, forceRestart: false));
+        ApplyDataSourceCommand = new RelayCommand(ApplyDataSource);
         ToggleSettingsCommand = new RelayCommand(ToggleSettingsPanel);
         ToggleAlwaysOnTopCommand = new RelayCommand(ToggleAlwaysOnTop);
         OpenDebugLogFolderCommand = new RelayCommand(OpenDebugLogFolder);
@@ -88,6 +89,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _airspaceTimer.Start();
         _ = LoadAirspacesAsync();
         InitializeBullseyeText();
+        XPlane12ApiBaseUrlText = Settings.XPlane12ApiBaseUrl;
 
         UpdateSourceState(Settings.DataSourceMode);
     }
@@ -173,6 +175,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         private set => SetField(ref _bullseyeText, value);
     }
 
+    public string XPlane12ApiBaseUrlText
+    {
+        get => _xPlane12ApiBaseUrlText;
+        set => SetField(ref _xPlane12ApiBaseUrlText, value);
+    }
+
     public string RefreshRateText
     {
         get => _refreshRateText;
@@ -188,7 +196,13 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string SelectedDataSource
     {
         get => _selectedDataSource;
-        set => SetField(ref _selectedDataSource, value);
+        set
+        {
+            SetField(ref _selectedDataSource, value);
+            Raise(nameof(ShowMsfsSettings));
+            Raise(nameof(ShowXPlane12Settings));
+            Raise(nameof(ShowXPlaneLegacySettings));
+        }
     }
 
     public bool DataSourceDebugLoggingEnabled
@@ -233,6 +247,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string DeclutterToggleText => Settings.Declutter ? "Declutter ON" : "Declutter OFF";
     public string AirspaceToggleText => Settings.ShowAirspaceBoundaries ? "Areas ON" : "Areas OFF";
     public string TrailsToggleText => Settings.TrailsEnabled ? "Trails ON" : "Trails OFF";
+    public bool ShowMsfsSettings => DataSourceModes.IsMsfs(SelectedDataSource);
+    public bool ShowXPlane12Settings => DataSourceModes.IsXPlane12(SelectedDataSource);
+    public bool ShowXPlaneLegacySettings => DataSourceModes.IsXPlaneLegacy(SelectedDataSource);
     public string SimulatorStatusLabel =>
         DataSourceModes.IsXPlane12(Settings.DataSourceMode) ? "X-Plane 12:" :
         DataSourceModes.IsXPlaneLegacy(Settings.DataSourceMode) ? "XPUIPC:" :
@@ -337,6 +354,31 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private void ToggleSettingsPanel() => ShowSettings = !ShowSettings;
 
     private void ToggleAlwaysOnTop() => IsAlwaysOnTop = !IsAlwaysOnTop;
+
+    private void ApplyDataSource()
+    {
+        Settings.XPlane12ApiBaseUrl = NormalizeXPlane12ApiBaseUrl(XPlane12ApiBaseUrlText);
+        XPlane12ApiBaseUrlText = Settings.XPlane12ApiBaseUrl;
+        _configStore.SaveDisplaySettings(Settings);
+        _ = SwitchDataSourceAsync(SelectedDataSource, forceRestart: true);
+    }
+
+    private static string NormalizeXPlane12ApiBaseUrl(string value)
+    {
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return "http://localhost:8086/";
+        }
+
+        if (!trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = $"http://{trimmed}";
+        }
+
+        return trimmed.EndsWith("/", StringComparison.Ordinal) ? trimmed : $"{trimmed}/";
+    }
 
     private void InitializeBullseyeText()
     {

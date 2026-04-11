@@ -141,6 +141,55 @@
                                         Command="{Binding ApplyDataSourceCommand}" />
                             </StackPanel>
                             <TextBlock Text="{Binding SourceText}" Foreground="#9AFAD7" Margin="0,4,0,0" />
+                            <StackPanel Margin="0,8,0,0">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ShowMsfsSettings}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="MSFS uses bundled SimConnect. If the connection fails, the app opens a diagnostic selection for MSFS exe or SimConnect DLL."
+                                           Foreground="#7CB9A9"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
+                            <StackPanel Margin="0,8,0,0">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ShowXPlane12Settings}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="X-Plane 12 API URL" Foreground="#7CB9A9" />
+                                <TextBox Text="{Binding XPlane12ApiBaseUrlText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="Default: http://localhost:8086/"
+                                         Margin="0,4,0,0" />
+                                <TextBlock Text="Default: http://localhost:8086/"
+                                           Foreground="#7CB9A9"
+                                           Margin="0,2,0,0" />
+                            </StackPanel>
+                            <StackPanel Margin="0,8,0,0">
+                                <StackPanel.Style>
+                                    <Style TargetType="StackPanel">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ShowXPlaneLegacySettings}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </StackPanel.Style>
+                                <TextBlock Text="Xplane Legacy uses XPUIPC from X-Plane\Resources\plugins."
+                                           Foreground="#7CB9A9"
+                                           TextWrapping="Wrap" />
+                            </StackPanel>
                         </StackPanel>
                     </GroupBox>
 
