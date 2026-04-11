@@ -16,6 +16,7 @@ public sealed class TacticalScopeControl : FrameworkElement
     private const double LabelMargin = 8;
     private const double LabelLineGap = 1;
     private const double LabelSeparation = 4;
+    private const double MaxOverlayCoordinate = 100_000;
 
     private readonly List<(string id, Point point)> _hitTargets = [];
     private readonly List<HitLabel> _hitLabels = [];
@@ -86,10 +87,22 @@ public sealed class TacticalScopeControl : FrameworkElement
         var center = new Point(RenderSize.Width / 2.0, RenderSize.Height / 2.0);
         var radius = System.Math.Min(RenderSize.Width, RenderSize.Height) * 0.45;
         DrawRings(dc, center, radius, Picture.Ownship.HeadingDeg);
-        DrawAirspaces(dc, center, radius);
-        DrawBullseye(dc, center, radius);
+        DrawOptionalOverlay(() => DrawAirspaces(dc, center, radius));
+        DrawOptionalOverlay(() => DrawBullseye(dc, center, radius));
         DrawOwnship(dc, center, radius, Picture.Ownship.HeadingDeg);
         DrawTargets(dc, center, radius);
+    }
+
+    private static void DrawOptionalOverlay(Action draw)
+    {
+        try
+        {
+            draw();
+        }
+        catch
+        {
+            // Optional overlays must never prevent traffic from rendering.
+        }
     }
 
     private void DrawBackground(DrawingContext dc)
@@ -201,32 +214,37 @@ public sealed class TacticalScopeControl : FrameworkElement
         var inactiveFill = new SolidColorBrush(WithScaledAlpha(12, 110, 180, 170, opacity));
 
         dc.PushClip(new RectangleGeometry(new Rect(0, 0, RenderSize.Width, RenderSize.Height)));
-        foreach (var airspace in Airspaces)
+        try
         {
-            if (Settings.ShowOnlyActiveAirspaceBoundaries && !airspace.IsActive)
+            foreach (var airspace in Airspaces)
             {
-                continue;
-            }
-
-            foreach (var polygon in airspace.Polygons)
-            {
-                var projected = ProjectAirspacePolygon(polygon, center, radius);
-                if (projected.Count < 2 || !IntersectsViewport(projected))
+                if (Settings.ShowOnlyActiveAirspaceBoundaries && !airspace.IsActive)
                 {
                     continue;
                 }
 
-                var geometry = BuildAirspaceGeometry(projected);
-                dc.DrawGeometry(airspace.IsActive ? activeFill : inactiveFill, airspace.IsActive ? pen : inactivePen, geometry);
-            }
+                foreach (var polygon in airspace.Polygons)
+                {
+                    var projected = ProjectAirspacePolygon(polygon, center, radius);
+                    if (projected.Count < 2 || !IntersectsViewport(projected))
+                    {
+                        continue;
+                    }
 
-            if (airspace.IsActive && !string.IsNullOrWhiteSpace(airspace.Name))
-            {
-                DrawAirspaceLabel(dc, airspace, center, radius);
+                    var geometry = BuildAirspaceGeometry(projected);
+                    dc.DrawGeometry(airspace.IsActive ? activeFill : inactiveFill, airspace.IsActive ? pen : inactivePen, geometry);
+                }
+
+                if (airspace.IsActive && !string.IsNullOrWhiteSpace(airspace.Name))
+                {
+                    DrawAirspaceLabel(dc, airspace, center, radius);
+                }
             }
         }
-
-        dc.Pop();
+        finally
+        {
+            dc.Pop();
+        }
     }
 
     private IReadOnlyList<Point> ProjectAirspacePolygon(AirspacePolygon polygon, Point center, double radius)
@@ -259,6 +277,11 @@ public sealed class TacticalScopeControl : FrameworkElement
                 Picture.Ownship.HeadingDeg,
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
                 clampToRange: false);
+            if (!IsDrawableOverlayPoint(point.x, point.y))
+            {
+                continue;
+            }
+
             projected.Add(new Point(point.x, point.y));
         }
 
@@ -294,6 +317,12 @@ public sealed class TacticalScopeControl : FrameworkElement
 
         return bounds.IntersectsWith(viewport) || bounds.Contains(viewport);
     }
+
+    private static bool IsDrawableOverlayPoint(double x, double y) =>
+        double.IsFinite(x) &&
+        double.IsFinite(y) &&
+        Math.Abs(x) <= MaxOverlayCoordinate &&
+        Math.Abs(y) <= MaxOverlayCoordinate;
 
     private void DrawAirspaceLabel(DrawingContext dc, AirspaceArea airspace, Point center, double radius)
     {
