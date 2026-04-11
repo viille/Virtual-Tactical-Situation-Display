@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using Microsoft.Win32;
 using System.Windows;
@@ -17,15 +18,22 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 {
     private readonly JsonConfigStore _configStore;
     private readonly ClassificationConfig _classification;
+    private readonly AirspaceDataService _airspaceDataService = new();
     private TrafficRepository _repository = new();
     private ITrafficDataFeed _feed;
     private readonly DispatcherTimer _renderTimer;
+    private readonly DispatcherTimer _airspaceTimer;
     private readonly CancellationTokenSource _runCts = new();
     private TacticalPicture? _picture;
+    private IReadOnlyList<AirspaceArea> _airspaces = [];
     private string _connectionText = "Disconnected";
     private string _simConnectText = "N/A";
     private string _trafficText = "0 contacts";
     private string _sourceText = string.Empty;
+    private string _airspaceText = "Airspace: loading";
+    private string _bullseyeLatitudeText = string.Empty;
+    private string _bullseyeLongitudeText = string.Empty;
+    private string _bullseyeText = "Bullseye: off";
     private bool _simConnected;
     private int _refreshCounter;
     private DateTimeOffset _rateWindowStart = DateTimeOffset.UtcNow;
@@ -56,8 +64,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         IncreaseRangeCommand = new RelayCommand(IncreaseRange);
         DecreaseRangeCommand = new RelayCommand(DecreaseRange);
         ToggleDeclutterCommand = new RelayCommand(ToggleDeclutter);
+        ToggleAirspaceCommand = new RelayCommand(ToggleAirspace);
         ToggleLabelsCommand = new RelayCommand(ToggleLabels);
         ToggleTrailsCommand = new RelayCommand(ToggleTrails);
+        ApplyBullseyeCommand = new RelayCommand(ApplyBullseye);
+        ClearBullseyeCommand = new RelayCommand(ClearBullseye);
         SaveSettingsCommand = new RelayCommand(() => _configStore.SaveDisplaySettings(Settings));
         ApplyDataSourceCommand = new RelayCommand(() => _ = SwitchDataSourceAsync(SelectedDataSource, forceRestart: false));
         ToggleSettingsCommand = new RelayCommand(ToggleSettingsPanel);
@@ -72,6 +83,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         };
         _renderTimer.Start();
         _ = _feed.StartAsync(_runCts.Token);
+        _airspaceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(45) };
+        _airspaceTimer.Tick += (_, _) => _ = LoadAirspacesAsync();
+        _airspaceTimer.Start();
+        _ = LoadAirspacesAsync();
+        InitializeBullseyeText();
 
         UpdateSourceState(Settings.DataSourceMode);
     }
@@ -81,6 +97,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _picture;
         private set => SetField(ref _picture, value);
+    }
+
+    public IReadOnlyList<AirspaceArea> Airspaces
+    {
+        get => _airspaces;
+        private set => SetField(ref _airspaces, value);
     }
 
     public string ConnectionText
@@ -105,6 +127,50 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _sourceText;
         private set => SetField(ref _sourceText, value);
+    }
+
+    public string AirspaceText
+    {
+        get => _airspaceText;
+        private set => SetField(ref _airspaceText, value);
+    }
+
+    public double AirspaceOpacityPercent
+    {
+        get => Math.Round(Settings.AirspaceOpacity * 100);
+        set
+        {
+            var opacity = Math.Clamp(value / 100.0, 0.1, 1.0);
+            if (Math.Abs(Settings.AirspaceOpacity - opacity) < 0.001)
+            {
+                return;
+            }
+
+            Settings.AirspaceOpacity = opacity;
+            Raise();
+            Raise(nameof(AirspaceOpacityText));
+            Raise(nameof(Settings));
+        }
+    }
+
+    public string AirspaceOpacityText => $"Area alpha: {AirspaceOpacityPercent:0}%";
+
+    public string BullseyeLatitudeText
+    {
+        get => _bullseyeLatitudeText;
+        set => SetField(ref _bullseyeLatitudeText, value);
+    }
+
+    public string BullseyeLongitudeText
+    {
+        get => _bullseyeLongitudeText;
+        set => SetField(ref _bullseyeLongitudeText, value);
+    }
+
+    public string BullseyeText
+    {
+        get => _bullseyeText;
+        private set => SetField(ref _bullseyeText, value);
     }
 
     public string RefreshRateText
@@ -165,6 +231,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string SettingsToggleText => ShowSettings ? "Hide Settings" : "Show Settings";
     public string TopMostToggleText => IsAlwaysOnTop ? "Unpin Window" : "Pin On Top";
     public string DeclutterToggleText => Settings.Declutter ? "Declutter ON" : "Declutter OFF";
+    public string AirspaceToggleText => Settings.ShowAirspaceBoundaries ? "Areas ON" : "Areas OFF";
+    public string TrailsToggleText => Settings.TrailsEnabled ? "Trails ON" : "Trails OFF";
     public string SimulatorStatusLabel =>
         DataSourceModes.IsXPlane12(Settings.DataSourceMode) ? "X-Plane 12:" :
         DataSourceModes.IsXPlaneLegacy(Settings.DataSourceMode) ? "XPUIPC:" :
@@ -183,8 +251,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand IncreaseRangeCommand { get; }
     public RelayCommand DecreaseRangeCommand { get; }
     public RelayCommand ToggleDeclutterCommand { get; }
+    public RelayCommand ToggleAirspaceCommand { get; }
     public RelayCommand ToggleLabelsCommand { get; }
     public RelayCommand ToggleTrailsCommand { get; }
+    public RelayCommand ApplyBullseyeCommand { get; }
+    public RelayCommand ClearBullseyeCommand { get; }
     public RelayCommand SaveSettingsCommand { get; }
     public RelayCommand ApplyDataSourceCommand { get; }
     public RelayCommand ToggleSettingsCommand { get; }
@@ -198,6 +269,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         DataSourceDebugLog.Info("App", "Application shutdown");
         _renderTimer.Stop();
+        _airspaceTimer.Stop();
         _runCts.Cancel();
         await _feed.StopAsync();
         await _feed.DisposeAsync();
@@ -240,6 +312,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(DeclutterToggleText));
     }
 
+    private void ToggleAirspace()
+    {
+        Settings.ShowAirspaceBoundaries = !Settings.ShowAirspaceBoundaries;
+        Raise(nameof(AirspaceToggleText));
+    }
+
     private void ToggleLabels()
     {
         Settings.LabelMode = Settings.LabelMode switch
@@ -250,11 +328,108 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         };
     }
 
-    private void ToggleTrails() => Settings.TrailsEnabled = !Settings.TrailsEnabled;
+    private void ToggleTrails()
+    {
+        Settings.TrailsEnabled = !Settings.TrailsEnabled;
+        Raise(nameof(TrailsToggleText));
+    }
 
     private void ToggleSettingsPanel() => ShowSettings = !ShowSettings;
 
     private void ToggleAlwaysOnTop() => IsAlwaysOnTop = !IsAlwaysOnTop;
+
+    private void InitializeBullseyeText()
+    {
+        if (!Settings.BullseyeLatitudeDeg.HasValue || !Settings.BullseyeLongitudeDeg.HasValue)
+        {
+            UpdateBullseyeText();
+            return;
+        }
+
+        BullseyeLatitudeText = Settings.BullseyeLatitudeDeg.Value.ToString("0.######", CultureInfo.InvariantCulture);
+        BullseyeLongitudeText = Settings.BullseyeLongitudeDeg.Value.ToString("0.######", CultureInfo.InvariantCulture);
+        UpdateBullseyeText();
+    }
+
+    private void ApplyBullseye()
+    {
+        if (!TryParseCoordinate(BullseyeLatitudeText, -90, 90, "NS", out var latitude) ||
+            !TryParseCoordinate(BullseyeLongitudeText, -180, 180, "EW", out var longitude))
+        {
+            BullseyeText = "Bullseye: invalid coordinate";
+            return;
+        }
+
+        Settings.BullseyeLatitudeDeg = latitude;
+        Settings.BullseyeLongitudeDeg = longitude;
+        Settings.ShowBullseye = true;
+        _configStore.SaveDisplaySettings(Settings);
+        UpdateBullseyeText();
+        Raise(nameof(Settings));
+    }
+
+    private void ClearBullseye()
+    {
+        Settings.ShowBullseye = false;
+        Settings.BullseyeLatitudeDeg = null;
+        Settings.BullseyeLongitudeDeg = null;
+        BullseyeLatitudeText = string.Empty;
+        BullseyeLongitudeText = string.Empty;
+        _configStore.SaveDisplaySettings(Settings);
+        UpdateBullseyeText();
+        Raise(nameof(Settings));
+    }
+
+    private void UpdateBullseyeText()
+    {
+        BullseyeText = Settings.ShowBullseye &&
+            Settings.BullseyeLatitudeDeg.HasValue &&
+            Settings.BullseyeLongitudeDeg.HasValue
+                ? $"Bullseye: {Settings.BullseyeLatitudeDeg.Value:0.####}, {Settings.BullseyeLongitudeDeg.Value:0.####}"
+                : "Bullseye: off";
+    }
+
+    private static bool TryParseCoordinate(string text, double min, double max, string allowedHemisphereLetters, out double value)
+    {
+        value = 0;
+        var normalized = text.Trim().ToUpperInvariant().Replace(',', '.');
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return false;
+        }
+
+        double sign = 1;
+        foreach (var hemisphere in allowedHemisphereLetters)
+        {
+            var index = normalized.IndexOf(hemisphere);
+            if (index < 0)
+            {
+                continue;
+            }
+
+            if (normalized.LastIndexOf(hemisphere) != index)
+            {
+                return false;
+            }
+
+            sign = hemisphere is 'S' or 'W' ? -1 : 1;
+            normalized = normalized.Remove(index, 1).Trim();
+        }
+
+        if (normalized.Any(char.IsLetter))
+        {
+            return false;
+        }
+
+        if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out value))
+        {
+            return false;
+        }
+
+        value *= sign;
+        return value >= min &&
+            value <= max;
+    }
 
     private void OpenDebugLogFolder()
     {
@@ -501,6 +676,36 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Picture = new TacticalPicture(basePicture.Ownship, mappedTargets, basePicture.Timestamp);
         Raise(nameof(HeaderText));
         UpdateRefreshRate();
+    }
+
+    private async Task LoadAirspacesAsync()
+    {
+        try
+        {
+            var airspaces = await _airspaceDataService.LoadAsync(Settings, _runCts.Token);
+            if (!Application.Current.Dispatcher.CheckAccess())
+            {
+                Application.Current.Dispatcher.Invoke(() => ApplyLoadedAirspaces(airspaces));
+                return;
+            }
+
+            ApplyLoadedAirspaces(airspaces);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (Exception ex)
+        {
+            AirspaceText = $"Airspace: unavailable ({ex.Message})";
+            DataSourceDebugLog.Info("Airspace", $"Airspace load failed | {ex}");
+        }
+    }
+
+    private void ApplyLoadedAirspaces(IReadOnlyList<AirspaceArea> airspaces)
+    {
+        Airspaces = airspaces;
+        var activeCount = airspaces.Count(a => a.IsActive);
+        AirspaceText = $"Airspace: {Settings.AirspaceFirCode.ToUpperInvariant()} {activeCount} active";
     }
 
     private void UpdateRefreshRate()

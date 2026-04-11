@@ -78,6 +78,7 @@
                 <controls:TacticalScopeControl x:Name="ScopeControl"
                                                Picture="{Binding Picture}"
                                                Settings="{Binding Settings}"
+                                               Airspaces="{Binding Airspaces}"
                                                ManualTargetMetadata="{Binding ManualTargetMetadata}" />
                 <StackPanel Orientation="Vertical"
                             HorizontalAlignment="Left"
@@ -111,48 +112,129 @@
                     </Style.Triggers>
                 </Style>
             </Border.Style>
-            <StackPanel>
-                <TextBlock Text="Controls"
-                           FontFamily="Consolas"
-                           Foreground="#9AFAD7"
-                           FontSize="16"
-                           Margin="0,0,0,8" />
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <TextBlock Text="Settings"
+                               FontFamily="Consolas"
+                               Foreground="#9AFAD7"
+                               FontSize="16"
+                               Margin="0,0,0,8" />
 
-                <UniformGrid Columns="2" Rows="2" Margin="0,0,0,8">
-                    <Button Content="N/HDG" Margin="4" Command="{Binding ToggleOrientationCommand}" />
-                    <Button Content="{Binding DeclutterToggleText}" Margin="4" Command="{Binding ToggleDeclutterCommand}" />
-                    <Button Content="Labels" Margin="4" Command="{Binding ToggleLabelsCommand}" />
-                    <Button Content="Trails" Margin="4" Command="{Binding ToggleTrailsCommand}" />
-                </UniformGrid>
+                    <GroupBox Header="Display" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
+                        <UniformGrid Columns="2" Rows="3">
+                            <Button Content="N/HDG" Margin="4" Command="{Binding ToggleOrientationCommand}" />
+                            <Button Content="{Binding DeclutterToggleText}" Margin="4" Command="{Binding ToggleDeclutterCommand}" />
+                            <Button Content="Labels" Margin="4" Command="{Binding ToggleLabelsCommand}" />
+                            <Button Content="{Binding TrailsToggleText}" Margin="4" Command="{Binding ToggleTrailsCommand}" />
+                            <Button Content="{Binding AirspaceToggleText}" Margin="4" Command="{Binding ToggleAirspaceCommand}" />
+                        </UniformGrid>
+                    </GroupBox>
 
-                <TextBlock Text="Source" Foreground="#7CB9A9" Margin="0,8,0,0" />
-                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                    <ComboBox Width="150"
-                              ItemsSource="{Binding AvailableDataSources}"
-                              SelectedItem="{Binding SelectedDataSource}" />
-                    <Button Content="Apply Source"
-                            Margin="8,0,0,0"
-                            Command="{Binding ApplyDataSourceCommand}" />
+                    <GroupBox Header="Data Source" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <ComboBox Width="150"
+                                          ItemsSource="{Binding AvailableDataSources}"
+                                          SelectedItem="{Binding SelectedDataSource}" />
+                                <Button Content="Apply Source"
+                                        Margin="8,0,0,0"
+                                        Command="{Binding ApplyDataSourceCommand}" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding SourceText}" Foreground="#9AFAD7" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="V-LARA Airspace" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
+                        <StackPanel>
+                            <TextBlock Text="{Binding AirspaceText}" Foreground="#9AFAD7" />
+                            <TextBlock Text="{Binding AirspaceOpacityText}" Foreground="#7CB9A9" Margin="0,6,0,0" />
+                            <Slider Minimum="10"
+                                    Maximum="100"
+                                    TickFrequency="10"
+                                    IsSnapToTickEnabled="True"
+                                    Value="{Binding AirspaceOpacityPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                    Margin="0,2,0,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Bullseye" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
+                        <StackPanel>
+                            <UniformGrid Columns="2" Rows="2">
+                                <Grid Margin="4">
+                                    <TextBox x:Name="BullseyeLatitudeBox"
+                                             Text="{Binding BullseyeLatitudeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Latitude, decimal degrees" />
+                                    <TextBlock Text="N60.3172"
+                                               Foreground="#778C8A"
+                                               Margin="6,2,0,0"
+                                               IsHitTestVisible="False">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Text, ElementName=BullseyeLatitudeBox}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                                <Grid Margin="4">
+                                    <TextBox x:Name="BullseyeLongitudeBox"
+                                             Text="{Binding BullseyeLongitudeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Longitude, decimal degrees" />
+                                    <TextBlock Text="E024.9633"
+                                               Foreground="#778C8A"
+                                               Margin="6,2,0,0"
+                                               IsHitTestVisible="False">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding Text, ElementName=BullseyeLongitudeBox}" Value="">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                                <Button Content="Set Bullseye"
+                                        Command="{Binding ApplyBullseyeCommand}"
+                                        Margin="4" />
+                                <Button Content="Clear Bullseye"
+                                        Command="{Binding ClearBullseyeCommand}"
+                                        Margin="4" />
+                            </UniformGrid>
+                            <TextBlock Text="{Binding BullseyeText}" Foreground="#9AFAD7" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <Button Content="Save Settings"
+                            Command="{Binding SaveSettingsCommand}"
+                            Margin="0,0,0,8" />
+
+                    <Expander Header="Debug" Foreground="#7CB9A9" Margin="0,0,0,4">
+                        <StackPanel Margin="0,8,0,0">
+                            <CheckBox Content="Enable datasource debug log"
+                                      IsChecked="{Binding DataSourceDebugLoggingEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      Foreground="#9AFAD7" />
+                            <Button Content="Open Debug Log Folder"
+                                    Command="{Binding OpenDebugLogFolderCommand}"
+                                    Margin="0,8,0,0" />
+                            <TextBlock Text="Writes MSFS/XPlane feed diagnostics to config/logs/data-source-debug.log"
+                                       Foreground="#7CB9A9"
+                                       TextWrapping="Wrap"
+                                       Margin="0,4,0,0" />
+                            <TextBlock Text="Range/alt/category filters can be edited in display.json."
+                                       Foreground="#7CB9A9"
+                                       TextWrapping="Wrap"
+                                       Margin="0,8,0,0" />
+                        </StackPanel>
+                    </Expander>
                 </StackPanel>
-                <TextBlock Text="{Binding SourceText}" Foreground="#9AFAD7" Margin="0,4,0,0" />
-                <CheckBox Content="Enable datasource debug log"
-                          IsChecked="{Binding DataSourceDebugLoggingEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                          Foreground="#9AFAD7"
-                          Margin="0,8,0,0" />
-                <Button Content="Open Debug Log Folder"
-                        Command="{Binding OpenDebugLogFolderCommand}"
-                        Margin="0,8,0,0" />
-                <TextBlock Text="Writes MSFS/XPlane feed diagnostics to config/logs/data-source-debug.log"
-                           Foreground="#7CB9A9"
-                           TextWrapping="Wrap"
-                           Margin="0,2,0,0" />
-                <TextBlock Text="Filters" Foreground="#7CB9A9" Margin="0,8,0,0" />
-                <TextBlock Text="Range/Alt/Category filters from display.json" Foreground="#9AFAD7" TextWrapping="Wrap" Margin="0,2,0,0" />
-
-                <Button Content="Save Settings"
-                        Command="{Binding SaveSettingsCommand}"
-                        Margin="0,10,0,0" />
-            </StackPanel>
+            </ScrollViewer>
         </Border>
 
         <Border Grid.Row="2"

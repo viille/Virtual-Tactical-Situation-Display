@@ -12,13 +12,22 @@ public sealed class TacticalDisplaySettings
     public int SelectedRangeNm { get; set; } = 40;
     public ScopeOrientationMode OrientationMode { get; set; } = ScopeOrientationMode.HeadingUp;
     public bool ShowRangeRings { get; set; } = true;
+    public bool ShowAirspaceBoundaries { get; set; } = true;
+    public bool ShowOnlyActiveAirspaceBoundaries { get; set; } = true;
+    public double AirspaceOpacity { get; set; } = 1.0;
+    public string AirspaceFirCode { get; set; } = "efin";
+    public string AirspaceDataBaseUrl { get; set; } = "https://raw.githubusercontent.com/ottotuhkunen/virtual-lara-airspace-data/main/data";
+    public string AirspaceActivationUrl { get; set; } = "https://lara-backend.lusep.fi/topsky/lara.txt";
+    public bool ShowBullseye { get; set; }
+    public double? BullseyeLatitudeDeg { get; set; }
+    public double? BullseyeLongitudeDeg { get; set; }
     public bool Declutter { get; set; }
     public bool TrailsEnabled { get; set; } = true;
     public LabelMode LabelMode { get; set; } = LabelMode.Minimal;
     public RangeFilterMode RangeFilter { get; set; } = RangeFilterMode.All;
     public AltitudeFilterMode AltitudeFilter { get; set; } = AltitudeFilterMode.All;
     public CategoryFilterMode CategoryFilter { get; set; } = CategoryFilterMode.All;
-    public int TrailLengthSamples { get; set; } = 15;
+    public int TrailLengthSamples { get; set; } = 90;
     public double PollRateHz { get; set; } = 8;
     public double RenderRateFps { get; set; } = 24;
     public double StaleSeconds { get; set; } = 4;

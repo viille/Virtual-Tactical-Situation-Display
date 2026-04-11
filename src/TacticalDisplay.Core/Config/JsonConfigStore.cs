@@ -30,7 +30,9 @@ public sealed class JsonConfigStore
         }
 
         var json = File.ReadAllText(path);
-        return JsonSerializer.Deserialize<TacticalDisplaySettings>(json, _jsonOptions) ?? new TacticalDisplaySettings();
+        var settings = JsonSerializer.Deserialize<TacticalDisplaySettings>(json, _jsonOptions) ?? new TacticalDisplaySettings();
+        ApplyDisplaySettingMigrations(settings);
+        return settings;
     }
 
     public void SaveDisplaySettings(TacticalDisplaySettings settings)
@@ -82,5 +84,15 @@ public sealed class JsonConfigStore
             .Where(v => !string.IsNullOrWhiteSpace(v))
             .Select(v => v.Trim().ToUpperInvariant())
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static void ApplyDisplaySettingMigrations(TacticalDisplaySettings settings)
+    {
+        settings.AirspaceOpacity = System.Math.Clamp(settings.AirspaceOpacity, 0.1, 1.0);
+
+        if (settings.TrailLengthSamples == 15)
+        {
+            settings.TrailLengthSamples = 90;
+        }
     }
 }

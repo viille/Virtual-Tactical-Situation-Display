@@ -12,13 +12,14 @@ public static class ScopeProjection
         double bearingDegTrue,
         double selectedRangeNm,
         double ownHeadingDeg,
-        bool headingUp)
+        bool headingUp,
+        bool clampToRange = true)
     {
         var usedBearing = headingUp
             ? GeoMath.NormalizeDegrees(bearingDegTrue - ownHeadingDeg)
             : GeoMath.NormalizeDegrees(bearingDegTrue);
 
-        var ratio = System.Math.Clamp(rangeNm / selectedRangeNm, 0, 1);
+        var ratio = clampToRange ? System.Math.Clamp(rangeNm / selectedRangeNm, 0, 1) : rangeNm / selectedRangeNm;
         var pixelRadius = ratio * radiusPixels;
         var rad = usedBearing * System.Math.PI / 180.0;
         var x = centerX + pixelRadius * System.Math.Sin(rad);

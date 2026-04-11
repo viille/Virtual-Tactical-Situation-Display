@@ -39,6 +39,12 @@ public sealed class TacticalScopeControl : FrameworkElement
         typeof(TacticalScopeControl),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty AirspacesProperty = DependencyProperty.Register(
+        nameof(Airspaces),
+        typeof(IReadOnlyList<AirspaceArea>),
+        typeof(TacticalScopeControl),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
     public TacticalPicture? Picture
     {
         get => (TacticalPicture?)GetValue(PictureProperty);
@@ -55,6 +61,12 @@ public sealed class TacticalScopeControl : FrameworkElement
     {
         get => (IReadOnlyDictionary<string, ManualTargetMetadata>?)GetValue(ManualTargetMetadataProperty);
         set => SetValue(ManualTargetMetadataProperty, value);
+    }
+
+    public IReadOnlyList<AirspaceArea>? Airspaces
+    {
+        get => (IReadOnlyList<AirspaceArea>?)GetValue(AirspacesProperty);
+        set => SetValue(AirspacesProperty, value);
     }
 
     public event EventHandler<ScopeTargetClickEventArgs>? TargetClicked;
@@ -74,6 +86,8 @@ public sealed class TacticalScopeControl : FrameworkElement
         var center = new Point(RenderSize.Width / 2.0, RenderSize.Height / 2.0);
         var radius = System.Math.Min(RenderSize.Width, RenderSize.Height) * 0.45;
         DrawRings(dc, center, radius, Picture.Ownship.HeadingDeg);
+        DrawAirspaces(dc, center, radius);
+        DrawBullseye(dc, center, radius);
         DrawOwnship(dc, center, radius, Picture.Ownship.HeadingDeg);
         DrawTargets(dc, center, radius);
     }
@@ -170,6 +184,212 @@ public sealed class TacticalScopeControl : FrameworkElement
         dc.Pop();
     }
 
+    private void DrawAirspaces(DrawingContext dc, Point center, double radius)
+    {
+        if (Picture is null ||
+            Settings is null ||
+            Airspaces is null ||
+            !Settings.ShowAirspaceBoundaries)
+        {
+            return;
+        }
+
+        var opacity = Math.Clamp(Settings.AirspaceOpacity, 0.1, 1.0);
+        var pen = new Pen(new SolidColorBrush(WithScaledAlpha(210, 247, 200, 115, opacity)), 1.2);
+        var activeFill = new SolidColorBrush(WithScaledAlpha(34, 247, 200, 115, opacity));
+        var inactivePen = new Pen(new SolidColorBrush(WithScaledAlpha(70, 110, 180, 170, opacity)), 0.8);
+        var inactiveFill = new SolidColorBrush(WithScaledAlpha(12, 110, 180, 170, opacity));
+
+        dc.PushClip(new RectangleGeometry(new Rect(0, 0, RenderSize.Width, RenderSize.Height)));
+        foreach (var airspace in Airspaces)
+        {
+            if (Settings.ShowOnlyActiveAirspaceBoundaries && !airspace.IsActive)
+            {
+                continue;
+            }
+
+            foreach (var polygon in airspace.Polygons)
+            {
+                var projected = ProjectAirspacePolygon(polygon, center, radius);
+                if (projected.Count < 2 || !IntersectsViewport(projected))
+                {
+                    continue;
+                }
+
+                var geometry = BuildAirspaceGeometry(projected);
+                dc.DrawGeometry(airspace.IsActive ? activeFill : inactiveFill, airspace.IsActive ? pen : inactivePen, geometry);
+            }
+
+            if (airspace.IsActive && !string.IsNullOrWhiteSpace(airspace.Name))
+            {
+                DrawAirspaceLabel(dc, airspace, center, radius);
+            }
+        }
+
+        dc.Pop();
+    }
+
+    private IReadOnlyList<Point> ProjectAirspacePolygon(AirspacePolygon polygon, Point center, double radius)
+    {
+        if (Picture is null || Settings is null)
+        {
+            return [];
+        }
+
+        var projected = new List<Point>(polygon.Exterior.Count);
+        foreach (var coordinate in polygon.Exterior)
+        {
+            var range = GeoMath.DistanceNm(
+                Picture.Ownship.LatitudeDeg,
+                Picture.Ownship.LongitudeDeg,
+                coordinate.LatitudeDeg,
+                coordinate.LongitudeDeg);
+            var bearing = GeoMath.InitialBearingDeg(
+                Picture.Ownship.LatitudeDeg,
+                Picture.Ownship.LongitudeDeg,
+                coordinate.LatitudeDeg,
+                coordinate.LongitudeDeg);
+            var point = ScopeProjection.ProjectToScope(
+                center.X,
+                center.Y,
+                radius,
+                range,
+                bearing,
+                Settings.SelectedRangeNm,
+                Picture.Ownship.HeadingDeg,
+                Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
+                clampToRange: false);
+            projected.Add(new Point(point.x, point.y));
+        }
+
+        return projected;
+    }
+
+    private static StreamGeometry BuildAirspaceGeometry(IReadOnlyList<Point> points)
+    {
+        var geometry = new StreamGeometry();
+        using var ctx = geometry.Open();
+        ctx.BeginFigure(points[0], true, true);
+        for (var i = 1; i < points.Count; i++)
+        {
+            ctx.LineTo(points[i], true, false);
+        }
+
+        geometry.Freeze();
+        return geometry;
+    }
+
+    private bool IntersectsViewport(IReadOnlyList<Point> points)
+    {
+        var viewport = new Rect(0, 0, RenderSize.Width, RenderSize.Height);
+        var bounds = new Rect(points[0], points[0]);
+        foreach (var point in points)
+        {
+            bounds.Union(point);
+            if (viewport.Contains(point))
+            {
+                return true;
+            }
+        }
+
+        return bounds.IntersectsWith(viewport) || bounds.Contains(viewport);
+    }
+
+    private void DrawAirspaceLabel(DrawingContext dc, AirspaceArea airspace, Point center, double radius)
+    {
+        if (Picture is null || Settings is null)
+        {
+            return;
+        }
+
+        var coordinates = airspace.Polygons.SelectMany(p => p.Exterior).ToList();
+        if (coordinates.Count == 0)
+        {
+            return;
+        }
+
+        var latitude = coordinates.Average(c => c.LatitudeDeg);
+        var longitude = coordinates.Average(c => c.LongitudeDeg);
+        var range = GeoMath.DistanceNm(Picture.Ownship.LatitudeDeg, Picture.Ownship.LongitudeDeg, latitude, longitude);
+        if (range > Settings.SelectedRangeNm)
+        {
+            return;
+        }
+
+        var bearing = GeoMath.InitialBearingDeg(Picture.Ownship.LatitudeDeg, Picture.Ownship.LongitudeDeg, latitude, longitude);
+        var point = ScopeProjection.ProjectToScope(
+            center.X,
+            center.Y,
+            radius,
+            range,
+            bearing,
+            Settings.SelectedRangeNm,
+            Picture.Ownship.HeadingDeg,
+            Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
+        DrawCenteredText(dc, BuildAirspaceLabelText(airspace), point.x, point.y, Color.FromRgb(247, 200, 115), 11, FontWeights.SemiBold);
+    }
+
+    private static string BuildAirspaceLabelText(AirspaceArea airspace)
+    {
+        var lower = airspace.LowerFlightLevel.HasValue ? $"FL{airspace.LowerFlightLevel.Value:000}" : string.Empty;
+        var upper = airspace.UpperFlightLevel.HasValue ? $"FL{airspace.UpperFlightLevel.Value:000}" : string.Empty;
+        return string.IsNullOrWhiteSpace(lower) || string.IsNullOrWhiteSpace(upper)
+            ? airspace.Name
+            : $"{airspace.Name} {lower}-{upper}";
+    }
+
+    private static Color WithScaledAlpha(byte alpha, byte red, byte green, byte blue, double opacity) =>
+        Color.FromArgb((byte)Math.Clamp(alpha * opacity, 0, 255), red, green, blue);
+
+    private void DrawBullseye(DrawingContext dc, Point center, double radius)
+    {
+        if (Picture is null ||
+            Settings is null ||
+            !Settings.ShowBullseye ||
+            !Settings.BullseyeLatitudeDeg.HasValue ||
+            !Settings.BullseyeLongitudeDeg.HasValue)
+        {
+            return;
+        }
+
+        var range = GeoMath.DistanceNm(
+            Picture.Ownship.LatitudeDeg,
+            Picture.Ownship.LongitudeDeg,
+            Settings.BullseyeLatitudeDeg.Value,
+            Settings.BullseyeLongitudeDeg.Value);
+        if (range > Settings.SelectedRangeNm)
+        {
+            return;
+        }
+
+        var bearing = GeoMath.InitialBearingDeg(
+            Picture.Ownship.LatitudeDeg,
+            Picture.Ownship.LongitudeDeg,
+            Settings.BullseyeLatitudeDeg.Value,
+            Settings.BullseyeLongitudeDeg.Value);
+        var point = ScopeProjection.ProjectToScope(
+            center.X,
+            center.Y,
+            radius,
+            range,
+            bearing,
+            Settings.SelectedRangeNm,
+            Picture.Ownship.HeadingDeg,
+            Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
+        var p = new Point(point.x, point.y);
+        if (!new Rect(0, 0, RenderSize.Width, RenderSize.Height).Contains(p))
+        {
+            return;
+        }
+
+        var brush = new SolidColorBrush(Color.FromRgb(247, 200, 115));
+        var pen = new Pen(brush, 1.4);
+        dc.DrawEllipse(null, pen, p, 8, 8);
+        dc.DrawLine(pen, new Point(p.X - 12, p.Y), new Point(p.X + 12, p.Y));
+        dc.DrawLine(pen, new Point(p.X, p.Y - 12), new Point(p.X, p.Y + 12));
+        DrawText(dc, $"BULL {bearing:000}/{range:0.0}", p.X + 12, p.Y + 8, Color.FromRgb(247, 200, 115), 11, FontWeights.SemiBold);
+    }
+
     private void DrawTargets(DrawingContext dc, Point center, double radius)
     {
         if (Picture is null || Settings is null)
@@ -234,14 +454,10 @@ public sealed class TacticalScopeControl : FrameworkElement
 
         var pen = new Pen(new SolidColorBrush(Color.FromArgb(90, 140, 230, 220)), 1);
         Point? previous = null;
+        dc.PushClip(new RectangleGeometry(new Rect(0, 0, RenderSize.Width, RenderSize.Height)));
         foreach (var point in target.History)
         {
             var range = GeoMath.DistanceNm(Picture.Ownship.LatitudeDeg, Picture.Ownship.LongitudeDeg, point.LatitudeDeg, point.LongitudeDeg);
-            if (range > Settings.SelectedRangeNm)
-            {
-                continue;
-            }
-
             var bearing = GeoMath.InitialBearingDeg(Picture.Ownship.LatitudeDeg, Picture.Ownship.LongitudeDeg, point.LatitudeDeg, point.LongitudeDeg);
             var projection = ScopeProjection.ProjectToScope(
                 center.X,
@@ -251,7 +467,8 @@ public sealed class TacticalScopeControl : FrameworkElement
                 bearing,
                 Settings.SelectedRangeNm,
                 Picture.Ownship.HeadingDeg,
-                Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
+                Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
+                clampToRange: false);
             var current = new Point(projection.x, projection.y);
             if (previous is not null)
             {
@@ -260,6 +477,8 @@ public sealed class TacticalScopeControl : FrameworkElement
 
             previous = current;
         }
+
+        dc.Pop();
     }
 
     private static void DrawTargetSymbol(

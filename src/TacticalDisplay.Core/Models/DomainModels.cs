@@ -95,3 +95,18 @@ public sealed record TacticalPicture(
     OwnshipState Ownship,
     IReadOnlyList<ComputedTarget> Targets,
     DateTimeOffset Timestamp);
+
+public sealed record AirspaceArea(
+    string Name,
+    string Type,
+    int? LowerFlightLevel,
+    int? UpperFlightLevel,
+    bool IsActive,
+    IReadOnlyList<AirspacePolygon> Polygons);
+
+public sealed record AirspacePolygon(
+    IReadOnlyList<AirspaceCoordinate> Exterior);
+
+public sealed record AirspaceCoordinate(
+    double LatitudeDeg,
+    double LongitudeDeg);
