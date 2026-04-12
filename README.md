@@ -95,6 +95,8 @@ If live data does not appear, check:
 - XPUIPC is installed when using legacy X-Plane
 - X-Plane 12 local Web API URL is correct when using `XPlane 12`
 
+If the map layer says `Map unavailable`, check that Microsoft Edge WebView2 Runtime is installed and that the app can write to `%LOCALAPPDATA%\VirtualTacticalSituationDisplay\WebView2`. A `0x8000FFFF` startup error usually means WebView2 failed before the map page or online tiles loaded.
+
 Datasource logs are written to `config/logs/data-source-debug.log` when debug logging is enabled in the app.
 
 ## Advanced Notes

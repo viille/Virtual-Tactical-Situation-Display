@@ -22,7 +22,7 @@ public sealed class UpdateCheckService
         {
             Timeout = TimeSpan.FromSeconds(5)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display/0.7.0");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display/0.7.1");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
 
         using var response = await client.GetAsync(LatestReleaseApiUri, cancellationToken);

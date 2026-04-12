@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -11,6 +13,7 @@ namespace TacticalDisplay.App.Controls;
 public partial class OpenFreeMapControl : UserControl
 {
     private const double MetersPerNauticalMile = 1852.0;
+    private const string WebView2RuntimeDownloadUrl = "https://developer.microsoft.com/en-us/microsoft-edge/webview2/";
 
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -73,14 +76,22 @@ public partial class OpenFreeMapControl : UserControl
         _initializing = true;
         try
         {
-            await MapWebView.EnsureCoreWebView2Async();
+            var environment = await CoreWebView2Environment.CreateAsync(
+                userDataFolder: ResolveWebViewUserDataFolder());
+            await MapWebView.EnsureCoreWebView2Async(environment);
             MapWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             MapWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
             MapWebView.NavigateToString(CreateMapHtml());
         }
+        catch (WebView2RuntimeNotFoundException ex)
+        {
+            StatusText.Text = $"Map unavailable: WebView2 Runtime is not installed ({ex.HResult:X8})";
+            StatusText.Visibility = Visibility.Visible;
+            ShowWebViewRuntimeMissingDialog();
+        }
         catch (Exception ex)
         {
-            StatusText.Text = $"Map unavailable: {ex.Message}";
+            StatusText.Text = $"Map unavailable: {ex.Message} ({ex.HResult:X8})";
             StatusText.Visibility = Visibility.Visible;
         }
         finally
@@ -238,6 +249,37 @@ public partial class OpenFreeMapControl : UserControl
         </body>
         </html>
         """;
+
+    private static string ResolveWebViewUserDataFolder()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(localAppData))
+        {
+            localAppData = Path.GetTempPath();
+        }
+
+        return Path.Combine(localAppData, "VirtualTacticalSituationDisplay", "WebView2");
+    }
+
+    private static void ShowWebViewRuntimeMissingDialog()
+    {
+        var result = MessageBox.Show(
+            "Microsoft Edge WebView2 Runtime is required for the map layer, but it is not installed.\n\nOpen the Microsoft download page now?",
+            "WebView2 Runtime Required",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = WebView2RuntimeDownloadUrl,
+            UseShellExecute = true
+        });
+    }
 
     private sealed record MapState(
         double LatitudeDeg,
