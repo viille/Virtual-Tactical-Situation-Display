@@ -195,7 +195,7 @@ public partial class OpenFreeMapControl : UserControl
           <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
           <script>
             const metersPerNauticalMile = 1852.0;
-            const webMercatorMetersPerPixelAtEquator = 156543.03392;
+            const webMercatorMetersPerPixelAtEquator = 78271.516964;
 
             const calculateZoom = state => {
               const rect = map.getContainer().getBoundingClientRect();
