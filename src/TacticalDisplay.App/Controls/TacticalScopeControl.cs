@@ -237,7 +237,7 @@ public sealed class TacticalScopeControl : FrameworkElement
 
                 if (airspace.IsActive && !string.IsNullOrWhiteSpace(airspace.Name))
                 {
-                    DrawAirspaceLabel(dc, airspace, center, radius);
+                    DrawAirspaceLabel(dc, airspace, center, radius, opacity);
                 }
             }
         }
@@ -324,7 +324,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         Math.Abs(x) <= MaxOverlayCoordinate &&
         Math.Abs(y) <= MaxOverlayCoordinate;
 
-    private void DrawAirspaceLabel(DrawingContext dc, AirspaceArea airspace, Point center, double radius)
+    private void DrawAirspaceLabel(DrawingContext dc, AirspaceArea airspace, Point center, double radius, double opacity)
     {
         if (Picture is null || Settings is null)
         {
@@ -355,7 +355,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             Settings.SelectedRangeNm,
             Picture.Ownship.HeadingDeg,
             Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
-        DrawCenteredText(dc, BuildAirspaceLabelText(airspace), point.x, point.y, Color.FromRgb(247, 200, 115), 11, FontWeights.SemiBold);
+        DrawCenteredText(dc, BuildAirspaceLabelText(airspace), point.x, point.y, WithScaledAlpha(255, 247, 200, 115, opacity), 11, FontWeights.SemiBold);
     }
 
     private static string BuildAirspaceLabelText(AirspaceArea airspace)

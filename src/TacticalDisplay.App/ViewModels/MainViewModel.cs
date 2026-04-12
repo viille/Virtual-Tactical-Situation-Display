@@ -157,7 +157,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
-    public string AirspaceOpacityText => $"Area alpha: {AirspaceOpacityPercent:0}%";
+    public string AirspaceOpacityText => $"Area opacity: {AirspaceOpacityPercent:0}%";
 
     public string BullseyeLatitudeText
     {

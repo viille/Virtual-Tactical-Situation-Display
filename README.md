@@ -45,7 +45,7 @@ SimConnect is bundled with the app. X-Plane 12 uses `http://localhost:8086/` by 
 - `Labels`: cycle label detail level
 - `Trails ON/OFF`: show or hide target trails
 - `Areas`: show or hide active V-LARA airspace boundaries
-- `Area alpha`: adjust airspace layer opacity
+- `Area opacity`: adjust airspace layer opacity
 - `Save Settings`: keep current settings for the next launch
 
 Keyboard shortcuts:
