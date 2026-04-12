@@ -121,13 +121,21 @@
                                Margin="0,0,0,8" />
 
                     <GroupBox Header="Display" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
-                        <UniformGrid Columns="2" Rows="3">
-                            <Button Content="N/HDG" Margin="4" Command="{Binding ToggleOrientationCommand}" />
-                            <Button Content="{Binding DeclutterToggleText}" Margin="4" Command="{Binding ToggleDeclutterCommand}" />
-                            <Button Content="Labels" Margin="4" Command="{Binding ToggleLabelsCommand}" />
-                            <Button Content="{Binding TrailsToggleText}" Margin="4" Command="{Binding ToggleTrailsCommand}" />
-                            <Button Content="{Binding AirspaceToggleText}" Margin="4" Command="{Binding ToggleAirspaceCommand}" />
-                        </UniformGrid>
+                        <StackPanel>
+                            <UniformGrid Columns="2" Rows="3">
+                                <Button Content="N/HDG" Margin="4" Command="{Binding ToggleOrientationCommand}" />
+                                <Button Content="{Binding DeclutterToggleText}" Margin="4" Command="{Binding ToggleDeclutterCommand}" />
+                                <Button Content="Labels" Margin="4" Command="{Binding ToggleLabelsCommand}" />
+                                <Button Content="{Binding TrailsToggleText}" Margin="4" Command="{Binding ToggleTrailsCommand}" />
+                                <Button Content="{Binding AirspaceToggleText}" Margin="4" Command="{Binding ToggleAirspaceCommand}" />
+                            </UniformGrid>
+                            <TextBlock Text="Minimum tracked altitude (ft)"
+                                       Foreground="#7CB9A9"
+                                       Margin="4,8,4,0" />
+                            <TextBox Text="{Binding MinTrackedAltitudeFtText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="Targets below this altitude are hidden"
+                                     Margin="4,4,4,0" />
+                        </StackPanel>
                     </GroupBox>
 
                     <GroupBox Header="Data Source" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">

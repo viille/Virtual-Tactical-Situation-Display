@@ -12,10 +12,10 @@ public sealed class TacticalComputationEngineTests
         var engine = new TacticalComputationEngine();
         var settings = new TacticalDisplaySettings
         {
-            MinTrackedAltitudeFt = 1000
+            MinTrackedAltitudeFt = 200
         };
         var ownship = new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, DateTimeOffset.UtcNow);
-        var contact = new TrafficContactState("T1", null, 60.1, 24.0, 900, 180, 250, DateTimeOffset.UtcNow);
+        var contact = new TrafficContactState("T1", null, 60.1, 24.0, 199, 180, 250, DateTimeOffset.UtcNow);
         var tracked = new TrafficRepository.TrackedContact(contact, TargetCategory.Unknown);
 
         var computed = engine.Compute(null, ownship, tracked, settings);

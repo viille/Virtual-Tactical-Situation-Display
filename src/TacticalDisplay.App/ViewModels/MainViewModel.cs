@@ -35,6 +35,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private string _bullseyeLongitudeText = string.Empty;
     private string _bullseyeText = "Bullseye: off";
     private string _xPlane12ApiBaseUrlText = string.Empty;
+    private string _minTrackedAltitudeFtText = string.Empty;
     private bool _simConnected;
     private int _refreshCounter;
     private DateTimeOffset _rateWindowStart = DateTimeOffset.UtcNow;
@@ -90,6 +91,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _ = LoadAirspacesAsync();
         InitializeBullseyeText();
         XPlane12ApiBaseUrlText = Settings.XPlane12ApiBaseUrl;
+        MinTrackedAltitudeFtText = Settings.MinTrackedAltitudeFt.ToString("0.##", CultureInfo.InvariantCulture);
 
         UpdateSourceState(Settings.DataSourceMode);
     }
@@ -179,6 +181,25 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _xPlane12ApiBaseUrlText;
         set => SetField(ref _xPlane12ApiBaseUrlText, value);
+    }
+
+    public string MinTrackedAltitudeFtText
+    {
+        get => _minTrackedAltitudeFtText;
+        set
+        {
+            SetField(ref _minTrackedAltitudeFtText, value);
+
+            var normalized = value.Trim().Replace(',', '.');
+            if (!double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out var altitudeFt) ||
+                altitudeFt < 0)
+            {
+                return;
+            }
+
+            Settings.MinTrackedAltitudeFt = altitudeFt;
+            Raise(nameof(Settings));
+        }
     }
 
     public string RefreshRateText
@@ -285,14 +306,20 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         DataSourceDebugLog.Info("App", "Application shutdown");
-        _renderTimer.Stop();
-        _airspaceTimer.Stop();
-        _runCts.Cancel();
-        await _feed.StopAsync();
-        await _feed.DisposeAsync();
-        _configStore.SaveDisplaySettings(Settings);
-        _configStore.SaveManualTargetMetadata(_manualTargetMetadata);
-        _runCts.Dispose();
+        try
+        {
+            _renderTimer.Stop();
+            _airspaceTimer.Stop();
+            _runCts.Cancel();
+            await _feed.StopAsync();
+            await _feed.DisposeAsync();
+        }
+        finally
+        {
+            _configStore.SaveDisplaySettings(Settings);
+            _configStore.SaveManualTargetMetadata(_manualTargetMetadata);
+            _runCts.Dispose();
+        }
     }
 
     private void ToggleOrientation()
