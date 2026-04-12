@@ -11,8 +11,8 @@ public static class AviationFormat
 
     public static string TargetAspect(double targetHeadingDeg, double bearingFromOwnshipToTargetDeg)
     {
-        var bearingFromTargetToOwnship = NormalizeDegrees(bearingFromOwnshipToTargetDeg + 180.0);
-        var aspectDelta = System.Math.Abs(NormalizeSignedBearing(bearingFromTargetToOwnship - targetHeadingDeg));
+        var bearingFromOtherAircraftToOwnship = NormalizeDegrees(bearingFromOwnshipToTargetDeg + 180.0);
+        var aspectDelta = System.Math.Abs(NormalizeSignedBearing(bearingFromOtherAircraftToOwnship - targetHeadingDeg));
         if (aspectDelta <= 30.0)
         {
             return "HOT";
