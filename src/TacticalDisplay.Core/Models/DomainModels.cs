@@ -112,3 +112,18 @@ public sealed record AirspacePolygon(
 public sealed record AirspaceCoordinate(
     double LatitudeDeg,
     double LongitudeDeg);
+
+public sealed record AirportMapPoint(
+    string Ident,
+    string Name,
+    string Type,
+    double LatitudeDeg,
+    double LongitudeDeg);
+
+public sealed record NavaidMapPoint(
+    string Ident,
+    string Name,
+    string Type,
+    double FrequencyKhz,
+    double LatitudeDeg,
+    double LongitudeDeg);

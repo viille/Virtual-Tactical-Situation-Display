@@ -36,10 +36,10 @@ public sealed class AirspaceDataService
         }
 
         var text = await _httpClient.GetStringAsync(settings.AirspaceActivationUrl, cancellationToken);
-        return ParseTopSkyActivations(text);
+        return ParseTopSkyActivations(text, DateTimeOffset.UtcNow);
     }
 
-    private static Dictionary<string, AirspaceActivation> ParseTopSkyActivations(string text)
+    private static Dictionary<string, AirspaceActivation> ParseTopSkyActivations(string text, DateTimeOffset nowUtc)
     {
         var activations = new Dictionary<string, AirspaceActivation>(StringComparer.OrdinalIgnoreCase);
         var tokens = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -59,12 +59,78 @@ public sealed class AirspaceDataService
             }
 
             var name = parts[0];
+            if (!TryParseActivationWindow(parts, out var activeFromUtc, out var activeUntilUtc) ||
+                nowUtc < activeFromUtc ||
+                nowUtc > activeUntilUtc)
+            {
+                continue;
+            }
+
             activations[name] = new AirspaceActivation(
                 ReadNullableIntPart(parts, 6),
                 ReadNullableIntPart(parts, 7));
         }
 
         return activations;
+    }
+
+    private static bool TryParseActivationWindow(string[] parts, out DateTimeOffset activeFromUtc, out DateTimeOffset activeUntilUtc)
+    {
+        activeFromUtc = default;
+        activeUntilUtc = default;
+        if (parts.Length <= 5)
+        {
+            return false;
+        }
+
+        if (!TryParseTopSkyDateTime(parts[1], parts[4], out activeFromUtc) ||
+            !TryParseTopSkyDateTime(parts[2], parts[5], out activeUntilUtc))
+        {
+            return false;
+        }
+
+        if (activeUntilUtc < activeFromUtc)
+        {
+            activeUntilUtc = activeUntilUtc.AddDays(1);
+        }
+
+        return true;
+    }
+
+    private static bool TryParseTopSkyDateTime(string dateText, string timeText, out DateTimeOffset value)
+    {
+        value = default;
+        if (dateText.Length != 6 ||
+            timeText.Length != 4 ||
+            !int.TryParse(dateText[..2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var year) ||
+            !int.TryParse(dateText.Substring(2, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var month) ||
+            !int.TryParse(dateText.Substring(4, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var day) ||
+            !int.TryParse(timeText[..2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var hour) ||
+            !int.TryParse(timeText.Substring(2, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var minute))
+        {
+            return false;
+        }
+
+        try
+        {
+            if (hour == 24 && minute == 0)
+            {
+                value = new DateTimeOffset(2000 + year, month, day, 0, 0, 0, TimeSpan.Zero).AddDays(1);
+                return true;
+            }
+
+            if (hour is < 0 or > 23 || minute is < 0 or > 59)
+            {
+                return false;
+            }
+
+            value = new DateTimeOffset(2000 + year, month, day, hour, minute, 0, TimeSpan.Zero);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
     }
 
     private static IReadOnlyList<AirspaceArea> ParseGeoJson(JsonElement root, IReadOnlyDictionary<string, AirspaceActivation> activeAirspaces)

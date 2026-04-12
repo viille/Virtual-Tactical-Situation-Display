@@ -46,6 +46,18 @@ public sealed class TacticalScopeControl : FrameworkElement
         typeof(TacticalScopeControl),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty AirportsProperty = DependencyProperty.Register(
+        nameof(Airports),
+        typeof(IReadOnlyList<AirportMapPoint>),
+        typeof(TacticalScopeControl),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty NavaidsProperty = DependencyProperty.Register(
+        nameof(Navaids),
+        typeof(IReadOnlyList<NavaidMapPoint>),
+        typeof(TacticalScopeControl),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
     public TacticalPicture? Picture
     {
         get => (TacticalPicture?)GetValue(PictureProperty);
@@ -70,6 +82,18 @@ public sealed class TacticalScopeControl : FrameworkElement
         set => SetValue(AirspacesProperty, value);
     }
 
+    public IReadOnlyList<AirportMapPoint>? Airports
+    {
+        get => (IReadOnlyList<AirportMapPoint>?)GetValue(AirportsProperty);
+        set => SetValue(AirportsProperty, value);
+    }
+
+    public IReadOnlyList<NavaidMapPoint>? Navaids
+    {
+        get => (IReadOnlyList<NavaidMapPoint>?)GetValue(NavaidsProperty);
+        set => SetValue(NavaidsProperty, value);
+    }
+
     public event EventHandler<ScopeTargetClickEventArgs>? TargetClicked;
     public event EventHandler<ScopeLabelMovedEventArgs>? LabelMoved;
 
@@ -87,6 +111,8 @@ public sealed class TacticalScopeControl : FrameworkElement
         var center = new Point(RenderSize.Width / 2.0, RenderSize.Height / 2.0);
         var radius = System.Math.Min(RenderSize.Width, RenderSize.Height) * 0.45;
         DrawRings(dc, center, radius, Picture.Ownship.HeadingDeg);
+        DrawOptionalOverlay(() => DrawAirports(dc, center, radius));
+        DrawOptionalOverlay(() => DrawNavaids(dc, center, radius));
         DrawOptionalOverlay(() => DrawAirspaces(dc, center, radius));
         DrawOptionalOverlay(() => DrawBullseye(dc, center, radius));
         DrawOwnship(dc, center, radius, Picture.Ownship.HeadingDeg);
@@ -112,6 +138,11 @@ public sealed class TacticalScopeControl : FrameworkElement
             return;
         }
 
+        if (Settings?.ShowMapLayer == true)
+        {
+            return;
+        }
+
         var rect = new Rect(0, 0, RenderSize.Width, RenderSize.Height);
         var brush = new LinearGradientBrush(
             Color.FromRgb(4, 12, 18),
@@ -128,14 +159,16 @@ public sealed class TacticalScopeControl : FrameworkElement
             return;
         }
 
-        var pen = new Pen(new SolidColorBrush(Color.FromArgb(150, 90, 160, 140)), 1);
+        var ringHaloPen = new Pen(new SolidColorBrush(Color.FromArgb(200, 0, 8, 10)), 2.6);
+        var ringPen = new Pen(new SolidColorBrush(Color.FromArgb(220, 140, 255, 220)), 1.1);
         var ringCount = 4;
         for (var i = 1; i <= ringCount; i++)
         {
             var ringRadius = radius * i / ringCount;
-            dc.DrawEllipse(null, pen, center, ringRadius, ringRadius);
+            dc.DrawEllipse(null, ringHaloPen, center, ringRadius, ringRadius);
+            dc.DrawEllipse(null, ringPen, center, ringRadius, ringRadius);
             var label = $"{Settings.SelectedRangeNm * i / ringCount:0} NM";
-            DrawText(dc, label, center.X + 5, center.Y - ringRadius - 16, Colors.LightGreen, 11);
+            DrawHaloText(dc, label, center.X + 5, center.Y - ringRadius - 16, Color.FromRgb(175, 255, 220), 11, FontWeights.SemiBold);
         }
 
         DrawCompassRose(dc, center, radius, ownHeadingDeg);
@@ -148,7 +181,8 @@ public sealed class TacticalScopeControl : FrameworkElement
             return;
         }
 
-        var radialPen = new Pen(new SolidColorBrush(Color.FromArgb(32, 150, 220, 205)), 0.8);
+        var radialHaloPen = new Pen(new SolidColorBrush(Color.FromArgb(140, 0, 8, 10)), 1.8);
+        var radialPen = new Pen(new SolidColorBrush(Color.FromArgb(150, 150, 255, 225)), 0.8);
 
         var directions = new (string label, double bearingDeg)[]
         {
@@ -175,8 +209,9 @@ public sealed class TacticalScopeControl : FrameworkElement
                 center.Y - lineEndRadius * System.Math.Cos(rad));
             var x = center.X + textRadius * System.Math.Sin(rad);
             var y = center.Y - textRadius * System.Math.Cos(rad);
+            dc.DrawLine(radialHaloPen, center, lineEnd);
             dc.DrawLine(radialPen, center, lineEnd);
-            DrawCenteredText(dc, direction.label, x, y, Colors.LightSeaGreen, 12, FontWeights.SemiBold);
+            DrawCenteredHaloText(dc, direction.label, x, y, Color.FromRgb(175, 255, 225), 13, FontWeights.Bold);
         }
     }
 
@@ -247,6 +282,248 @@ public sealed class TacticalScopeControl : FrameworkElement
         }
     }
 
+    private void DrawAirports(DrawingContext dc, Point center, double radius)
+    {
+        if (Picture is null ||
+            Settings is null ||
+            Airports is null ||
+            !Settings.ShowAirportLayer)
+        {
+            return;
+        }
+
+        var opacity = Math.Clamp(Settings.AirportOpacity, 0.0, 1.0);
+        if (opacity <= 0.01)
+        {
+            return;
+        }
+
+        var pen = new Pen(new SolidColorBrush(WithScaledAlpha(180, 170, 255, 220, opacity)), 1);
+        var labelColor = WithScaledAlpha(230, 170, 255, 220, opacity);
+        var airportCount = 0;
+        var ownLatitude = Picture.Ownship.LatitudeDeg;
+        var ownLongitude = Picture.Ownship.LongitudeDeg;
+        var maxLatitudeDelta = Settings.SelectedRangeNm / 60.0;
+        var maxLongitudeDelta = maxLatitudeDelta / Math.Max(Math.Cos(ownLatitude * Math.PI / 180.0), 0.1);
+
+        foreach (var airport in Airports)
+        {
+            if (Math.Abs(airport.LatitudeDeg - ownLatitude) > maxLatitudeDelta ||
+                Math.Abs(airport.LongitudeDeg - ownLongitude) > maxLongitudeDelta)
+            {
+                continue;
+            }
+
+            var range = GeoMath.DistanceNm(
+                ownLatitude,
+                ownLongitude,
+                airport.LatitudeDeg,
+                airport.LongitudeDeg);
+            if (range > Settings.SelectedRangeNm ||
+                !ShouldDrawAirport(airport.Type, range, Settings.SelectedRangeNm))
+            {
+                continue;
+            }
+
+            var projected = ScopeProjection.ProjectGeographicToScope(
+                center.X,
+                center.Y,
+                radius,
+                ownLatitude,
+                ownLongitude,
+                airport.LatitudeDeg,
+                airport.LongitudeDeg,
+                Settings.SelectedRangeNm,
+                Picture.Ownship.HeadingDeg,
+                Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
+            var point = new Point(projected.x, projected.y);
+            DrawAirportSymbol(dc, point, airport.Type, pen, opacity);
+
+            if (ShouldDrawAirportLabel(airport.Type, range))
+            {
+                DrawBackedText(
+                    dc,
+                    airport.Ident,
+                    point.X + 6,
+                    point.Y + 4,
+                    labelColor,
+                    10,
+                    FontWeights.SemiBold,
+                    Settings.MapLabelBackgroundOpacity);
+            }
+
+            airportCount++;
+            if (airportCount >= 120)
+            {
+                break;
+            }
+        }
+    }
+
+    private static bool ShouldDrawAirport(string type, double rangeNm, int selectedRangeNm) =>
+        type switch
+        {
+            "large_airport" => true,
+            "medium_airport" => true,
+            "small_airport" => selectedRangeNm <= 40 && rangeNm <= 30,
+            "heliport" => selectedRangeNm <= 20 && rangeNm <= 10,
+            _ => false
+        };
+
+    private static bool ShouldDrawAirportLabel(string type, double rangeNm) =>
+        type is "large_airport" or "medium_airport" ||
+        (type == "small_airport" && rangeNm <= 20) ||
+        (type == "heliport" && rangeNm <= 8);
+
+    private static void DrawAirportSymbol(DrawingContext dc, Point point, string type, Pen pen, double opacity)
+    {
+        var fill = type switch
+        {
+            "large_airport" => new SolidColorBrush(WithScaledAlpha(70, 170, 255, 220, opacity)),
+            "medium_airport" => new SolidColorBrush(WithScaledAlpha(45, 170, 255, 220, opacity)),
+            _ => null
+        };
+        var radius = type switch
+        {
+            "large_airport" => 4.5,
+            "medium_airport" => 3.5,
+            "small_airport" => 2.5,
+            "heliport" => 2.5,
+            _ => 2.5
+        };
+
+        if (type == "heliport")
+        {
+            dc.DrawEllipse(null, pen, point, radius, radius);
+            dc.DrawLine(pen, new Point(point.X - radius, point.Y), new Point(point.X + radius, point.Y));
+            dc.DrawLine(pen, new Point(point.X, point.Y - radius), new Point(point.X, point.Y + radius));
+            return;
+        }
+
+        dc.DrawEllipse(fill, pen, point, radius, radius);
+        if (type is "large_airport" or "medium_airport")
+        {
+            dc.DrawLine(pen, new Point(point.X - radius - 1, point.Y), new Point(point.X + radius + 1, point.Y));
+            dc.DrawLine(pen, new Point(point.X, point.Y - radius - 1), new Point(point.X, point.Y + radius + 1));
+        }
+    }
+
+    private void DrawNavaids(DrawingContext dc, Point center, double radius)
+    {
+        if (Picture is null ||
+            Settings is null ||
+            Navaids is null ||
+            !Settings.ShowNavaidLayer)
+        {
+            return;
+        }
+
+        var opacity = Math.Clamp(Settings.NavaidOpacity, 0.0, 1.0);
+        if (opacity <= 0.01)
+        {
+            return;
+        }
+
+        var pen = new Pen(new SolidColorBrush(WithScaledAlpha(215, 205, 145, 255, opacity)), 1);
+        var labelColor = WithScaledAlpha(240, 215, 170, 255, opacity);
+        var navaidCount = 0;
+        var ownLatitude = Picture.Ownship.LatitudeDeg;
+        var ownLongitude = Picture.Ownship.LongitudeDeg;
+        var maxLatitudeDelta = Settings.SelectedRangeNm / 60.0;
+        var maxLongitudeDelta = maxLatitudeDelta / Math.Max(Math.Cos(ownLatitude * Math.PI / 180.0), 0.1);
+
+        foreach (var navaid in Navaids)
+        {
+            if (Math.Abs(navaid.LatitudeDeg - ownLatitude) > maxLatitudeDelta ||
+                Math.Abs(navaid.LongitudeDeg - ownLongitude) > maxLongitudeDelta)
+            {
+                continue;
+            }
+
+            var range = GeoMath.DistanceNm(
+                ownLatitude,
+                ownLongitude,
+                navaid.LatitudeDeg,
+                navaid.LongitudeDeg);
+            if (range > Settings.SelectedRangeNm ||
+                !ShouldDrawNavaid(navaid.Type, range, Settings.SelectedRangeNm))
+            {
+                continue;
+            }
+
+            var projected = ScopeProjection.ProjectGeographicToScope(
+                center.X,
+                center.Y,
+                radius,
+                ownLatitude,
+                ownLongitude,
+                navaid.LatitudeDeg,
+                navaid.LongitudeDeg,
+                Settings.SelectedRangeNm,
+                Picture.Ownship.HeadingDeg,
+                Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
+            var point = new Point(projected.x, projected.y);
+            DrawNavaidSymbol(dc, point, navaid.Type, pen, opacity);
+
+            if (ShouldDrawNavaidLabel(navaid.Type, range, Settings.SelectedRangeNm))
+            {
+                DrawBackedText(
+                    dc,
+                    navaid.Ident,
+                    point.X + 6,
+                    point.Y - 5,
+                    labelColor,
+                    10,
+                    FontWeights.SemiBold,
+                    Settings.MapLabelBackgroundOpacity);
+            }
+
+            navaidCount++;
+            if (navaidCount >= 120)
+            {
+                break;
+            }
+        }
+    }
+
+    private static bool ShouldDrawNavaid(string type, double rangeNm, int selectedRangeNm) =>
+        type switch
+        {
+            "VOR" or "VOR-DME" or "VORTAC" or "DME" or "TACAN" => true,
+            "NDB" or "NDB-DME" => selectedRangeNm <= 80 && rangeNm <= 60,
+            _ => false
+        };
+
+    private static bool ShouldDrawNavaidLabel(string type, double rangeNm, int selectedRangeNm) =>
+        type is "VOR" or "VOR-DME" or "VORTAC" or "DME" or "TACAN" ||
+        (selectedRangeNm <= 40 && rangeNm <= 35);
+
+    private static void DrawNavaidSymbol(DrawingContext dc, Point point, string type, Pen pen, double opacity)
+    {
+        var size = type is "NDB" or "NDB-DME" ? 3.5 : 4.5;
+        if (type is "NDB" or "NDB-DME")
+        {
+            dc.DrawEllipse(null, pen, point, size, size);
+            dc.DrawEllipse(null, pen, point, size + 2.5, size + 2.5);
+            return;
+        }
+
+        var fill = new SolidColorBrush(WithScaledAlpha(44, 205, 145, 255, opacity));
+        var geometry = new StreamGeometry();
+        using (var ctx = geometry.Open())
+        {
+            ctx.BeginFigure(new Point(point.X, point.Y - size), true, true);
+            ctx.LineTo(new Point(point.X + size, point.Y + size), true, false);
+            ctx.LineTo(new Point(point.X - size, point.Y + size), true, false);
+        }
+
+        dc.DrawGeometry(fill, pen, geometry);
+        if (type is "VOR-DME" or "VORTAC" or "TACAN" or "DME")
+        {
+            dc.DrawRectangle(null, pen, new Rect(point.X - 3, point.Y - 3, 6, 6));
+        }
+    }
+
     private IReadOnlyList<Point> ProjectAirspacePolygon(AirspacePolygon polygon, Point center, double radius)
     {
         if (Picture is null || Settings is null)
@@ -257,22 +534,14 @@ public sealed class TacticalScopeControl : FrameworkElement
         var projected = new List<Point>(polygon.Exterior.Count);
         foreach (var coordinate in polygon.Exterior)
         {
-            var range = GeoMath.DistanceNm(
-                Picture.Ownship.LatitudeDeg,
-                Picture.Ownship.LongitudeDeg,
-                coordinate.LatitudeDeg,
-                coordinate.LongitudeDeg);
-            var bearing = GeoMath.InitialBearingDeg(
-                Picture.Ownship.LatitudeDeg,
-                Picture.Ownship.LongitudeDeg,
-                coordinate.LatitudeDeg,
-                coordinate.LongitudeDeg);
-            var point = ScopeProjection.ProjectToScope(
+            var point = ScopeProjection.ProjectGeographicToScope(
                 center.X,
                 center.Y,
                 radius,
-                range,
-                bearing,
+                Picture.Ownship.LatitudeDeg,
+                Picture.Ownship.LongitudeDeg,
+                coordinate.LatitudeDeg,
+                coordinate.LongitudeDeg,
                 Settings.SelectedRangeNm,
                 Picture.Ownship.HeadingDeg,
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
@@ -345,13 +614,14 @@ public sealed class TacticalScopeControl : FrameworkElement
             return;
         }
 
-        var bearing = GeoMath.InitialBearingDeg(Picture.Ownship.LatitudeDeg, Picture.Ownship.LongitudeDeg, latitude, longitude);
-        var point = ScopeProjection.ProjectToScope(
+        var point = ScopeProjection.ProjectGeographicToScope(
             center.X,
             center.Y,
             radius,
-            range,
-            bearing,
+            Picture.Ownship.LatitudeDeg,
+            Picture.Ownship.LongitudeDeg,
+            latitude,
+            longitude,
             Settings.SelectedRangeNm,
             Picture.Ownship.HeadingDeg,
             Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
@@ -403,12 +673,14 @@ public sealed class TacticalScopeControl : FrameworkElement
             Picture.Ownship.LongitudeDeg,
             Settings.BullseyeLatitudeDeg.Value,
             Settings.BullseyeLongitudeDeg.Value);
-        var point = ScopeProjection.ProjectToScope(
+        var point = ScopeProjection.ProjectGeographicToScope(
             center.X,
             center.Y,
             radius,
-            range,
-            bearing,
+            Picture.Ownship.LatitudeDeg,
+            Picture.Ownship.LongitudeDeg,
+            Settings.BullseyeLatitudeDeg.Value,
+            Settings.BullseyeLongitudeDeg.Value,
             Settings.SelectedRangeNm,
             Picture.Ownship.HeadingDeg,
             Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
@@ -494,13 +766,14 @@ public sealed class TacticalScopeControl : FrameworkElement
         foreach (var point in target.History)
         {
             var range = GeoMath.DistanceNm(Picture.Ownship.LatitudeDeg, Picture.Ownship.LongitudeDeg, point.LatitudeDeg, point.LongitudeDeg);
-            var bearing = GeoMath.InitialBearingDeg(Picture.Ownship.LatitudeDeg, Picture.Ownship.LongitudeDeg, point.LatitudeDeg, point.LongitudeDeg);
-            var projection = ScopeProjection.ProjectToScope(
+            var projection = ScopeProjection.ProjectGeographicToScope(
                 center.X,
                 center.Y,
                 radius,
-                range,
-                bearing,
+                Picture.Ownship.LatitudeDeg,
+                Picture.Ownship.LongitudeDeg,
+                point.LatitudeDeg,
+                point.LongitudeDeg,
                 Settings.SelectedRangeNm,
                 Picture.Ownship.HeadingDeg,
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
@@ -633,10 +906,64 @@ public sealed class TacticalScopeControl : FrameworkElement
         dc.DrawText(formatted, new Point(x - formatted.Width / 2.0, y - formatted.Height / 2.0));
     }
 
+    private void DrawCenteredHaloText(DrawingContext dc, string text, double x, double y, Color color, double size, FontWeight weight)
+    {
+        var halo = CreateFormattedText(text, Color.FromArgb(245, 0, 8, 10), size, weight);
+        var foreground = CreateFormattedText(text, color, size, weight);
+        var point = new Point(x - foreground.Width / 2.0, y - foreground.Height / 2.0);
+        DrawTextHalo(dc, halo, point);
+        dc.DrawText(foreground, point);
+    }
+
     private void DrawText(DrawingContext dc, string text, double x, double y, Color color, double size, FontWeight weight)
     {
         var formatted = CreateFormattedText(text, color, size, weight);
         dc.DrawText(formatted, new Point(x, y));
+    }
+
+    private void DrawBackedText(
+        DrawingContext dc,
+        string text,
+        double x,
+        double y,
+        Color color,
+        double size,
+        FontWeight weight,
+        double backgroundOpacity)
+    {
+        var formatted = CreateFormattedText(text, color, size, weight);
+        var point = new Point(x, y);
+        var opacity = Math.Clamp(backgroundOpacity, 0.0, 1.0);
+        if (opacity > 0.01)
+        {
+            var background = new SolidColorBrush(WithScaledAlpha(190, 2, 7, 10, opacity));
+            var border = new Pen(new SolidColorBrush(WithScaledAlpha(95, 35, 68, 65, opacity)), 0.7);
+            dc.DrawRoundedRectangle(
+                background,
+                border,
+                new Rect(point.X - 3, point.Y - 1, formatted.Width + 6, formatted.Height + 2),
+                2,
+                2);
+        }
+
+        dc.DrawText(formatted, point);
+    }
+
+    private void DrawHaloText(DrawingContext dc, string text, double x, double y, Color color, double size, FontWeight weight)
+    {
+        var halo = CreateFormattedText(text, Color.FromArgb(245, 0, 8, 10), size, weight);
+        var foreground = CreateFormattedText(text, color, size, weight);
+        var point = new Point(x, y);
+        DrawTextHalo(dc, halo, point);
+        dc.DrawText(foreground, point);
+    }
+
+    private static void DrawTextHalo(DrawingContext dc, FormattedText halo, Point point)
+    {
+        dc.DrawText(halo, new Point(point.X - 1, point.Y));
+        dc.DrawText(halo, new Point(point.X + 1, point.Y));
+        dc.DrawText(halo, new Point(point.X, point.Y - 1));
+        dc.DrawText(halo, new Point(point.X, point.Y + 1));
     }
 
     private static IReadOnlyList<LabelLine> BuildTargetLabelLines(ComputedTarget target, LabelMode mode)

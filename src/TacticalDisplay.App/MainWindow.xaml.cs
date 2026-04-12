@@ -97,6 +97,10 @@ public partial class MainWindow : Window
         {
             ApplyLayoutState(resizeWindow: true);
         }
+        else if (e.PropertyName == nameof(MainViewModel.Settings))
+        {
+            MapControl.RefreshMapState();
+        }
     }
 
     private void ApplyLayoutState(bool resizeWindow)

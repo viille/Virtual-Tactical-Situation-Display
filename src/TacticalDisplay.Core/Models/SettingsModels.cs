@@ -11,6 +11,13 @@ public sealed class TacticalDisplaySettings
     public int[] RangeScaleOptionsNm { get; init; } = [10, 20, 40, 80, 120];
     public int SelectedRangeNm { get; set; } = 40;
     public ScopeOrientationMode OrientationMode { get; set; } = ScopeOrientationMode.HeadingUp;
+    public bool ShowMapLayer { get; set; } = true;
+    public double MapOpacity { get; set; } = 0.65;
+    public bool ShowAirportLayer { get; set; } = true;
+    public double AirportOpacity { get; set; } = 0.9;
+    public bool ShowNavaidLayer { get; set; } = true;
+    public double NavaidOpacity { get; set; } = 0.85;
+    public double MapLabelBackgroundOpacity { get; set; } = 0.75;
     public bool ShowRangeRings { get; set; } = true;
     public bool ShowAirspaceBoundaries { get; set; } = true;
     public bool ShowOnlyActiveAirspaceBoundaries { get; set; } = true;
