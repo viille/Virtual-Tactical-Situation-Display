@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Web.WebView2.Core;
+using TacticalDisplay.App.Services;
 using TacticalDisplay.Core.Models;
 
 namespace TacticalDisplay.App.Controls;
@@ -252,13 +253,7 @@ public partial class OpenFreeMapControl : UserControl
 
     private static string ResolveWebViewUserDataFolder()
     {
-        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-        if (string.IsNullOrWhiteSpace(localAppData))
-        {
-            localAppData = Path.GetTempPath();
-        }
-
-        return Path.Combine(localAppData, "VirtualTacticalSituationDisplay", "WebView2");
+        return AppDataPaths.WebViewUserDataDirectory;
     }
 
     private static void ShowWebViewRuntimeMissingDialog()

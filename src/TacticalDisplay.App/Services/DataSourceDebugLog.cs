@@ -96,9 +96,6 @@ public static class DataSourceDebugLog
 
     private static string ResolveLogFilePath()
     {
-        var baseDir = AppContext.BaseDirectory;
-        var repoConfig = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "config"));
-        var configDir = Directory.Exists(repoConfig) ? repoConfig : Path.Combine(baseDir, "config");
-        return Path.Combine(configDir, "logs", "data-source-debug.log");
+        return AppDataPaths.DataSourceDebugLogFilePath;
     }
 }

@@ -29,10 +29,20 @@ public sealed class JsonConfigStore
             return defaults;
         }
 
-        var json = File.ReadAllText(path);
-        var settings = JsonSerializer.Deserialize<TacticalDisplaySettings>(json, _jsonOptions) ?? new TacticalDisplaySettings();
-        ApplyDisplaySettingMigrations(settings);
-        return settings;
+        try
+        {
+            var json = File.ReadAllText(path);
+            var settings = JsonSerializer.Deserialize<TacticalDisplaySettings>(json, _jsonOptions) ?? new TacticalDisplaySettings();
+            ApplyDisplaySettingMigrations(settings);
+            ValidateDisplaySettings(settings);
+            return settings;
+        }
+        catch (Exception)
+        {
+            var defaults = new TacticalDisplaySettings();
+            SaveDisplaySettings(defaults);
+            return defaults;
+        }
     }
 
     public void SaveDisplaySettings(TacticalDisplaySettings settings)
@@ -59,9 +69,17 @@ public sealed class JsonConfigStore
             File.WriteAllText(path, "{}");
         }
 
-        var json = File.ReadAllText(path);
-        var map = JsonSerializer.Deserialize<Dictionary<string, ManualTargetMetadata>>(json, _jsonOptions) ?? [];
-        return new Dictionary<string, ManualTargetMetadata>(map, StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            var json = File.ReadAllText(path);
+            var map = JsonSerializer.Deserialize<Dictionary<string, ManualTargetMetadata>>(json, _jsonOptions) ?? [];
+            return new Dictionary<string, ManualTargetMetadata>(map, StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception)
+        {
+            File.WriteAllText(path, "{}");
+            return [];
+        }
     }
 
     public void SaveManualTargetMetadata(Dictionary<string, ManualTargetMetadata> metadata)
@@ -78,8 +96,18 @@ public sealed class JsonConfigStore
             File.WriteAllText(path, "[]");
         }
 
-        var json = File.ReadAllText(path);
-        var list = JsonSerializer.Deserialize<List<string>>(json, _jsonOptions) ?? [];
+        List<string> list;
+        try
+        {
+            var json = File.ReadAllText(path);
+            list = JsonSerializer.Deserialize<List<string>>(json, _jsonOptions) ?? [];
+        }
+        catch (Exception)
+        {
+            File.WriteAllText(path, "[]");
+            list = [];
+        }
+
         return list
             .Where(v => !string.IsNullOrWhiteSpace(v))
             .Select(v => v.Trim().ToUpperInvariant())
@@ -99,4 +127,44 @@ public sealed class JsonConfigStore
             settings.TrailLengthSamples = 90;
         }
     }
+
+    private static void ValidateDisplaySettings(TacticalDisplaySettings settings)
+    {
+        if (settings.RangeScaleOptionsNm.Length == 0 ||
+            settings.RangeScaleOptionsNm.Any(range => range <= 0) ||
+            !settings.RangeScaleOptionsNm.Contains(settings.SelectedRangeNm))
+        {
+            throw new InvalidDataException("Display settings contain an invalid range scale.");
+        }
+
+        if (!Enum.IsDefined(settings.OrientationMode) ||
+            !Enum.IsDefined(settings.LabelMode) ||
+            !Enum.IsDefined(settings.RangeFilter) ||
+            !Enum.IsDefined(settings.AltitudeFilter) ||
+            !Enum.IsDefined(settings.CategoryFilter))
+        {
+            throw new InvalidDataException("Display settings contain an invalid enum value.");
+        }
+
+        if (!IsPositive(settings.PollRateHz) ||
+            !IsPositive(settings.RenderRateFps) ||
+            !IsPositive(settings.StaleSeconds) ||
+            !IsPositive(settings.RemoveAfterSeconds) ||
+            !IsFiniteNonNegative(settings.MinTrackedAltitudeFt) ||
+            settings.TrailLengthSamples <= 0)
+        {
+            throw new InvalidDataException("Display settings contain invalid timing or filter values.");
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.XPlane12ApiBaseUrl) ||
+            string.IsNullOrWhiteSpace(settings.AirspaceFirCode) ||
+            string.IsNullOrWhiteSpace(settings.AirspaceDataBaseUrl))
+        {
+            throw new InvalidDataException("Display settings contain invalid URL or FIR values.");
+        }
+    }
+
+    private static bool IsPositive(double value) => double.IsFinite(value) && value > 0;
+
+    private static bool IsFiniteNonNegative(double value) => double.IsFinite(value) && value >= 0;
 }

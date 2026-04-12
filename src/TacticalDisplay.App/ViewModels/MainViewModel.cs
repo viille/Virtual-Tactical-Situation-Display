@@ -55,6 +55,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     public MainViewModel()
     {
+        AppDataPaths.MigrateLegacyConfigIfNeeded();
         var configPath = ResolveConfigDirectory();
         DataSourceDebugLog.Info("App", $"Application startup | configDir={configPath} logFile={DataSourceDebugLog.CurrentLogFilePath}");
         _configStore = new JsonConfigStore(configPath);
@@ -999,9 +1000,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private static string ResolveConfigDirectory()
     {
-        var baseDir = AppContext.BaseDirectory;
-        var candidate = Path.GetFullPath(Path.Combine(baseDir, "..", "..", "..", "..", "config"));
-        return Directory.Exists(candidate) ? candidate : Path.Combine(baseDir, "config");
+        return AppDataPaths.ApplicationDataDirectory;
     }
 
     public void CycleTargetAffiliation(string targetId)

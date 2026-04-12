@@ -95,12 +95,14 @@ If live data does not appear, check:
 - XPUIPC is installed when using legacy X-Plane
 - X-Plane 12 local Web API URL is correct when using `XPlane 12`
 
-If the map layer says `Map unavailable`, check that Microsoft Edge WebView2 Runtime is installed and that the app can write to `%LOCALAPPDATA%\VirtualTacticalSituationDisplay\WebView2`. A `0x8000FFFF` startup error usually means WebView2 failed before the map page or online tiles loaded.
+If the map layer says `Map unavailable`, check that Microsoft Edge WebView2 Runtime is installed and that the app can write to `%APPDATA%\VirtualTacticalSituationDisplay\WebView2`. A `0x8000FFFF` startup error usually means WebView2 failed before the map page or online tiles loaded.
 
-Datasource logs are written to `config/logs/data-source-debug.log` when debug logging is enabled in the app.
+Data source logs are written to `%APPDATA%\VirtualTacticalSituationDisplay\logs\data-source-debug.log` when debug logging is enabled in the app.
 
 ## Advanced Notes
 
-Settings and target metadata are stored under `config` next to the executable. Most users can use the UI, but advanced users can inspect files such as `display.json`, `friends.json`, `package.json`, `support.json`, and `manual-targets.json` when needed.
+Settings, target metadata, cache files, WebView2 data, and debug logs are stored under `%APPDATA%\VirtualTacticalSituationDisplay`.
+
+Most users can use the UI, but advanced users can inspect files such as `display.json`, `friends.json`, `package.json`, `support.json`, and `manual-targets.json` when needed. If a settings file cannot be loaded after an update or manual edit, the app replaces it with clean defaults so startup can continue.
 
 Airspace geometry and activation feed URLs are also stored in `display.json`.
