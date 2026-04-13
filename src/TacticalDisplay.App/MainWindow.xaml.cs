@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using TacticalDisplay.App.Controls;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.App.ViewModels;
@@ -74,7 +75,7 @@ public partial class MainWindow : Window
                 $"A new version is available.\n\n" +
                 $"Current: v{result.CurrentVersion}\n" +
                 $"Latest: {result.LatestTag}\n\n" +
-                "Open GitHub Releases page?";
+                "Download and install it now?";
 
             if (MessageBox.Show(
                     this,
@@ -83,7 +84,27 @@ public partial class MainWindow : Window
                     MessageBoxButton.YesNo,
                     MessageBoxImage.Information) == MessageBoxResult.Yes)
             {
-                UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
+                if (result.AssetDownloadUri is null)
+                {
+                    UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
+                    return;
+                }
+
+                try
+                {
+                    if (await _updateCheckService.DownloadAndStartUpdateAsync(result, CancellationToken.None))
+                    {
+                        Close();
+                    }
+                    else
+                    {
+                        UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
+                    }
+                }
+                catch
+                {
+                    UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
+                }
             }
         }
         catch
@@ -117,7 +138,7 @@ public partial class MainWindow : Window
             _cachedSettingsPanelWidth = measuredPanelWidth;
         }
 
-        if (resizeWindow)
+        if (resizeWindow && WindowState == WindowState.Normal)
         {
             var widthDelta = _cachedSettingsPanelWidth + ScopeSettingsGapWidth;
             if (showSettings)
@@ -174,7 +195,7 @@ public partial class MainWindow : Window
         {
             DragMove();
         }
-        catch (InvalidOperationException)
+        catch
         {
         }
     }
@@ -196,10 +217,22 @@ public partial class MainWindow : Window
                 return true;
             }
 
-            source = VisualTreeHelper.GetParent(source);
+            source = GetParent(source);
         }
 
         return false;
+    }
+
+    private static DependencyObject? GetParent(DependencyObject source)
+    {
+        try
+        {
+            return VisualTreeHelper.GetParent(source) ?? LogicalTreeHelper.GetParent(source);
+        }
+        catch (InvalidOperationException)
+        {
+            return LogicalTreeHelper.GetParent(source);
+        }
     }
 
     private void OnMinimizeButtonClick(object sender, RoutedEventArgs e)
@@ -244,7 +277,7 @@ public partial class MainWindow : Window
         _viewModel.SetTargetLabelOffset(e.TargetId, e.OffsetX, e.OffsetY);
     }
 
-    private async void OnClosingAsync(object? sender, CancelEventArgs e)
+    private void OnClosingAsync(object? sender, CancelEventArgs e)
     {
         if (_shutdownCompleted)
         {
@@ -259,18 +292,33 @@ public partial class MainWindow : Window
 
         e.Cancel = true;
         _isClosing = true;
+        _ = CompleteShutdownAsync();
+    }
 
+    private async Task CompleteShutdownAsync()
+    {
         try
         {
             StoreWindowSize();
             await _viewModel.DisposeAsync();
-            _shutdownCompleted = true;
-            Closing -= OnClosingAsync;
-            Close();
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Info("App", $"Shutdown cleanup failed | {ex}");
         }
         finally
         {
+            _shutdownCompleted = true;
+            Closing -= OnClosingAsync;
             _isClosing = false;
+            try
+            {
+                await Dispatcher.InvokeAsync(Close, DispatcherPriority.Background);
+            }
+            catch (Exception ex)
+            {
+                DataSourceDebugLog.Info("App", $"Final window close failed | {ex}");
+            }
         }
     }
 }

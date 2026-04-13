@@ -1,12 +1,16 @@
 using System.Diagnostics;
+using System.IO;
 using System.Net.Http;
 using System.Reflection;
 using System.Text.Json;
+using System.Windows;
 
 namespace TacticalDisplay.App.Services;
 
 public sealed class UpdateCheckService
 {
+    private const string AppAssetName = "TacticalDisplay.App.exe";
+    private const string EmbeddedUpdaterResourceName = "tacticaldisplay.updater.exe";
     private static readonly Uri LatestReleaseApiUri = new("https://api.github.com/repos/viille/Virtual-Tactical-Situation-Display/releases/latest");
     private static readonly Uri ReleasesPageUri = new("https://github.com/viille/Virtual-Tactical-Situation-Display/releases/latest");
 
@@ -22,7 +26,7 @@ public sealed class UpdateCheckService
         {
             Timeout = TimeSpan.FromSeconds(5)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display/0.8.0");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display/0.8.1");
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
 
         using var response = await client.GetAsync(LatestReleaseApiUri, cancellationToken);
@@ -47,12 +51,58 @@ public sealed class UpdateCheckService
         var htmlUrl = root.TryGetProperty("html_url", out var htmlUrlProperty)
             ? htmlUrlProperty.GetString()
             : null;
+        var assetDownloadUrl = ResolveAppAssetDownloadUrl(root);
 
         return new UpdateCheckResult(
             currentVersion,
             latestVersion,
             tagName ?? latestVersion.ToString(),
-            string.IsNullOrWhiteSpace(htmlUrl) ? ReleasesPageUri : new Uri(htmlUrl));
+            string.IsNullOrWhiteSpace(htmlUrl) ? ReleasesPageUri : new Uri(htmlUrl),
+            assetDownloadUrl);
+    }
+
+    public async Task<bool> DownloadAndStartUpdateAsync(UpdateCheckResult result, CancellationToken cancellationToken)
+    {
+        if (result.AssetDownloadUri is null)
+        {
+            return false;
+        }
+
+        var currentExePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
+        if (string.IsNullOrWhiteSpace(currentExePath) || !File.Exists(currentExePath))
+        {
+            return false;
+        }
+
+        var updateDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "VirtualTacticalSituationDisplay",
+            "updates",
+            result.LatestTag,
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(updateDirectory);
+
+        var newExePath = Path.Combine(updateDirectory, AppAssetName);
+        var updaterExePath = Path.Combine(updateDirectory, "TacticalDisplay.Updater.exe");
+
+        await DownloadFileAsync(result.AssetDownloadUri, newExePath, cancellationToken);
+        if (!TryExtractUpdater(updaterExePath))
+        {
+            return false;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = updaterExePath,
+            WorkingDirectory = updateDirectory,
+            UseShellExecute = true
+        }
+        .WithArguments(
+            Environment.ProcessId.ToString(),
+            newExePath,
+            currentExePath));
+
+        return true;
     }
 
     public static void OpenReleasesPage(Uri releaseUri)
@@ -95,10 +145,88 @@ public sealed class UpdateCheckService
 
         return Version.TryParse(normalized, out var version) ? version : null;
     }
+
+    private static Uri? ResolveAppAssetDownloadUrl(JsonElement releaseRoot)
+    {
+        if (!releaseRoot.TryGetProperty("assets", out var assets) ||
+            assets.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        foreach (var asset in assets.EnumerateArray())
+        {
+            var name = asset.TryGetProperty("name", out var nameProperty)
+                ? nameProperty.GetString()
+                : null;
+            if (!string.Equals(name, AppAssetName, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var downloadUrl = asset.TryGetProperty("browser_download_url", out var downloadUrlProperty)
+                ? downloadUrlProperty.GetString()
+                : null;
+            return string.IsNullOrWhiteSpace(downloadUrl) ? null : new Uri(downloadUrl);
+        }
+
+        return null;
+    }
+
+    private static async Task DownloadFileAsync(Uri uri, string targetPath, CancellationToken cancellationToken)
+    {
+        using var client = new HttpClient
+        {
+            Timeout = TimeSpan.FromMinutes(2)
+        };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display/0.8.1");
+        using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        response.EnsureSuccessStatusCode();
+
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        await using var target = File.Create(targetPath);
+        await source.CopyToAsync(target, cancellationToken);
+    }
+
+    private static bool TryExtractUpdater(string targetPath)
+    {
+        var assembly = Assembly.GetExecutingAssembly();
+        using var stream = assembly.GetManifestResourceStream(EmbeddedUpdaterResourceName);
+        if (stream is not null)
+        {
+            using var manifestTarget = File.Create(targetPath);
+            stream.CopyTo(manifestTarget);
+            return true;
+        }
+
+        var resource = Application.GetResourceStream(new Uri(EmbeddedUpdaterResourceName, UriKind.Relative));
+        if (resource is null)
+        {
+            return false;
+        }
+
+        using var target = File.Create(targetPath);
+        resource.Stream.CopyTo(target);
+        return true;
+    }
 }
 
 public sealed record UpdateCheckResult(
     Version CurrentVersion,
     Version LatestVersion,
     string LatestTag,
-    Uri ReleaseUri);
+    Uri ReleaseUri,
+    Uri? AssetDownloadUri);
+
+internal static class ProcessStartInfoExtensions
+{
+    public static ProcessStartInfo WithArguments(this ProcessStartInfo startInfo, params string[] arguments)
+    {
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        return startInfo;
+    }
+}
