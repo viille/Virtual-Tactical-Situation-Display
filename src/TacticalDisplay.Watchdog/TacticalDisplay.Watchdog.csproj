@@ -4,7 +4,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <AssemblyName>TacticalDisplay.Updater</AssemblyName>
+    <AssemblyName>TacticalDisplay.Watchdog</AssemblyName>
     <Version>0.8.3</Version>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <PublishSingleFile>true</PublishSingleFile>

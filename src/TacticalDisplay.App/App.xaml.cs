@@ -13,6 +13,12 @@ public partial class App : Application
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+        if (AppWatchdogLauncher.TryRelaunchUnderWatchdog(e.Args))
+        {
+            Shutdown(0);
+            return;
+        }
+
         var startupCrashReportMessage = WindowsErrorReportCollector.LogExistingReports();
 
         base.OnStartup(e);
