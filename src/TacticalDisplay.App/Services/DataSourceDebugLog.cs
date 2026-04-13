@@ -8,11 +8,13 @@ public static class DataSourceDebugLog
     private static readonly object Sync = new();
     private static readonly ConcurrentDictionary<string, DateTimeOffset> LastWriteByKey = new(StringComparer.Ordinal);
     private static readonly string LogFilePath = ResolveLogFilePath();
+    private static readonly string FallbackCrashLogFilePath = Path.Combine(Path.GetTempPath(), "TacticalDisplay-crash.log");
     private const long MaxLogBytes = 1_000_000;
     private static volatile bool _isEnabled;
 
     public static string CurrentLogFilePath => LogFilePath;
     public static string CurrentLogDirectoryPath => Path.GetDirectoryName(LogFilePath)!;
+    public static string CurrentFallbackCrashLogFilePath => FallbackCrashLogFilePath;
     public static bool IsEnabled => _isEnabled;
 
     public static void SetEnabled(bool enabled)
@@ -34,6 +36,19 @@ public static class DataSourceDebugLog
         Write("ERROR", source, details);
     }
 
+    public static void Important(string source, string message)
+    {
+        Write("INFO", source, message, force: true, flushToDisk: true);
+    }
+
+    public static void Crash(string source, string message, Exception? ex = null)
+    {
+        var details = ex is null
+            ? message
+            : $"{message}{Environment.NewLine}{ex}";
+        Write("CRASH", source, details, force: true, flushToDisk: true, writeFallbackOnFailure: true);
+    }
+
     public static void ThrottledDebug(string source, string key, TimeSpan interval, Func<string> messageFactory)
     {
         var now = DateTimeOffset.UtcNow;
@@ -46,26 +61,68 @@ public static class DataSourceDebugLog
         Debug(source, messageFactory());
     }
 
-    private static void Write(string level, string source, string message)
+    private static void Write(
+        string level,
+        string source,
+        string message,
+        bool force = false,
+        bool flushToDisk = false,
+        bool writeFallbackOnFailure = false)
     {
-        if (!_isEnabled)
+        if (!_isEnabled && !force)
         {
             return;
         }
 
+        var line = $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} [{level}] [{source}] {message}{Environment.NewLine}";
         try
         {
-            var line = $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} [{level}] [{source}] {message}{Environment.NewLine}";
             lock (Sync)
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(LogFilePath)!);
                 RotateIfNeeded();
-                File.AppendAllText(LogFilePath, line);
+                if (flushToDisk)
+                {
+                    AppendAllTextAndFlush(LogFilePath, line);
+                }
+                else
+                {
+                    File.AppendAllText(LogFilePath, line);
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            if (writeFallbackOnFailure)
+            {
+                WriteFallbackCrashLog(line, ex);
+            }
+
+            // Debug logging must never break the data feed.
+        }
+    }
+
+    private static void AppendAllTextAndFlush(string path, string text)
+    {
+        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+        using var writer = new StreamWriter(stream);
+        writer.Write(text);
+        writer.Flush();
+        stream.Flush(flushToDisk: true);
+    }
+
+    private static void WriteFallbackCrashLog(string line, Exception primaryLogException)
+    {
+        try
+        {
+            var fallbackLine =
+                line +
+                $"{DateTimeOffset.Now:yyyy-MM-dd HH:mm:ss.fff zzz} [CRASH] [Logger] Primary crash log write failed | {primaryLogException}{Environment.NewLine}";
+            AppendAllTextAndFlush(FallbackCrashLogFilePath, fallbackLine);
         }
         catch
         {
-            // Debug logging must never break the data feed.
+            // Nothing else is safe to do during a crash.
         }
     }
 

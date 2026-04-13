@@ -200,11 +200,27 @@ public partial class MainWindow : Window
         }
     }
 
-    private static bool IsFunctionalArea(DependencyObject source)
+    private bool IsFunctionalArea(DependencyObject source)
     {
         return HasAncestor<ButtonBase>(source)
+            || HasAncestor(source, DisplaySurface)
             || HasAncestor<TacticalScopeControl>(source)
             || HasAncestor<OpenFreeMapControl>(source);
+    }
+
+    private static bool HasAncestor(DependencyObject? source, DependencyObject ancestor)
+    {
+        while (source is not null)
+        {
+            if (ReferenceEquals(source, ancestor))
+            {
+                return true;
+            }
+
+            source = GetParent(source);
+        }
+
+        return false;
     }
 
     private static bool HasAncestor<T>(DependencyObject? source)

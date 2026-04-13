@@ -296,7 +296,8 @@
                         <Button Content="TGT -" Command="{Binding DecreaseTargetSymbolScaleCommand}" Style="{StaticResource MfdButtonStyle}" />
                     </StackPanel>
 
-                    <Border Grid.Row="1"
+                    <Border x:Name="DisplaySurface"
+                            Grid.Row="1"
                             Grid.Column="1"
                             Margin="10"
                             Background="Transparent"
