@@ -13,11 +13,21 @@ public partial class App : Application
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
-        WindowsErrorReportCollector.LogExistingReports();
+        var startupCrashReportMessage = WindowsErrorReportCollector.LogExistingReports();
 
         base.OnStartup(e);
         _mainWindow = new MainWindow();
         _mainWindow.Show();
+
+        if (!string.IsNullOrWhiteSpace(startupCrashReportMessage))
+        {
+            MessageBox.Show(
+                _mainWindow,
+                startupCrashReportMessage,
+                "Crash log recovered",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
     }
 
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

@@ -7,10 +7,11 @@ public static class WindowsErrorReportCollector
     private const string LogSource = "WindowsErrorReporting";
     private const int MaxReportsToLog = 5;
 
-    public static void LogExistingReports()
+    public static string? LogExistingReports()
     {
         try
         {
+            var fallbackCrashLogCopyPath = CopyFallbackCrashLogToLogDirectoryIfExists();
             var reports = FindReports()
                 .OrderByDescending(report => report.LastWriteTimeUtc)
                 .Take(MaxReportsToLog)
@@ -27,10 +28,52 @@ public static class WindowsErrorReportCollector
                     LogSource,
                     $"Found crash dump/report | path={report.Path} sizeBytes={report.Length} modified={report.LastWriteTime:yyyy-MM-dd HH:mm:ss zzz}");
             }
+
+            return fallbackCrashLogCopyPath is null
+                ? null
+                : $"A previous crash fallback log was found and copied to:{Environment.NewLine}{fallbackCrashLogCopyPath}";
         }
         catch (Exception ex)
         {
             DataSourceDebugLog.Important(LogSource, $"Crash dump/report scan failed | {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static string? CopyFallbackCrashLogToLogDirectoryIfExists()
+    {
+        var sourcePath = DataSourceDebugLog.CurrentFallbackCrashLogFilePath;
+        if (!File.Exists(sourcePath))
+        {
+            return null;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(DataSourceDebugLog.CurrentLogDirectoryPath);
+            var sourceInfo = new FileInfo(sourcePath);
+            var copyPath = Path.Combine(
+                DataSourceDebugLog.CurrentLogDirectoryPath,
+                $"{sourceInfo.LastWriteTime:yyyyMMdd-HHmmss}-TacticalDisplay-crash.log");
+
+            if (!File.Exists(copyPath))
+            {
+                File.Copy(sourcePath, copyPath, overwrite: false);
+            }
+
+            var copyInfo = new FileInfo(copyPath);
+            DataSourceDebugLog.Important(
+                LogSource,
+                $"Copied fallback crash log | source={sourceInfo.FullName} copy={copyInfo.FullName} sizeBytes={copyInfo.Length}");
+
+            return copyInfo.FullName;
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Important(
+                LogSource,
+                $"Fallback crash log copy failed | source={sourcePath} error={ex.GetType().Name}: {ex.Message}");
+            return null;
         }
     }
 
