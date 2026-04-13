@@ -743,7 +743,8 @@ public sealed class TacticalScopeControl : FrameworkElement
                 projectedPoint,
                 target,
                 Picture.Ownship.HeadingDeg,
-                Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
+                Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
+                Settings.TargetSymbolScale);
             _hitTargets.Add((target.Id, projectedPoint));
             var effectiveLabelMode = Settings.Declutter ? LabelMode.Minimal : Settings.LabelMode;
             if (effectiveLabelMode != LabelMode.Off && !IsLabelHidden(target.Id))
@@ -795,32 +796,34 @@ public sealed class TacticalScopeControl : FrameworkElement
         Point p,
         ComputedTarget target,
         double ownHeadingDeg,
-        bool headingUp)
+        bool headingUp,
+        double symbolScale)
     {
         var brush = GetBrush(target);
         var dim = target.IsStale ? 0.4 : 1.0;
         brush = brush.Clone();
         brush.Opacity = dim;
-        var pen = new Pen(brush, 1.5);
-        DrawTargetHeading(dc, p, target, pen, ownHeadingDeg, headingUp);
+        var scale = Math.Clamp(symbolScale, 0.6, 1.8);
+        var pen = new Pen(brush, 1.5 * scale);
+        DrawTargetHeading(dc, p, target, pen, ownHeadingDeg, headingUp, scale);
 
         switch (target.Category)
         {
             case TargetCategory.Friend:
-                dc.DrawEllipse(null, pen, p, 5, 5);
+                dc.DrawEllipse(null, pen, p, 5 * scale, 5 * scale);
                 break;
             case TargetCategory.Enemy:
-                dc.DrawLine(pen, new Point(p.X - 5, p.Y - 5), new Point(p.X + 5, p.Y + 5));
-                dc.DrawLine(pen, new Point(p.X - 5, p.Y + 5), new Point(p.X + 5, p.Y - 5));
+                dc.DrawLine(pen, new Point(p.X - 5 * scale, p.Y - 5 * scale), new Point(p.X + 5 * scale, p.Y + 5 * scale));
+                dc.DrawLine(pen, new Point(p.X - 5 * scale, p.Y + 5 * scale), new Point(p.X + 5 * scale, p.Y - 5 * scale));
                 break;
             case TargetCategory.Package:
-                DrawDiamond(dc, p, pen);
+                DrawDiamond(dc, p, pen, scale);
                 break;
             case TargetCategory.Support:
-                dc.DrawRectangle(null, pen, new Rect(p.X - 4, p.Y - 4, 8, 8));
+                dc.DrawRectangle(null, pen, new Rect(p.X - 4 * scale, p.Y - 4 * scale, 8 * scale, 8 * scale));
                 break;
             default:
-                dc.DrawEllipse(brush, null, p, 2.5, 2.5);
+                dc.DrawEllipse(brush, null, p, 2.5 * scale, 2.5 * scale);
                 break;
         }
     }
@@ -831,7 +834,8 @@ public sealed class TacticalScopeControl : FrameworkElement
         ComputedTarget target,
         Pen pen,
         double ownHeadingDeg,
-        bool headingUp)
+        bool headingUp,
+        double symbolScale)
     {
         if (!target.HeadingDeg.HasValue)
         {
@@ -842,7 +846,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             ? GeoMath.NormalizeDegrees(target.HeadingDeg.Value - ownHeadingDeg)
             : GeoMath.NormalizeDegrees(target.HeadingDeg.Value);
         var rad = displayHeading * System.Math.PI / 180.0;
-        var length = 12.0;
+        var length = 12.0 * symbolScale;
         var end = new Point(
             p.X + length * System.Math.Sin(rad),
             p.Y - length * System.Math.Cos(rad));
@@ -873,14 +877,15 @@ public sealed class TacticalScopeControl : FrameworkElement
         _hitLabels.Add(new HitLabel(target.Id, symbolPoint, placement.Bounds.TopLeft, finalPlacement.Bounds, currentOffset));
     }
 
-    private static void DrawDiamond(DrawingContext dc, Point p, Pen pen)
+    private static void DrawDiamond(DrawingContext dc, Point p, Pen pen, double symbolScale)
     {
+        var size = 6 * symbolScale;
         var g = new StreamGeometry();
         using var ctx = g.Open();
-        ctx.BeginFigure(new Point(p.X, p.Y - 6), false, true);
-        ctx.LineTo(new Point(p.X + 6, p.Y), true, false);
-        ctx.LineTo(new Point(p.X, p.Y + 6), true, false);
-        ctx.LineTo(new Point(p.X - 6, p.Y), true, false);
+        ctx.BeginFigure(new Point(p.X, p.Y - size), false, true);
+        ctx.LineTo(new Point(p.X + size, p.Y), true, false);
+        ctx.LineTo(new Point(p.X, p.Y + size), true, false);
+        ctx.LineTo(new Point(p.X - size, p.Y), true, false);
         dc.DrawGeometry(null, pen, g);
     }
 
@@ -1163,7 +1168,7 @@ public sealed class TacticalScopeControl : FrameworkElement
                 return;
             }
 
-            if (e.ChangedButton == MouseButton.Middle)
+            if (e.ChangedButton is MouseButton.Middle or MouseButton.Right)
             {
                 TargetClicked?.Invoke(this, new ScopeTargetClickEventArgs(labelHit.TargetId, e.ChangedButton));
                 e.Handled = true;
@@ -1176,7 +1181,8 @@ public sealed class TacticalScopeControl : FrameworkElement
             .OrderBy(t => t.distance)
             .FirstOrDefault();
 
-        if (!string.IsNullOrWhiteSpace(hit.id) && hit.distance <= 14)
+        var targetHitRadius = 14 * Math.Clamp(Settings?.TargetSymbolScale ?? 1.0, 0.6, 1.8);
+        if (!string.IsNullOrWhiteSpace(hit.id) && hit.distance <= targetHitRadius)
         {
             TargetClicked?.Invoke(this, new ScopeTargetClickEventArgs(hit.id, e.ChangedButton));
             e.Handled = true;

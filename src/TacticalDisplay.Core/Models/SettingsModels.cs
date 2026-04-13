@@ -7,6 +7,8 @@ public sealed class TacticalDisplaySettings
     public string? PreferredSimConnectDllPath { get; set; }
     public string XPlane12ApiBaseUrl { get; set; } = "http://localhost:8086/";
     public bool EnableDataSourceDebugLogging { get; set; }
+    public double WindowWidth { get; set; } = 1280;
+    public double WindowHeight { get; set; } = 840;
     public double MinTrackedAltitudeFt { get; set; } = 200;
     public int[] RangeScaleOptionsNm { get; init; } = [10, 20, 40, 80, 120];
     public int SelectedRangeNm { get; set; } = 40;
@@ -19,6 +21,7 @@ public sealed class TacticalDisplaySettings
     public double NavaidOpacity { get; set; } = 0.85;
     public double MapLabelBackgroundOpacity { get; set; } = 0.75;
     public bool ShowRangeRings { get; set; } = true;
+    public double TargetSymbolScale { get; set; } = 1.0;
     public bool ShowAirspaceBoundaries { get; set; } = true;
     public bool ShowOnlyActiveAirspaceBoundaries { get; set; } = true;
     public double AirspaceOpacity { get; set; } = 1.0;

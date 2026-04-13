@@ -11,7 +11,129 @@
         Height="840"
         MinWidth="980"
         MinHeight="640"
-        Background="#071015">
+        Background="#071015"
+        WindowStyle="None"
+        ResizeMode="CanResize">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="0"
+                      CornerRadius="0"
+                      GlassFrameThickness="0"
+                      ResizeBorderThickness="8"
+                      UseAeroCaptionButtons="False" />
+    </WindowChrome.WindowChrome>
+    <Window.Resources>
+        <Style x:Key="MfdButtonStyle" TargetType="Button">
+            <Setter Property="Height" Value="42" />
+            <Setter Property="MinWidth" Value="48" />
+            <Setter Property="Margin" Value="4,3" />
+            <Setter Property="Padding" Value="4,2" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#D9F2EC" />
+            <Setter Property="Background" Value="#283843" />
+            <Setter Property="BorderBrush" Value="#617480" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style x:Key="MfdSlotStyle" TargetType="Border">
+            <Setter Property="Height" Value="34" />
+            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="Margin" Value="5" />
+            <Setter Property="Background" Value="#263742" />
+            <Setter Property="BorderBrush" Value="#566976" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style x:Key="MfdTickStyle" TargetType="Border">
+            <Setter Property="Width" Value="5" />
+            <Setter Property="Height" Value="34" />
+            <Setter Property="Margin" Value="12,8" />
+            <Setter Property="Background" Value="#1A2A33" />
+            <Setter Property="BorderBrush" Value="#4C6570" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style x:Key="MfdSideTickStyle" TargetType="Border">
+            <Setter Property="Width" Value="48" />
+            <Setter Property="Height" Value="6" />
+            <Setter Property="Margin" Value="4,3" />
+            <Setter Property="HorizontalAlignment" Value="Center" />
+            <Setter Property="Background" Value="#27414B" />
+            <Setter Property="BorderBrush" Value="#6F8792" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style x:Key="MfdArrowButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="22" />
+            <Setter Property="Height" Value="18" />
+            <Setter Property="Margin" Value="2,1" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="10" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="#D9F2EC" />
+            <Setter Property="Background" Value="#283843" />
+            <Setter Property="BorderBrush" Value="#617480" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style x:Key="MfdWindowButtonStyle" TargetType="Button">
+            <Setter Property="Width" Value="28" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="Margin" Value="2" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="#D9F2EC" />
+            <Setter Property="Background" Value="#24343E" />
+            <Setter Property="BorderBrush" Value="#5F747F" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="False" />
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="MfdToggleButtonStyle" TargetType="ToggleButton">
+            <Setter Property="Height" Value="42" />
+            <Setter Property="MinWidth" Value="48" />
+            <Setter Property="Margin" Value="4,3" />
+            <Setter Property="Padding" Value="4,2" />
+            <Setter Property="FontFamily" Value="Consolas" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+            <Setter Property="Foreground" Value="#D9F2EC" />
+            <Setter Property="Background" Value="#283843" />
+            <Setter Property="BorderBrush" Value="#617480" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="Chrome"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"
+                                              RecognizesAccessKey="False" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Chrome" Property="Background" Value="#294F48" />
+                                <Setter TargetName="Chrome" Property="BorderBrush" Value="#9AFAD7" />
+                                <Setter TargetName="Chrome" Property="BorderThickness" Value="2" />
+                                <Setter Property="Foreground" Value="#E9FFF8" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
     <Window.InputBindings>
         <KeyBinding Modifiers="Control"
                     Key="H"
@@ -23,7 +145,7 @@
                     Key="T"
                     Command="{Binding ToggleAlwaysOnTopCommand}" />
     </Window.InputBindings>
-    <Grid Margin="10">
+    <Grid Margin="4">
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="ScopeColumn" Width="3*" />
             <ColumnDefinition x:Name="SettingsColumn" Width="1.2*" />
@@ -34,75 +156,187 @@
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
-        <Border Grid.Row="0"
-                Grid.Column="0"
-                Grid.ColumnSpan="2"
-                Padding="10"
-                Margin="0,0,0,10"
-                Background="#102028"
-                BorderBrush="#355A56"
-                BorderThickness="1">
-            <DockPanel LastChildFill="False">
-                <TextBlock Text="{Binding HeaderText}"
-                           FontFamily="Consolas"
-                           FontSize="18"
-                           Foreground="#9AFAD7"
-                           FontWeight="SemiBold"
-                           VerticalAlignment="Center"
-                           Margin="0,0,12,0" />
-                <TextBlock Text="SIMULATOR USE ONLY"
-                           FontFamily="Consolas"
-                           FontSize="14"
-                           Foreground="#F7C873"
-                           FontWeight="Bold"
-                           VerticalAlignment="Center"
-                           Margin="0,0,12,0" />
-                <Button Content="{Binding SettingsToggleText}"
-                        Command="{Binding ToggleSettingsCommand}"
-                        Margin="0,0,8,0"
-                        Padding="10,4" />
-                <Button Content="{Binding TopMostToggleText}"
-                        Command="{Binding ToggleAlwaysOnTopCommand}"
-                        Padding="10,4" />
-            </DockPanel>
-        </Border>
-
         <Border x:Name="ScopeBorder"
-                Grid.Row="1"
+                Grid.Row="0"
+                Grid.RowSpan="3"
                 Grid.Column="0"
                 Margin="0,0,10,0"
-                Background="#071015"
-                BorderBrush="#355A56"
-                BorderThickness="1">
-            <Grid>
-                <controls:OpenFreeMapControl x:Name="MapControl"
-                                             Picture="{Binding Picture}"
-                                             Settings="{Binding Settings}"
-                                             IsHitTestVisible="False" />
-                <controls:TacticalScopeControl x:Name="ScopeControl"
-                                               Picture="{Binding Picture}"
-                                               Settings="{Binding Settings}"
-                                               Airspaces="{Binding Airspaces}"
-                                               Airports="{Binding Airports}"
-                                               Navaids="{Binding Navaids}"
-                                               ManualTargetMetadata="{Binding ManualTargetMetadata}" />
-                <StackPanel Orientation="Vertical"
-                            HorizontalAlignment="Left"
-                            VerticalAlignment="Top"
-                            Margin="10">
-                    <Button Content="Range +"
-                            Width="88"
-                            Margin="0,0,0,6"
-                            Command="{Binding IncreaseRangeCommand}" />
-                    <Button Content="Range -"
-                            Width="88"
-                            Command="{Binding DecreaseRangeCommand}" />
-                </StackPanel>
-            </Grid>
+                Background="Transparent"
+                BorderThickness="0">
+            <Border x:Name="MfdFrame"
+                    Padding="16"
+                    Background="Transparent"
+                    BorderBrush="#3D5360"
+                    BorderThickness="2"
+                    CornerRadius="8"
+                    MouseLeftButtonDown="OnWindowMouseLeftButtonDown">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="54" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="78" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="68" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="68" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Row="0"
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <Button Content="N/HDG" Command="{Binding ToggleOrientationCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <Border Style="{StaticResource MfdTickStyle}" />
+                        <StackPanel VerticalAlignment="Center" Margin="10,0">
+                            <Button Content="&#x2191;" Command="{Binding IncreaseMapOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
+                            <Button Content="&#x2193;" Command="{Binding DecreaseMapOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
+                        </StackPanel>
+                        <Border Style="{StaticResource MfdTickStyle}" />
+                        <ToggleButton Content="MAP" Command="{Binding ToggleMapCommand}" IsChecked="{Binding Settings.ShowMapLayer, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                    </StackPanel>
+                    <StackPanel Grid.Row="0"
+                                Grid.Column="2"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center">
+                        <Button Content="-"
+                                Click="OnMinimizeButtonClick"
+                                WindowChrome.IsHitTestVisibleInChrome="True"
+                                Style="{StaticResource MfdWindowButtonStyle}" />
+                        <Button Content="X"
+                                Click="OnCloseButtonClick"
+                                WindowChrome.IsHitTestVisibleInChrome="True"
+                                Style="{StaticResource MfdWindowButtonStyle}" />
+                    </StackPanel>
+                    <Grid Grid.Row="2" Grid.Column="1">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="50" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <StackPanel Grid.Row="0"
+                                    Orientation="Horizontal"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Top">
+                            <Button Content="LBL" Command="{Binding ToggleLabelsCommand}" Style="{StaticResource MfdButtonStyle}" />
+                            <Border Style="{StaticResource MfdTickStyle}" />
+                            <StackPanel VerticalAlignment="Center" Margin="10,0">
+                                <Button Content="&#x2191;" Command="{Binding IncreaseMapOverlayOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
+                                <Button Content="&#x2193;" Command="{Binding DecreaseMapOverlayOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
+                            </StackPanel>
+                            <Border Style="{StaticResource MfdTickStyle}" />
+                            <ToggleButton Content="SET" Command="{Binding ToggleSettingsCommand}" IsChecked="{Binding ShowSettings, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        </StackPanel>
+                        <StackPanel Grid.Row="1"
+                                    Orientation="Horizontal"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Bottom"
+                                    Margin="0,4,0,2">
+                        <TextBlock Text="{Binding ConnectionText}"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="#9AFAD7"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Margin="8,0" />
+                            <TextBlock Text="{Binding TrafficText}"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="#9AFAD7"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Margin="8,0" />
+                            <TextBlock Text="{Binding SimulatorFooterText}"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="#9AFAD7"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Margin="8,0" />
+                            <TextBlock Text="{Binding AppVersionText}"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="#8EA5AD"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Margin="8,0" />
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel Grid.Row="1" Grid.Column="0" VerticalAlignment="Center">
+                        <Button Content="RNG +" Command="{Binding IncreaseRangeCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <Button Content="RNG -" Command="{Binding DecreaseRangeCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <ToggleButton Content="DCLR" Command="{Binding ToggleDeclutterCommand}" IsChecked="{Binding Settings.Declutter, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <ToggleButton Content="TRAIL" Command="{Binding ToggleTrailsCommand}" IsChecked="{Binding Settings.TrailsEnabled, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <ToggleButton Content="APT" Command="{Binding ToggleAirportsCommand}" IsChecked="{Binding Settings.ShowAirportLayer, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <ToggleButton Content="NAV" Command="{Binding ToggleNavaidsCommand}" IsChecked="{Binding Settings.ShowNavaidLayer, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Row="1" Grid.Column="2" VerticalAlignment="Center">
+                        <ToggleButton Content="AREA" Command="{Binding ToggleAirspaceCommand}" IsChecked="{Binding Settings.ShowAirspaceBoundaries, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <ToggleButton Content="PIN" Command="{Binding ToggleAlwaysOnTopCommand}" IsChecked="{Binding IsAlwaysOnTop, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <Button Content="SRC" Command="{Binding ApplyDataSourceCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <Border Style="{StaticResource MfdSlotStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <Button Content="TGT +" Command="{Binding IncreaseTargetSymbolScaleCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <Button Content="TGT -" Command="{Binding DecreaseTargetSymbolScaleCommand}" Style="{StaticResource MfdButtonStyle}" />
+                    </StackPanel>
+
+                    <Border Grid.Row="1"
+                            Grid.Column="1"
+                            Margin="10"
+                            Background="Transparent"
+                            BorderBrush="#050A0D"
+                            BorderThickness="3"
+                            CornerRadius="6">
+                        <Grid ClipToBounds="True">
+                            <controls:OpenFreeMapControl x:Name="MapControl"
+                                                         Picture="{Binding Picture}"
+                                                         Settings="{Binding Settings}"
+                                                         IsHitTestVisible="False" />
+                            <controls:TacticalScopeControl x:Name="ScopeControl"
+                                                           Picture="{Binding Picture}"
+                                                           Settings="{Binding Settings}"
+                                                           Airspaces="{Binding Airspaces}"
+                                                           Airports="{Binding Airports}"
+                                                           Navaids="{Binding Navaids}"
+                                                           ManualTargetMetadata="{Binding ManualTargetMetadata}" />
+                            <Border HorizontalAlignment="Center"
+                                    VerticalAlignment="Top"
+                                    Margin="0,8,0,0"
+                                    Padding="8,3"
+                                    Background="#B0071015"
+                                    BorderBrush="#355A56"
+                                    BorderThickness="1">
+                                <TextBlock Text="{Binding HeaderText}"
+                                           FontFamily="Consolas"
+                                           FontSize="14"
+                                           FontWeight="SemiBold"
+                                           Foreground="#9AFAD7" />
+                            </Border>
+                        </Grid>
+                    </Border>
+                </Grid>
+            </Border>
         </Border>
 
         <Border x:Name="SettingsBorder"
-                Grid.Row="1"
+                Grid.Row="0"
+                Grid.RowSpan="3"
                 Grid.Column="1"
                 Padding="10"
                 Background="#102028"
@@ -335,7 +569,7 @@
                             <Button Content="Open Debug Log Folder"
                                     Command="{Binding OpenDebugLogFolderCommand}"
                                     Margin="0,8,0,0" />
-                            <TextBlock Text="Writes MSFS/XPlane feed diagnostics to %APPDATA%\VirtualTacticalSituationDisplay\logs\data-source-debug.log"
+                            <TextBlock Text="Writes MSFS/XPlane feed diagnostics to %APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log"
                                        Foreground="#7CB9A9"
                                        TextWrapping="Wrap"
                                        Margin="0,4,0,0" />
@@ -349,24 +583,5 @@
             </ScrollViewer>
         </Border>
 
-        <Border Grid.Row="2"
-                Grid.Column="0"
-                Grid.ColumnSpan="2"
-                Margin="0,10,0,0"
-                Padding="8"
-                Background="#102028"
-                BorderBrush="#355A56"
-                BorderThickness="1">
-            <DockPanel>
-                <TextBlock Text="{Binding ConnectionText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
-                <TextBlock Text="{Binding TrafficText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
-                <TextBlock Text="{Binding SimulatorStatusLabel}" Foreground="#7CB9A9" Margin="0,0,4,0" />
-                <TextBlock Text="{Binding SimConnectText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
-                <TextBlock Text="Simulator Use Only" Foreground="#F7C873" Margin="0,0,16,0" />
-                <TextBlock Text="Refresh:" Foreground="#7CB9A9" Margin="0,0,4,0" />
-                <TextBlock Text="{Binding RefreshRateText}" Foreground="#9AFAD7" Margin="0,0,16,0" />
-                <TextBlock Text="{Binding SourceText}" Foreground="#9AFAD7" />
-            </DockPanel>
-        </Border>
     </Grid>
 </Window>

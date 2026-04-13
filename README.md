@@ -13,6 +13,8 @@ Virtual Tactical Situation Display is a Windows application for a clear 2D tacti
 - friend, package, support, enemy, and unknown target symbols
 - range, bearing, altitude difference, target heading, aspect, and closure labels
 - target trails
+- adjustable target symbol size
+- virtual MFD-style frame with on-screen controls
 - active V-LARA reserved airspace boundaries
 - user-defined bullseye reference point
 
@@ -25,8 +27,9 @@ Virtual Tactical Situation Display is a Windows application for a clear 2D tacti
 1. Download the latest release.
 2. Start `TacticalDisplay.App.exe`.
 3. Use `Demo` first to check the display.
-4. Select `MSFS`, `XPlane 12`, or `Xplane Legacy (XPUIPC)` from `Source` when using live simulator data.
-5. Click `Apply Source`.
+4. Click `SET` to open or hide the settings panel.
+5. Select `MSFS`, `XPlane 12`, or `Xplane Legacy (XPUIPC)` from `Source` when using live simulator data.
+6. Click `Apply Source`.
 
 ## Data Sources
 
@@ -39,12 +42,32 @@ SimConnect is bundled with the app. X-Plane 12 uses `http://localhost:8086/` by 
 
 ## Display Controls
 
-- `Range +` / `Range -`: change visible range
+The app opens directly into the tactical display. The settings panel is hidden by default and can be opened with `SET`.
+
+Frame controls:
+- `RNG +` / `RNG -`: change visible range
 - `N/HDG`: switch north-up / heading-up
-- `Declutter`: reduce display clutter
-- `Labels`: cycle label detail level
-- `Trails ON/OFF`: show or hide target trails
-- `Areas`: show or hide active V-LARA airspace boundaries
+- top up/down arrows: increase or decrease map opacity
+- `MAP`: show or hide the map layer
+- `DCLR`: reduce display clutter
+- `TRAIL`: show or hide target trails
+- `APT`: show or hide airport data
+- `NAV`: show or hide navaid data
+- `AREA`: show or hide active V-LARA airspace boundaries
+- `PIN`: pin or unpin the window on top
+- `SRC`: apply the selected data source
+- `LBL`: cycle label detail level
+- bottom up/down arrows: increase or decrease airport, navaid, and map-label background opacity together
+- `SET`: show or hide the settings panel
+- `TGT +` / `TGT -`: increase or decrease target symbol size
+
+Window controls:
+- the app uses its own borderless window controls
+- drag empty, non-functional parts of the virtual frame to move the window
+- resize from the window edge
+- the last normal window size is saved when the app closes
+
+Settings panel controls:
 - `Area opacity`: adjust airspace layer opacity
 - `Save Settings`: keep current settings for the next launch
 
@@ -65,6 +88,7 @@ Symbols:
 Mouse actions:
 - left click a target: cycle affiliation
 - right click a target: rename
+- right click a label: rename that target
 - drag a label: move that label
 - middle click a target or label: hide or show that label
 
@@ -97,7 +121,7 @@ If live data does not appear, check:
 
 If the map layer says `Map unavailable`, check that Microsoft Edge WebView2 Runtime is installed and that the app can write to `%APPDATA%\VirtualTacticalSituationDisplay\WebView2`. A `0x8000FFFF` startup error usually means WebView2 failed before the map page or online tiles loaded.
 
-Data source logs are written to `%APPDATA%\VirtualTacticalSituationDisplay\logs\data-source-debug.log` when debug logging is enabled in the app.
+Data source logs are written to `%APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log` when debug logging is enabled in the app.
 
 ## Advanced Notes
 

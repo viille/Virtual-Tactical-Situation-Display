@@ -47,7 +47,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private DateTimeOffset _rateWindowStart = DateTimeOffset.UtcNow;
     private string _refreshRateText = "0.0 Hz";
     private string _selectedDataSource = DataSourceModes.Demo;
-    private bool _showSettings = true;
+    private bool _showSettings;
     private bool _isAlwaysOnTop;
     private readonly Dictionary<string, ManualTargetMetadata> _manualTargetMetadata;
     private bool _showSimConnectDebugOnFailure;
@@ -74,6 +74,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ToggleOrientationCommand = new RelayCommand(ToggleOrientation);
         IncreaseRangeCommand = new RelayCommand(IncreaseRange);
         DecreaseRangeCommand = new RelayCommand(DecreaseRange);
+        IncreaseMapOpacityCommand = new RelayCommand(() => AdjustMapOpacity(0.05));
+        DecreaseMapOpacityCommand = new RelayCommand(() => AdjustMapOpacity(-0.05));
+        IncreaseMapOverlayOpacityCommand = new RelayCommand(() => AdjustMapOverlayOpacity(0.05));
+        DecreaseMapOverlayOpacityCommand = new RelayCommand(() => AdjustMapOverlayOpacity(-0.05));
+        IncreaseTargetSymbolScaleCommand = new RelayCommand(() => AdjustTargetSymbolScale(0.1));
+        DecreaseTargetSymbolScaleCommand = new RelayCommand(() => AdjustTargetSymbolScale(-0.1));
         ToggleDeclutterCommand = new RelayCommand(ToggleDeclutter);
         ToggleMapCommand = new RelayCommand(ToggleMap);
         ToggleAirportsCommand = new RelayCommand(ToggleAirports);
@@ -150,7 +156,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string SimConnectText
     {
         get => _simConnectText;
-        private set => SetField(ref _simConnectText, value);
+        private set
+        {
+            SetField(ref _simConnectText, value);
+            Raise(nameof(SimulatorFooterText));
+        }
     }
 
     public string SourceText
@@ -383,6 +393,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     public string SettingsToggleText => ShowSettings ? "Hide Settings" : "Show Settings";
     public string TopMostToggleText => IsAlwaysOnTop ? "Unpin Window" : "Pin On Top";
+    public string AppVersionText { get; set; } = "ver unknown";
     public string DeclutterToggleText => Settings.Declutter ? "Declutter ON" : "Declutter OFF";
     public string MapToggleText => Settings.ShowMapLayer ? "Map ON" : "Map OFF";
     public string AirportsToggleText => Settings.ShowAirportLayer ? "Airports ON" : "Airports OFF";
@@ -396,6 +407,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         DataSourceModes.IsXPlane12(Settings.DataSourceMode) ? "X-Plane 12:" :
         DataSourceModes.IsXPlaneLegacy(Settings.DataSourceMode) ? "XPUIPC:" :
         "Simulator:";
+    public string SimulatorFooterText => $"{SimulatorStatusLabel} {SimConnectText}";
 
     public ObservableCollection<int> RangeOptions { get; } = [10, 20, 40, 80, 120];
     public IReadOnlyDictionary<string, ManualTargetMetadata> ManualTargetMetadata => _manualTargetMetadata;
@@ -409,6 +421,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ToggleOrientationCommand { get; }
     public RelayCommand IncreaseRangeCommand { get; }
     public RelayCommand DecreaseRangeCommand { get; }
+    public RelayCommand IncreaseMapOpacityCommand { get; }
+    public RelayCommand DecreaseMapOpacityCommand { get; }
+    public RelayCommand IncreaseMapOverlayOpacityCommand { get; }
+    public RelayCommand DecreaseMapOverlayOpacityCommand { get; }
+    public RelayCommand IncreaseTargetSymbolScaleCommand { get; }
+    public RelayCommand DecreaseTargetSymbolScaleCommand { get; }
     public RelayCommand ToggleDeclutterCommand { get; }
     public RelayCommand ToggleMapCommand { get; }
     public RelayCommand ToggleAirportsCommand { get; }
@@ -477,10 +495,53 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(Settings));
     }
 
+    private void AdjustMapOpacity(double delta)
+    {
+        MapOpacityPercent = Math.Round((Math.Clamp(Settings.MapOpacity + delta, 0.0, 1.0)) * 100);
+    }
+
+    private void AdjustMapOverlayOpacity(double delta)
+    {
+        var airportOpacity = Math.Clamp(Settings.AirportOpacity + delta, 0.0, 1.0);
+        var navaidOpacity = Math.Clamp(Settings.NavaidOpacity + delta, 0.0, 1.0);
+        var labelBackgroundOpacity = Math.Clamp(Settings.MapLabelBackgroundOpacity + delta, 0.0, 1.0);
+
+        if (Math.Abs(Settings.AirportOpacity - airportOpacity) < 0.001
+            && Math.Abs(Settings.NavaidOpacity - navaidOpacity) < 0.001
+            && Math.Abs(Settings.MapLabelBackgroundOpacity - labelBackgroundOpacity) < 0.001)
+        {
+            return;
+        }
+
+        Settings.AirportOpacity = airportOpacity;
+        Settings.NavaidOpacity = navaidOpacity;
+        Settings.MapLabelBackgroundOpacity = labelBackgroundOpacity;
+        Raise(nameof(AirportOpacityPercent));
+        Raise(nameof(AirportOpacityText));
+        Raise(nameof(NavaidOpacityPercent));
+        Raise(nameof(NavaidOpacityText));
+        Raise(nameof(MapLabelBackgroundOpacityPercent));
+        Raise(nameof(MapLabelBackgroundOpacityText));
+        Raise(nameof(Settings));
+    }
+
+    private void AdjustTargetSymbolScale(double delta)
+    {
+        var scale = Math.Clamp(Settings.TargetSymbolScale + delta, 0.6, 1.8);
+        if (Math.Abs(Settings.TargetSymbolScale - scale) < 0.001)
+        {
+            return;
+        }
+
+        Settings.TargetSymbolScale = scale;
+        Raise(nameof(Settings));
+    }
+
     private void ToggleDeclutter()
     {
         Settings.Declutter = !Settings.Declutter;
         Raise(nameof(DeclutterToggleText));
+        Raise(nameof(Settings));
     }
 
     private void ToggleMap()
@@ -508,6 +569,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         Settings.ShowAirspaceBoundaries = !Settings.ShowAirspaceBoundaries;
         Raise(nameof(AirspaceToggleText));
+        Raise(nameof(Settings));
     }
 
     private void ToggleLabels()
@@ -524,6 +586,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         Settings.TrailsEnabled = !Settings.TrailsEnabled;
         Raise(nameof(TrailsToggleText));
+        Raise(nameof(Settings));
     }
 
     private void ToggleSettingsPanel() => ShowSettings = !ShowSettings;
@@ -1075,6 +1138,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         SelectedDataSource = Settings.DataSourceMode;
         SourceText = $"Source: {Settings.DataSourceMode}";
         Raise(nameof(SimulatorStatusLabel));
+        Raise(nameof(SimulatorFooterText));
         Raise(nameof(DataSourceDebugLoggingEnabled));
 
         if (!DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode))

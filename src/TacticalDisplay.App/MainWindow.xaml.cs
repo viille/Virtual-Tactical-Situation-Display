@@ -2,7 +2,9 @@ using System.Windows;
 using System.ComponentModel;
 using System.Reflection;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
 using TacticalDisplay.App.Controls;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.App.ViewModels;
@@ -25,8 +27,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Title = $"Tactical Situation Display | ver {GetDisplayVersion()}";
+        var displayVersion = GetDisplayVersion();
+        Title = $"Tactical Situation Display | ver {displayVersion}";
         DataContext = _viewModel;
+        _viewModel.AppVersionText = $"ver {displayVersion}";
+        RestoreWindowSize();
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         ScopeControl.TargetClicked += OnScopeTargetClicked;
         ScopeControl.LabelMoved += OnScopeLabelMoved;
@@ -136,6 +141,77 @@ public partial class MainWindow : Window
         ScopeBorder.Margin = showSettings ? new Thickness(0, 0, ScopeSettingsGapWidth, 0) : new Thickness(0);
     }
 
+    private void RestoreWindowSize()
+    {
+        Width = System.Math.Max(_viewModel.Settings.WindowWidth, MinWidth);
+        Height = System.Math.Max(_viewModel.Settings.WindowHeight, MinHeight);
+    }
+
+    private void StoreWindowSize()
+    {
+        if (WindowState != WindowState.Normal)
+        {
+            return;
+        }
+
+        _viewModel.Settings.WindowWidth = ActualWidth;
+        _viewModel.Settings.WindowHeight = ActualHeight;
+    }
+
+    private void OnWindowMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton != MouseButton.Left || e.ClickCount != 1)
+        {
+            return;
+        }
+
+        if (e.OriginalSource is DependencyObject source && IsFunctionalArea(source))
+        {
+            return;
+        }
+
+        try
+        {
+            DragMove();
+        }
+        catch (InvalidOperationException)
+        {
+        }
+    }
+
+    private static bool IsFunctionalArea(DependencyObject source)
+    {
+        return HasAncestor<ButtonBase>(source)
+            || HasAncestor<TacticalScopeControl>(source)
+            || HasAncestor<OpenFreeMapControl>(source);
+    }
+
+    private static bool HasAncestor<T>(DependencyObject? source)
+        where T : DependencyObject
+    {
+        while (source is not null)
+        {
+            if (source is T)
+            {
+                return true;
+            }
+
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return false;
+    }
+
+    private void OnMinimizeButtonClick(object sender, RoutedEventArgs e)
+    {
+        WindowState = WindowState.Minimized;
+    }
+
+    private void OnCloseButtonClick(object sender, RoutedEventArgs e)
+    {
+        Close();
+    }
+
     private void OnScopeTargetClicked(object? sender, ScopeTargetClickEventArgs e)
     {
         if (e.Button == MouseButton.Left)
@@ -186,6 +262,7 @@ public partial class MainWindow : Window
 
         try
         {
+            StoreWindowSize();
             await _viewModel.DisposeAsync();
             _shutdownCompleted = true;
             Closing -= OnClosingAsync;

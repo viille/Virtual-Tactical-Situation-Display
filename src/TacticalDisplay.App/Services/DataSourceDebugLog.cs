@@ -84,7 +84,7 @@ public static class DataSourceDebugLog
 
         var archivePath = Path.Combine(
             Path.GetDirectoryName(LogFilePath)!,
-            $"data-source-debug-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+            $"debug-{DateTime.Now:yyyyMMdd-HHmmss}.log");
 
         if (File.Exists(archivePath))
         {

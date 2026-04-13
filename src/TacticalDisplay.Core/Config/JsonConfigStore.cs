@@ -121,6 +121,9 @@ public sealed class JsonConfigStore
         settings.AirportOpacity = System.Math.Clamp(settings.AirportOpacity, 0.0, 1.0);
         settings.NavaidOpacity = System.Math.Clamp(settings.NavaidOpacity, 0.0, 1.0);
         settings.MapLabelBackgroundOpacity = System.Math.Clamp(settings.MapLabelBackgroundOpacity, 0.0, 1.0);
+        settings.TargetSymbolScale = System.Math.Clamp(settings.TargetSymbolScale, 0.6, 1.8);
+        settings.WindowWidth = System.Math.Clamp(settings.WindowWidth, 640, 3840);
+        settings.WindowHeight = System.Math.Clamp(settings.WindowHeight, 480, 2160);
 
         if (settings.TrailLengthSamples == 15)
         {
@@ -156,6 +159,9 @@ public sealed class JsonConfigStore
             !IsPositive(settings.StaleSeconds) ||
             !IsPositive(settings.RemoveAfterSeconds) ||
             !IsFiniteNonNegative(settings.MinTrackedAltitudeFt) ||
+            !IsPositive(settings.WindowWidth) ||
+            !IsPositive(settings.WindowHeight) ||
+            !IsPositive(settings.TargetSymbolScale) ||
             settings.TrailLengthSamples <= 0)
         {
             throw new InvalidDataException("Display settings contain invalid timing or filter values.");
