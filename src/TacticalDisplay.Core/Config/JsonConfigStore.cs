@@ -126,6 +126,11 @@ public sealed class JsonConfigStore
         {
             settings.TrailLengthSamples = 90;
         }
+
+        if (string.Equals(settings.AirspaceActivationUrl, "https://lara-backend.lusep.fi/topsky/lara.txt", StringComparison.OrdinalIgnoreCase))
+        {
+            settings.AirspaceActivationUrl = "https://lara-backend.lusep.fi/data/reservations/efin.json";
+        }
     }
 
     private static void ValidateDisplaySettings(TacticalDisplaySettings settings)

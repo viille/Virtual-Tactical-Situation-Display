@@ -97,7 +97,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         };
         _renderTimer.Start();
         _ = _feed.StartAsync(_runCts.Token);
-        _airspaceTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(45) };
+        _airspaceTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
         _airspaceTimer.Tick += (_, _) => _ = LoadAirspacesAsync();
         _airspaceTimer.Start();
         _ = LoadAirspacesAsync();

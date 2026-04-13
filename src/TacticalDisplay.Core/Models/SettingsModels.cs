@@ -24,7 +24,7 @@ public sealed class TacticalDisplaySettings
     public double AirspaceOpacity { get; set; } = 1.0;
     public string AirspaceFirCode { get; set; } = "efin";
     public string AirspaceDataBaseUrl { get; set; } = "https://raw.githubusercontent.com/ottotuhkunen/virtual-lara-airspace-data/main/data";
-    public string AirspaceActivationUrl { get; set; } = "https://lara-backend.lusep.fi/topsky/lara.txt";
+    public string AirspaceActivationUrl { get; set; } = "https://lara-backend.lusep.fi/data/reservations/efin.json";
     public bool ShowBullseye { get; set; }
     public double? BullseyeLatitudeDeg { get; set; }
     public double? BullseyeLongitudeDeg { get; set; }

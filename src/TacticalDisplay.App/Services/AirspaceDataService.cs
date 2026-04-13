@@ -36,101 +36,49 @@ public sealed class AirspaceDataService
         }
 
         var text = await _httpClient.GetStringAsync(settings.AirspaceActivationUrl, cancellationToken);
-        return ParseTopSkyActivations(text, DateTimeOffset.UtcNow);
+        using var document = JsonDocument.Parse(text);
+        return ParseReservationActivations(document.RootElement, DateTimeOffset.UtcNow);
     }
 
-    private static Dictionary<string, AirspaceActivation> ParseTopSkyActivations(string text, DateTimeOffset nowUtc)
+    private static Dictionary<string, AirspaceActivation> ParseReservationActivations(JsonElement root, DateTimeOffset nowUtc)
     {
         var activations = new Dictionary<string, AirspaceActivation>(StringComparer.OrdinalIgnoreCase);
-        var tokens = text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (var token in tokens)
+        if (root.ValueKind != JsonValueKind.Array)
         {
-            if (token.StartsWith("REFRESH_INTERVAL:", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
+            return activations;
+        }
 
-            var parts = token.Split(':', StringSplitOptions.TrimEntries);
-            if (parts.Length == 0 ||
-                string.IsNullOrWhiteSpace(parts[0]) ||
-                parts[0].Equals("VLARA", StringComparison.OrdinalIgnoreCase))
-            {
-                continue;
-            }
-
-            var name = parts[0];
-            if (!TryParseActivationWindow(parts, out var activeFromUtc, out var activeUntilUtc) ||
+        foreach (var reservation in root.EnumerateArray())
+        {
+            if (!TryReadUnixMilliseconds(reservation, "start", out var activeFromUtc) ||
+                !TryReadUnixMilliseconds(reservation, "end", out var activeUntilUtc) ||
                 nowUtc < activeFromUtc ||
-                nowUtc > activeUntilUtc)
+                nowUtc > activeUntilUtc ||
+                !reservation.TryGetProperty("areas", out var areas) ||
+                areas.ValueKind != JsonValueKind.Array)
             {
                 continue;
             }
 
-            activations[name] = new AirspaceActivation(
-                ReadNullableIntPart(parts, 6),
-                ReadNullableIntPart(parts, 7));
+            foreach (var area in areas.EnumerateArray())
+            {
+                var name = ReadString(area, "area_id");
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    continue;
+                }
+
+                var polygons = area.TryGetProperty("coordinates", out var coordinates)
+                    ? ParsePolygonCoordinates(coordinates)
+                    : [];
+                activations[name] = new AirspaceActivation(
+                    FlightLevelToAltitudeFt(ReadNullableInt(area, "lower")),
+                    FlightLevelToAltitudeFt(ReadNullableInt(area, "upper")),
+                    polygons);
+            }
         }
 
         return activations;
-    }
-
-    private static bool TryParseActivationWindow(string[] parts, out DateTimeOffset activeFromUtc, out DateTimeOffset activeUntilUtc)
-    {
-        activeFromUtc = default;
-        activeUntilUtc = default;
-        if (parts.Length <= 5)
-        {
-            return false;
-        }
-
-        if (!TryParseTopSkyDateTime(parts[1], parts[4], out activeFromUtc) ||
-            !TryParseTopSkyDateTime(parts[2], parts[5], out activeUntilUtc))
-        {
-            return false;
-        }
-
-        if (activeUntilUtc < activeFromUtc)
-        {
-            activeUntilUtc = activeUntilUtc.AddDays(1);
-        }
-
-        return true;
-    }
-
-    private static bool TryParseTopSkyDateTime(string dateText, string timeText, out DateTimeOffset value)
-    {
-        value = default;
-        if (dateText.Length != 6 ||
-            timeText.Length != 4 ||
-            !int.TryParse(dateText[..2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var year) ||
-            !int.TryParse(dateText.Substring(2, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var month) ||
-            !int.TryParse(dateText.Substring(4, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var day) ||
-            !int.TryParse(timeText[..2], NumberStyles.Integer, CultureInfo.InvariantCulture, out var hour) ||
-            !int.TryParse(timeText.Substring(2, 2), NumberStyles.Integer, CultureInfo.InvariantCulture, out var minute))
-        {
-            return false;
-        }
-
-        try
-        {
-            if (hour == 24 && minute == 0)
-            {
-                value = new DateTimeOffset(2000 + year, month, day, 0, 0, 0, TimeSpan.Zero).AddDays(1);
-                return true;
-            }
-
-            if (hour is < 0 or > 23 || minute is < 0 or > 59)
-            {
-                return false;
-            }
-
-            value = new DateTimeOffset(2000 + year, month, day, hour, minute, 0, TimeSpan.Zero);
-            return true;
-        }
-        catch (ArgumentOutOfRangeException)
-        {
-            return false;
-        }
     }
 
     private static IReadOnlyList<AirspaceArea> ParseGeoJson(JsonElement root, IReadOnlyDictionary<string, AirspaceActivation> activeAirspaces)
@@ -174,6 +122,25 @@ public sealed class AirspaceDataService
                 activation?.LowerAltitudeFt,
                 activation?.UpperAltitudeFt,
                 polygons));
+        }
+
+        foreach (var (name, activation) in activeAirspaces)
+        {
+            if (airspaces.Any(a => a.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) ||
+                activation.Polygons.Count == 0)
+            {
+                continue;
+            }
+
+            airspaces.Add(new AirspaceArea(
+                name,
+                "Reservation",
+                null,
+                null,
+                true,
+                activation.LowerAltitudeFt,
+                activation.UpperAltitudeFt,
+                activation.Polygons));
         }
 
         return airspaces;
@@ -269,16 +236,45 @@ public sealed class AirspaceDataService
         return null;
     }
 
-    private static int? ReadNullableIntPart(string[] parts, int index)
+    private static bool TryReadUnixMilliseconds(JsonElement properties, string name, out DateTimeOffset value)
     {
-        if (index >= parts.Length ||
-            !int.TryParse(parts[index], NumberStyles.Integer, CultureInfo.InvariantCulture, out var value))
+        value = default;
+        if (properties.ValueKind != JsonValueKind.Object ||
+            !properties.TryGetProperty(name, out var property))
         {
-            return null;
+            return false;
         }
 
-        return value;
+        long milliseconds;
+        if (property.ValueKind == JsonValueKind.Number && property.TryGetInt64(out var number))
+        {
+            milliseconds = number;
+        }
+        else if (property.ValueKind == JsonValueKind.String &&
+            long.TryParse(property.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out number))
+        {
+            milliseconds = number;
+        }
+        else
+        {
+            return false;
+        }
+
+        try
+        {
+            value = DateTimeOffset.FromUnixTimeMilliseconds(milliseconds);
+            return true;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
     }
 
-    private sealed record AirspaceActivation(int? LowerAltitudeFt, int? UpperAltitudeFt);
+    private static int? FlightLevelToAltitudeFt(int? flightLevel) => flightLevel * 100;
+
+    private sealed record AirspaceActivation(
+        int? LowerAltitudeFt,
+        int? UpperAltitudeFt,
+        IReadOnlyList<AirspacePolygon> Polygons);
 }
