@@ -11,15 +11,26 @@ public static class WindowsErrorReportCollector
     {
         try
         {
+            var messages = new List<string>();
+            AddCrashLogMessageIfNeeded(messages);
             var fallbackCrashLogCopyPath = CopyFallbackCrashLogToLogDirectoryIfExists();
             var reports = FindReports()
                 .OrderByDescending(report => report.LastWriteTimeUtc)
                 .Take(MaxReportsToLog)
                 .ToArray();
 
+            if (fallbackCrashLogCopyPath is not null)
+            {
+                messages.Add($"A previous fallback crash log was copied to:{Environment.NewLine}{fallbackCrashLogCopyPath}");
+            }
+
             if (reports.Length > 0)
             {
-                CopyLatestReportToLogDirectory(reports[0]);
+                var crashDumpCopyPath = CopyLatestReportToLogDirectory(reports[0]);
+                if (crashDumpCopyPath is not null)
+                {
+                    messages.Add($"A Windows crash dump/report was copied to:{Environment.NewLine}{crashDumpCopyPath}");
+                }
             }
 
             foreach (var report in reports)
@@ -29,14 +40,56 @@ public static class WindowsErrorReportCollector
                     $"Found crash dump/report | path={report.Path} sizeBytes={report.Length} modified={report.LastWriteTime:yyyy-MM-dd HH:mm:ss zzz}");
             }
 
-            return fallbackCrashLogCopyPath is null
+            return messages.Count == 0
                 ? null
-                : $"A previous crash fallback log was found and copied to:{Environment.NewLine}{fallbackCrashLogCopyPath}";
+                : string.Join($"{Environment.NewLine}{Environment.NewLine}", messages);
         }
         catch (Exception ex)
         {
             DataSourceDebugLog.Important(LogSource, $"Crash dump/report scan failed | {ex.GetType().Name}: {ex.Message}");
             return null;
+        }
+    }
+
+    private static void AddCrashLogMessageIfNeeded(ICollection<string> messages)
+    {
+        var logPath = DataSourceDebugLog.CurrentLogFilePath;
+        if (!File.Exists(logPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var crashLineCount = 0;
+            string? latestCrashLine = null;
+            foreach (var line in File.ReadLines(logPath))
+            {
+                if (!line.Contains("[CRASH]", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                crashLineCount++;
+                latestCrashLine = line;
+            }
+
+            if (crashLineCount == 0)
+            {
+                return;
+            }
+
+            DataSourceDebugLog.Important(
+                LogSource,
+                $"Crash entries found in debug log | path={logPath} count={crashLineCount} latest={latestCrashLine}");
+            messages.Add(
+                $"Crash entries were found in the debug log:{Environment.NewLine}{logPath}{Environment.NewLine}Latest: {latestCrashLine}");
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Important(
+                LogSource,
+                $"Crash log scan failed | path={logPath} error={ex.GetType().Name}: {ex.Message}");
         }
     }
 
@@ -77,7 +130,7 @@ public static class WindowsErrorReportCollector
         }
     }
 
-    private static void CopyLatestReportToLogDirectory(ReportFile report)
+    private static string? CopyLatestReportToLogDirectory(ReportFile report)
     {
         try
         {
@@ -95,12 +148,14 @@ public static class WindowsErrorReportCollector
             DataSourceDebugLog.Important(
                 LogSource,
                 $"Copied latest crash dump/report | source={report.Path} copy={copyInfo.FullName} sizeBytes={copyInfo.Length}");
+            return copyInfo.FullName;
         }
         catch (Exception ex)
         {
             DataSourceDebugLog.Important(
                 LogSource,
                 $"Crash dump/report copy failed | source={report.Path} error={ex.GetType().Name}: {ex.Message}");
+            return null;
         }
     }
 
