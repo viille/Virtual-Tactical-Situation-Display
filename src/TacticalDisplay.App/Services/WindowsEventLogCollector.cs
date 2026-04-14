@@ -8,6 +8,7 @@ public static class WindowsEventLogCollector
     private const string LogSource = "WindowsEventLog";
     private const string ApplicationLogName = "Application";
     private const string FaultProviderName = "Application Error";
+    private const string AsusOsgModuleName = "GTIII-OSD64.dll";
 
     public static string? CaptureLatestCrash()
     {
@@ -48,12 +49,22 @@ public static class WindowsEventLogCollector
                     LogSource,
                     $"Latest Application Error event | time={record.TimeCreated:yyyy-MM-dd HH:mm:ss zzz} {summary}");
 
-                return
+                var userMessage =
                     $"Windows Event Log crash detected:{Environment.NewLine}" +
                     $"Time: {record.TimeCreated:yyyy-MM-dd HH:mm:ss zzz}{Environment.NewLine}" +
                     $"Faulting module: {parsed.FaultingModule ?? "unknown"}{Environment.NewLine}" +
                     $"Exception code: {parsed.ExceptionCode ?? "unknown"}{Environment.NewLine}" +
                     $"Fault offset: {parsed.FaultOffset ?? "unknown"}";
+
+                if (string.Equals(parsed.FaultingModule, AsusOsgModuleName, StringComparison.OrdinalIgnoreCase))
+                {
+                    userMessage +=
+                        $"{Environment.NewLine}{Environment.NewLine}" +
+                        "The crash was caused by the ASUS GPU Tweak OSD overlay (GTIII-OSD64.dll). " +
+                        "Please disable the ASUS GPU Tweak OSD to prevent this crash.";
+                }
+
+                return userMessage;
             }
         }
         catch (Exception ex)
