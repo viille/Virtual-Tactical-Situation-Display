@@ -52,13 +52,17 @@ public sealed class UpdateCheckService
             ? htmlUrlProperty.GetString()
             : null;
         var assetDownloadUrl = ResolveAppAssetDownloadUrl(root);
+        var releaseNotes = root.TryGetProperty("body", out var bodyProperty)
+            ? bodyProperty.GetString()
+            : null;
 
         return new UpdateCheckResult(
             currentVersion,
             latestVersion,
             tagName ?? latestVersion.ToString(),
             string.IsNullOrWhiteSpace(htmlUrl) ? ReleasesPageUri : new Uri(htmlUrl),
-            assetDownloadUrl);
+            assetDownloadUrl,
+            releaseNotes);
     }
 
     public async Task<bool> DownloadAndStartUpdateAsync(UpdateCheckResult result, CancellationToken cancellationToken)
@@ -216,7 +220,8 @@ public sealed record UpdateCheckResult(
     Version LatestVersion,
     string LatestTag,
     Uri ReleaseUri,
-    Uri? AssetDownloadUri);
+    Uri? AssetDownloadUri,
+    string? ReleaseNotes);
 
 internal static class ProcessStartInfoExtensions
 {

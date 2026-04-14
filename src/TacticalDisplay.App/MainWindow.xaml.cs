@@ -74,8 +74,15 @@ public partial class MainWindow : Window
             var message =
                 $"A new version is available.\n\n" +
                 $"Current: v{result.CurrentVersion}\n" +
-                $"Latest: {result.LatestTag}\n\n" +
-                "Download and install it now?";
+                $"Latest: {result.LatestTag}\n\n";
+
+            var releaseNotes = TrimReleaseNotes(result.ReleaseNotes);
+            if (!string.IsNullOrWhiteSpace(releaseNotes))
+            {
+                message += $"Changelog:\n{releaseNotes}\n\n";
+            }
+
+            message += "Download and install it now?";
 
             if (MessageBox.Show(
                     this,
@@ -336,5 +343,19 @@ public partial class MainWindow : Window
                 DataSourceDebugLog.Info("App", $"Final window close failed | {ex}");
             }
         }
+    }
+
+    private static string? TrimReleaseNotes(string? notes)
+    {
+        if (string.IsNullOrWhiteSpace(notes))
+        {
+            return null;
+        }
+
+        var normalized = notes.Trim();
+        const int maxLength = 1500;
+        return normalized.Length <= maxLength
+            ? normalized
+            : $"{normalized[..maxLength].Trim()}…";
     }
 }
