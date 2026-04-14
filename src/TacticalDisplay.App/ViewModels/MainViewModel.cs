@@ -576,9 +576,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         Settings.LabelMode = Settings.LabelMode switch
         {
-            LabelMode.Full => LabelMode.Minimal,
-            LabelMode.Minimal => LabelMode.Off,
-            _ => LabelMode.Full
+            LabelMode.Minimal => LabelMode.Full,
+            LabelMode.Full => LabelMode.Off,
+            _ => LabelMode.Minimal
         };
     }
 

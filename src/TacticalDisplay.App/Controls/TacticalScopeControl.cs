@@ -746,7 +746,7 @@ public sealed class TacticalScopeControl : FrameworkElement
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
                 Settings.TargetSymbolScale);
             _hitTargets.Add((target.Id, projectedPoint));
-            var effectiveLabelMode = Settings.Declutter ? LabelMode.Minimal : Settings.LabelMode;
+            var effectiveLabelMode = Settings.LabelMode;
             if (effectiveLabelMode != LabelMode.Off && !IsLabelHidden(target.Id))
             {
                 DrawTargetLabel(dc, target, projectedPoint, effectiveLabelMode, labelRects);
@@ -987,7 +987,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             : "---";
         var heading = target.HeadingDeg.HasValue ? $"{target.HeadingDeg.Value:000}" : "---";
         var closure = target.ClosureKt.HasValue ? $"{target.ClosureKt.Value:0}" : "---";
-        var full = $"{aspect,-5} HDG {heading} CLS {closure}";
+        var full = $"{aspect,-5} {heading} {closure}";
         var secondary = new LabelLine(full, Colors.LightGray, 12, FontWeights.Normal);
         return [primary, secondary];
     }
