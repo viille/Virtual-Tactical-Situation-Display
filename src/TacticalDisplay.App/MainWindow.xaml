@@ -201,6 +201,10 @@
                                 Orientation="Horizontal"
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center">
+                        <Button Content="?"
+                                Click="OnHelpButtonClick"
+                                WindowChrome.IsHitTestVisibleInChrome="True"
+                                Style="{StaticResource MfdWindowButtonStyle}" />
                         <Button Content="-"
                                 Click="OnMinimizeButtonClick"
                                 WindowChrome.IsHitTestVisibleInChrome="True"
@@ -328,6 +332,60 @@
                                            FontSize="14"
                                            FontWeight="SemiBold"
                                            Foreground="#9AFAD7" />
+                            </Border>
+                            <Border x:Name="HelpOverlay"
+                                    Background="#E0071015"
+                                    BorderBrush="#9AFAD7"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    Visibility="Collapsed"
+                                    MouseLeftButtonDown="OnHelpOverlayMouseLeftButtonDown">
+                                <Grid Margin="16">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBlock Grid.Row="0"
+                                               Text="Controls"
+                                               FontFamily="Consolas"
+                                               FontSize="18"
+                                               FontWeight="Bold"
+                                               Foreground="#9AFAD7"
+                                               Margin="0,0,0,8" />
+                                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                                        <TextBlock FontFamily="Consolas"
+                                                   FontSize="12"
+                                                   Foreground="#D9F2EC"
+                                                   TextWrapping="Wrap">
+RNG + / RNG - : Change visible range
+N/HDG : Switch north-up / heading-up
+MAP : Show or hide map layer
+DCLR : Reduce display clutter
+TRAIL : Show or hide target trails
+APT : Show or hide airport data
+NAV : Show or hide navaid data
+AREA : Show or hide active V-LARA airspace boundaries
+PIN : Toggle always-on-top
+SRC : Apply selected data source
+LBL : Cycle label detail level
+SET : Show or hide settings panel
+TGT + / TGT - : Increase or decrease target symbol size
+Top arrows : Increase or decrease map opacity
+Bottom arrows : Increase or decrease airport/navaid/label background opacity
+? : Show this help
+- : Minimize
+X : Close
+                                        </TextBlock>
+                                    </ScrollViewer>
+                                    <TextBlock Grid.Row="2"
+                                               Text="Click anywhere to close"
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Foreground="#8EA5AD"
+                                               Margin="0,8,0,0"
+                                               HorizontalAlignment="Center" />
+                                </Grid>
                             </Border>
                         </Grid>
                     </Border>

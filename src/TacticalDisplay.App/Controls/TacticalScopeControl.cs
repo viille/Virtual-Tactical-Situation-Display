@@ -987,7 +987,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             : "---";
         var heading = target.HeadingDeg.HasValue ? $"{target.HeadingDeg.Value:000}" : "---";
         var closure = target.ClosureKt.HasValue ? $"{target.ClosureKt.Value:0}" : "---";
-        var full = $"ASP {aspect,-5} HDG {heading} CLS {closure}";
+        var full = $"{aspect,-5} HDG {heading} CLS {closure}";
         var secondary = new LabelLine(full, Colors.LightGray, 12, FontWeights.Normal);
         return [primary, secondary];
     }

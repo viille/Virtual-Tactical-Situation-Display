@@ -263,6 +263,18 @@ public partial class MainWindow : Window
         WindowState = WindowState.Minimized;
     }
 
+    private void OnHelpButtonClick(object sender, RoutedEventArgs e)
+    {
+        HelpOverlay.Visibility = HelpOverlay.Visibility == Visibility.Visible
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+    }
+
+    private void OnHelpOverlayMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        HelpOverlay.Visibility = Visibility.Collapsed;
+    }
+
     private void OnCloseButtonClick(object sender, RoutedEventArgs e)
     {
         Close();
