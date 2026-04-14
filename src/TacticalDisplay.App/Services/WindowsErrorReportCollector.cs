@@ -11,6 +11,13 @@ public static class WindowsErrorReportCollector
     {
         try
         {
+            if (WasLastShutdownClean())
+            {
+                CleanupNonLogFiles();
+                DataSourceDebugLog.Important(LogSource, "Clean shutdown detected; crash popups suppressed and non-log files removed");
+                return null;
+            }
+
             var messages = new List<string>();
             AddCrashLogMessageIfNeeded(messages);
             var fallbackCrashLogCopyPath = CopyFallbackCrashLogToLogDirectoryIfExists();
@@ -54,6 +61,71 @@ public static class WindowsErrorReportCollector
         {
             DataSourceDebugLog.Important(LogSource, $"Crash dump/report scan failed | {ex.GetType().Name}: {ex.Message}");
             return null;
+        }
+    }
+
+    private static bool WasLastShutdownClean()
+    {
+        var logPath = DataSourceDebugLog.CurrentLogFilePath;
+        if (!File.Exists(logPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var lastCrashLine = -1;
+            var lastCleanLine = -1;
+            var index = 0;
+            foreach (var line in File.ReadLines(logPath))
+            {
+                if (line.Contains("[CRASH]", StringComparison.Ordinal))
+                {
+                    lastCrashLine = index;
+                }
+
+                if (line.Contains("[INFO] [App] Clean shutdown completed", StringComparison.Ordinal))
+                {
+                    lastCleanLine = index;
+                }
+
+                index++;
+            }
+
+            return lastCleanLine >= 0 && lastCleanLine > lastCrashLine;
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Important(
+                LogSource,
+                $"Clean shutdown check failed | path={logPath} error={ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void CleanupNonLogFiles()
+    {
+        var root = DataSourceDebugLog.CurrentLogDirectoryPath;
+        if (!Directory.Exists(root))
+        {
+            return;
+        }
+
+        foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        {
+            if (string.Equals(Path.GetExtension(file), ".log", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(file);
+            }
+            catch
+            {
+                // Best-effort cleanup only.
+            }
         }
     }
 

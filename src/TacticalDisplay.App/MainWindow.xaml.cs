@@ -348,6 +348,7 @@ public partial class MainWindow : Window
             _isClosing = false;
             try
             {
+                DataSourceDebugLog.MarkCleanShutdown();
                 await Dispatcher.InvokeAsync(Close, DispatcherPriority.Background);
             }
             catch (Exception ex)
@@ -368,6 +369,6 @@ public partial class MainWindow : Window
         const int maxLength = 1500;
         return normalized.Length <= maxLength
             ? normalized
-            : $"{normalized[..maxLength].Trim()}…";
+            : $"{normalized[..maxLength].Trim()}...";
     }
 }

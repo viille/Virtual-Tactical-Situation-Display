@@ -41,6 +41,11 @@ public static class DataSourceDebugLog
         Write("INFO", source, message, force: true, flushToDisk: true);
     }
 
+    public static void MarkCleanShutdown()
+    {
+        Important("App", "Clean shutdown completed");
+    }
+
     public static void Crash(string source, string message, Exception? ex = null)
     {
         var details = ex is null

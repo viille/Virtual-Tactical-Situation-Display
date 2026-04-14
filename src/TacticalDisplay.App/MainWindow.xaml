@@ -13,7 +13,9 @@
         MinHeight="640"
         Background="#071015"
         WindowStyle="None"
-        ResizeMode="CanResize">
+        ResizeMode="CanResize"
+        UseLayoutRounding="True"
+        SnapsToDevicePixels="True">
     <WindowChrome.WindowChrome>
         <WindowChrome CaptionHeight="0"
                       CornerRadius="0"
@@ -74,25 +76,37 @@
             <Setter Property="BorderThickness" Value="1" />
         </Style>
         <Style x:Key="MfdWindowButtonStyle" TargetType="Button">
-            <Setter Property="Width" Value="28" />
-            <Setter Property="Height" Value="24" />
-            <Setter Property="Margin" Value="2" />
-            <Setter Property="FontFamily" Value="Consolas" />
-            <Setter Property="FontSize" Value="12" />
-            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Width" Value="26" />
+            <Setter Property="Height" Value="22" />
+            <Setter Property="Margin" Value="1" />
+            <Setter Property="Padding" Value="0" />
+            <Setter Property="HorizontalContentAlignment" Value="Center" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Setter Property="FontFamily" Value="Segoe UI" />
+            <Setter Property="FontSize" Value="11" />
+            <Setter Property="FontWeight" Value="SemiBold" />
             <Setter Property="Foreground" Value="#D9F2EC" />
             <Setter Property="Background" Value="#24343E" />
             <Setter Property="BorderBrush" Value="#5F747F" />
             <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="SnapsToDevicePixels" Value="True" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}">
-                            <ContentPresenter HorizontalAlignment="Center"
-                                              VerticalAlignment="Center"
-                                              RecognizesAccessKey="False" />
+                            <TextBlock Text="{TemplateBinding Content}"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       TextAlignment="Center"
+                                       FontFamily="{TemplateBinding FontFamily}"
+                                       FontSize="{TemplateBinding FontSize}"
+                                       FontWeight="{TemplateBinding FontWeight}"
+                                       Foreground="{TemplateBinding Foreground}"
+                                       LineHeight="{TemplateBinding FontSize}"
+                                       LineStackingStrategy="BlockLineHeight"
+                                       SnapsToDevicePixels="True" />
                         </Border>
                     </ControlTemplate>
                 </Setter.Value>
@@ -179,7 +193,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="68" />
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="68" />
+                        <ColumnDefinition Width="92" />
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Row="0"
@@ -199,7 +213,7 @@
                     <StackPanel Grid.Row="0"
                                 Grid.Column="2"
                                 Orientation="Horizontal"
-                                HorizontalAlignment="Center"
+                                HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
                         <Button Content="?"
                                 Click="OnHelpButtonClick"
@@ -354,29 +368,26 @@
                                                Foreground="#9AFAD7"
                                                Margin="0,0,0,8" />
                                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                                        <TextBlock FontFamily="Consolas"
-                                                   FontSize="12"
-                                                   Foreground="#D9F2EC"
-                                                   TextWrapping="Wrap">
-RNG + / RNG - : Change visible range
-N/HDG : Switch north-up / heading-up
-MAP : Show or hide map layer
-DCLR : Reduce display clutter
-TRAIL : Show or hide target trails
-APT : Show or hide airport data
-NAV : Show or hide navaid data
-AREA : Show or hide active V-LARA airspace boundaries
-PIN : Toggle always-on-top
-SRC : Apply selected data source
-LBL : Cycle label detail level
-SET : Show or hide settings panel
-TGT + / TGT - : Increase or decrease target symbol size
-Top arrows : Increase or decrease map opacity
-Bottom arrows : Increase or decrease airport/navaid/label background opacity
-? : Show this help
-- : Minimize
-X : Close
-                                        </TextBlock>
+                                        <StackPanel>
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="RNG + / RNG - : Change visible range" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="N/HDG : Switch north-up / heading-up" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="MAP : Show or hide map layer" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="DCLR : Reduce display clutter" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TRAIL : Show or hide target trails" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="APT : Show or hide airport data" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="NAV : Show or hide navaid data" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="AREA : Show or hide active V-LARA airspace boundaries" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="PIN : Toggle always-on-top" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="SRC : Apply selected data source" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="LBL : Cycle label detail level" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="SET : Show or hide settings panel" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TGT + / TGT - : Increase or decrease target symbol size" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Top arrows : Increase or decrease map opacity" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Bottom arrows : Increase or decrease airport/navaid/label background opacity" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="? : Show this help" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="- : Minimize" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="X : Close" />
+                                        </StackPanel>
                                     </ScrollViewer>
                                     <TextBlock Grid.Row="2"
                                                Text="Click anywhere to close"
