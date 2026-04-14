@@ -13,6 +13,7 @@ public partial class App : Application
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;
+        LocalDumpConfigurator.EnsureLocalDumpsConfigured();
         if (AppWatchdogLauncher.TryRelaunchUnderWatchdog(e.Args))
         {
             Shutdown(0);

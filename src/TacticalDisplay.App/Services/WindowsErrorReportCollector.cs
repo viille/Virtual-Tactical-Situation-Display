@@ -33,6 +33,12 @@ public static class WindowsErrorReportCollector
                 }
             }
 
+            var eventLogMessage = WindowsEventLogCollector.CaptureLatestCrash();
+            if (!string.IsNullOrWhiteSpace(eventLogMessage))
+            {
+                messages.Add(eventLogMessage);
+            }
+
             foreach (var report in reports)
             {
                 DataSourceDebugLog.Important(
