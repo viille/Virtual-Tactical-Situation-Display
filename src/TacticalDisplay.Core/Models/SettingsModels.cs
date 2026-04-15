@@ -6,6 +6,7 @@ public sealed class TacticalDisplaySettings
     public string? MsfsExePath { get; set; }
     public string? PreferredSimConnectDllPath { get; set; }
     public string XPlane12ApiBaseUrl { get; set; } = "http://localhost:8086/";
+    public bool EnableWebServer { get; set; } = true;
     public bool EnableDataSourceDebugLogging { get; set; }
     public double WindowWidth { get; set; } = 1280;
     public double WindowHeight { get; set; } = 840;

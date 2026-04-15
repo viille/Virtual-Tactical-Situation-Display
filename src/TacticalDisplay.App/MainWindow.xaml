@@ -245,6 +245,8 @@
                             </StackPanel>
                             <Border Style="{StaticResource MfdTickStyle}" />
                             <ToggleButton Content="SET" Command="{Binding ToggleSettingsCommand}" IsChecked="{Binding ShowSettings, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                            <Border Style="{StaticResource MfdTickStyle}" />
+                            <ToggleButton Content="WEB" IsChecked="{Binding WebServerEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource MfdToggleButtonStyle}" />
                         </StackPanel>
                         <StackPanel Grid.Row="1"
                                     Orientation="Horizontal"
@@ -268,6 +270,14 @@
                                    VerticalAlignment="Center"
                                    Margin="8,0" />
                             <TextBlock Text="{Binding SimulatorFooterText}"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   FontWeight="SemiBold"
+                                   Foreground="#9AFAD7"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"
+                                   Margin="8,0" />
+                            <TextBlock Text="{Binding WebDisplayText}"
                                    FontFamily="Consolas"
                                    FontSize="12"
                                    FontWeight="SemiBold"
@@ -380,6 +390,7 @@
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="PIN : Toggle always-on-top" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="SRC : Apply selected data source" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="SET : Show or hide settings panel" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="WEB : Turn tablet web server on or off" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TGT + / TGT - : Increase or decrease target symbol size" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Top arrows : Increase or decrease map opacity" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Bottom arrows : Increase or decrease airport/navaid/label background opacity" Margin="0,0,0,4" />
@@ -501,6 +512,22 @@
                             <TextBox Text="{Binding MinTrackedAltitudeFtText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      ToolTip="Targets below this altitude are hidden"
                                      Margin="4,4,4,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Tablet Web" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
+                        <StackPanel>
+                            <CheckBox Content="{Binding WebServerToggleText}"
+                                      IsChecked="{Binding WebServerEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      Foreground="#9AFAD7" />
+                            <TextBlock Text="{Binding WebDisplayText}"
+                                       Foreground="#7CB9A9"
+                                       TextWrapping="Wrap"
+                                       Margin="0,6,0,0" />
+                            <TextBlock Text="Turn this off when you do not want to expose the tablet display on the local network."
+                                       Foreground="#7CB9A9"
+                                       TextWrapping="Wrap"
+                                       Margin="0,6,0,0" />
                         </StackPanel>
                     </GroupBox>
 

@@ -20,6 +20,7 @@ public partial class MainWindow : Window
 
     private readonly MainViewModel _viewModel = new();
     private readonly UpdateCheckService _updateCheckService = new();
+    private WebDisplayServer? _webDisplayServer;
     private int _updateCheckStarted;
     private double _cachedSettingsPanelWidth = 320;
     private bool _isClosing;
@@ -32,6 +33,7 @@ public partial class MainWindow : Window
         Title = $"Tactical Situation Display | ver {displayVersion}";
         DataContext = _viewModel;
         _viewModel.AppVersionText = $"ver {displayVersion}";
+        ApplyWebDisplayServerState();
         RestoreWindowSize();
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
         ScopeControl.TargetClicked += OnScopeTargetClicked;
@@ -54,6 +56,51 @@ public partial class MainWindow : Window
         }
 
         return Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
+    }
+
+    private void ApplyWebDisplayServerState()
+    {
+        if (_viewModel.WebServerEnabled)
+        {
+            StartWebDisplayServer();
+            return;
+        }
+
+        _ = StopWebDisplayServerAsync();
+    }
+
+    private void StartWebDisplayServer()
+    {
+        if (_webDisplayServer is not null)
+        {
+            return;
+        }
+
+        var server = new WebDisplayServer(_viewModel, Dispatcher);
+        if (!server.Start())
+        {
+            _ = server.DisposeAsync();
+            _viewModel.SetWebDisplayStatus($"Web: unavailable (port {WebDisplayServer.DefaultPort})");
+            return;
+        }
+
+        _webDisplayServer = server;
+        var tabletUrl = server.LocalUrls.FirstOrDefault(url => !url.Contains("localhost", StringComparison.OrdinalIgnoreCase))
+            ?? server.LocalUrls.FirstOrDefault()
+            ?? $"http://localhost:{WebDisplayServer.DefaultPort}/";
+        _viewModel.SetWebDisplayStatus($"Web: {tabletUrl}");
+    }
+
+    private async Task StopWebDisplayServerAsync()
+    {
+        var server = _webDisplayServer;
+        _webDisplayServer = null;
+        if (server is not null)
+        {
+            await server.DisposeAsync();
+        }
+
+        _viewModel.SetWebDisplayStatus("Web: off");
     }
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
@@ -133,6 +180,10 @@ public partial class MainWindow : Window
         else if (e.PropertyName == nameof(MainViewModel.Settings))
         {
             MapControl.RefreshMapState();
+        }
+        else if (e.PropertyName == nameof(MainViewModel.WebServerEnabled))
+        {
+            ApplyWebDisplayServerState();
         }
     }
 
@@ -335,6 +386,11 @@ public partial class MainWindow : Window
         try
         {
             StoreWindowSize();
+            if (_webDisplayServer is not null)
+            {
+                await _webDisplayServer.DisposeAsync();
+                _webDisplayServer = null;
+            }
             await _viewModel.DisposeAsync();
         }
         catch (Exception ex)

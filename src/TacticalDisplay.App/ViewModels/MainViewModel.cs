@@ -34,6 +34,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private string _simConnectText = "N/A";
     private string _trafficText = "0 contacts";
     private string _sourceText = string.Empty;
+    private string _webDisplayText = "Web: starting";
     private string _airspaceText = "Airspace: loading";
     private string _airportText = "Airports: loading";
     private string _navaidText = "Navaids: loading";
@@ -167,6 +168,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _sourceText;
         private set => SetField(ref _sourceText, value);
+    }
+
+    public string WebDisplayText
+    {
+        get => _webDisplayText;
+        private set => SetField(ref _webDisplayText, value);
     }
 
     public string AirspaceText
@@ -371,6 +378,23 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    public bool WebServerEnabled
+    {
+        get => Settings.EnableWebServer;
+        set
+        {
+            if (Settings.EnableWebServer == value)
+            {
+                return;
+            }
+
+            Settings.EnableWebServer = value;
+            _configStore.SaveDisplaySettings(Settings);
+            Raise();
+            Raise(nameof(WebServerToggleText));
+        }
+    }
+
     public bool ShowSettings
     {
         get => _showSettings;
@@ -393,6 +417,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     public string SettingsToggleText => ShowSettings ? "Hide Settings" : "Show Settings";
     public string TopMostToggleText => IsAlwaysOnTop ? "Unpin Window" : "Pin On Top";
+    public string WebServerToggleText => WebServerEnabled ? "Tablet web server ON" : "Tablet web server OFF";
     public string AppVersionText { get; set; } = "ver unknown";
     public string DeclutterToggleText => Settings.Declutter ? "Declutter ON" : "Declutter OFF";
     public string MapToggleText => Settings.ShowMapLayer ? "Map ON" : "Map OFF";
@@ -1118,6 +1143,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         RefreshPicture();
     }
 
+    public void SetWebDisplayStatus(string status)
+    {
+        WebDisplayText = status;
+    }
+
     public void ToggleTargetLabelVisibility(string targetId)
     {
         if (!_manualTargetMetadata.TryGetValue(targetId, out var metadata))
@@ -1140,6 +1170,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(SimulatorStatusLabel));
         Raise(nameof(SimulatorFooterText));
         Raise(nameof(DataSourceDebugLoggingEnabled));
+        Raise(nameof(WebServerEnabled));
+        Raise(nameof(WebServerToggleText));
 
         if (!DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode))
         {
