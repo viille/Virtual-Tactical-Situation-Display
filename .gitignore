@@ -24,6 +24,8 @@ out/
 *.log
 *.tmp
 *.temp
+.devnote
+.mapbox
 
 # Test and coverage output
 TestResults/

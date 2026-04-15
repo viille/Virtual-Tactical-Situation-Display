@@ -48,9 +48,9 @@ The app opens directly into the tactical display. The settings panel is hidden b
 
 The desktop app starts a lightweight web display on port `8787`. Open the `Web: http://...:8787/` address shown in the app footer from a tablet or another device on the same local network.
 
-The tablet display renders the map and tactical canvas on the device and synchronizes with the desktop app through the local web API. It includes controls for range, orientation, map opacity, map, declutter, trails, labels, map overlay opacity, airports, navaids, airspace, pin, source apply, settings, and target symbol size. These controls update the same desktop app state as the main window controls.
+The tablet display renders the Mapbox map and tactical canvas on the device and stays synchronized with the desktop app. It includes controls for range, orientation, map opacity, map, declutter, trails, labels, map overlay opacity, airports, navaids, LARA airspace, controlled airspace layers, pin, settings, and target symbol size. These controls update the same display state as the main window controls.
 
-The web server can be turned on or off with the `WEB` frame button next to `SET`, or from the `Tablet Web` section in the settings panel. The setting is saved in `display.json`.
+The tablet display can be turned on or off with the `WEB` frame button next to `SET`, or from the `Tablet Web` section in the settings panel.
 
 If the tablet cannot connect, allow the app through Windows Firewall for private networks and check that both devices are connected to the same network.
 
@@ -63,9 +63,9 @@ Frame controls:
 - `TRAIL`: show or hide target trails
 - `APT`: show or hide airport data
 - `NAV`: show or hide navaid data
-- `AREA`: show or hide active V-LARA airspace boundaries
+- `LARA`: show or hide active V-LARA airspace boundaries
+- `AREA`: show or hide bundled TMA, CTR, and CTA map layers
 - `PIN`: pin or unpin the window on top
-- `SRC`: apply the selected data source
 - `LBL`: cycle label detail level
 - bottom up/down arrows: increase or decrease airport, navaid, and map-label background opacity together
 - `SET`: show or hide the settings panel
@@ -107,7 +107,7 @@ Mouse actions:
 
 The app can show active V-LARA reserved airspace boundaries. It loads EFIN airspace geometry and uses the V-LARA reservations feed to highlight active reservations.
 
-Use `Areas` to toggle the layer.
+Use `LARA` to toggle the layer.
 
 ## Bullseye
 
@@ -130,14 +130,6 @@ If live data does not appear, check:
 - XPUIPC is installed when using legacy X-Plane
 - X-Plane 12 local Web API URL is correct when using `XPlane 12`
 
-If the map layer says `Map unavailable`, check that Microsoft Edge WebView2 Runtime is installed and that the app can write to `%APPDATA%\VirtualTacticalSituationDisplay\WebView2`. A `0x8000FFFF` startup error usually means WebView2 failed before the map page or online tiles loaded.
+If the map layer says `Map unavailable`, check that Microsoft Edge WebView2 Runtime is installed and online map access is available. A `0x8000FFFF` startup error usually means WebView2 failed before the map page or online tiles loaded.
 
 Data source logs are written to `%APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log` when debug logging is enabled in the app.
-
-## Advanced Notes
-
-Settings, target metadata, cache files, WebView2 data, and debug logs are stored under `%APPDATA%\VirtualTacticalSituationDisplay`.
-
-Most users can use the UI, but advanced users can inspect files such as `display.json`, `friends.json`, `package.json`, `support.json`, and `manual-targets.json` when needed. If a settings file cannot be loaded after an update or manual edit, the app replaces it with clean defaults so startup can continue.
-
-Airspace geometry and activation feed URLs are also stored in `display.json`.

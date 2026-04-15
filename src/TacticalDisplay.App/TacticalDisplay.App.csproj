@@ -2,6 +2,9 @@
   <PropertyGroup>
     <EmbeddedUpdaterPublishDir>$(MSBuildProjectDirectory)\obj\$(Configuration)\net8.0-windows10.0.17763.0\Updater\</EmbeddedUpdaterPublishDir>
     <EmbeddedWatchdogPublishDir>$(MSBuildProjectDirectory)\obj\$(Configuration)\net8.0-windows10.0.17763.0\Watchdog\</EmbeddedWatchdogPublishDir>
+    <DefaultMapboxAccessToken></DefaultMapboxAccessToken>
+    <DefaultMapboxStyleUrl></DefaultMapboxStyleUrl>
+    <DefaultMapboxAreasStyleUrl></DefaultMapboxAreasStyleUrl>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,13 +36,28 @@
     <Resource Include="$(EmbeddedWatchdogPublishDir)TacticalDisplay.Watchdog.exe" Link="TacticalDisplay.Watchdog.exe" />
   </ItemGroup>
 
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>DefaultMapboxAccessToken</_Parameter1>
+      <_Parameter2>$(DefaultMapboxAccessToken)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>DefaultMapboxStyleUrl</_Parameter1>
+      <_Parameter2>$(DefaultMapboxStyleUrl)</_Parameter2>
+    </AssemblyAttribute>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>DefaultMapboxAreasStyleUrl</_Parameter1>
+      <_Parameter2>$(DefaultMapboxAreasStyleUrl)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>0.9.0</Version>
+    <Version>0.10.0</Version>
     <ApplicationIcon>Assets\VTSD.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

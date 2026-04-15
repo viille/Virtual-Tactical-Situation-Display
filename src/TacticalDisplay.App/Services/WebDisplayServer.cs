@@ -358,11 +358,15 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 settings.OrientationMode.ToString(),
                 settings.LabelMode.ToString(),
                 settings.MapOpacity,
+                MapboxDefaults.ResolveAccessToken(),
+                MapboxDefaults.ResolveStyleUrl(),
+                MapboxDefaults.ResolveAreasStyleUrl(),
                 settings.Declutter,
                 settings.ShowMapLayer,
                 settings.ShowAirportLayer,
                 settings.ShowNavaidLayer,
                 settings.ShowAirspaceBoundaries,
+                settings.ShowControlledAirspaceLayer,
                 settings.TrailsEnabled,
                 settings.TargetSymbolScale,
                 _viewModel.IsAlwaysOnTop,
@@ -382,11 +386,15 @@ public sealed class WebDisplayServer : IAsyncDisposable
             settings.OrientationMode.ToString(),
             settings.LabelMode.ToString(),
             settings.MapOpacity,
+            MapboxDefaults.ResolveAccessToken(),
+            MapboxDefaults.ResolveStyleUrl(),
+            MapboxDefaults.ResolveAreasStyleUrl(),
             settings.Declutter,
             settings.ShowMapLayer,
             settings.ShowAirportLayer,
             settings.ShowNavaidLayer,
             settings.ShowAirspaceBoundaries,
+            settings.ShowControlledAirspaceLayer,
             settings.TrailsEnabled,
             settings.TargetSymbolScale,
             _viewModel.IsAlwaysOnTop,
@@ -476,8 +484,12 @@ public sealed class WebDisplayServer : IAsyncDisposable
                     case "navaids":
                         _viewModel.ToggleNavaidsCommand.Execute(null);
                         break;
+                    case "lara":
                     case "airspace":
                         _viewModel.ToggleAirspaceCommand.Execute(null);
+                        break;
+                    case "area":
+                        _viewModel.ToggleControlledAirspaceCommand.Execute(null);
                         break;
                     case "target-up":
                         _viewModel.IncreaseTargetSymbolScaleCommand.Execute(null);
@@ -487,9 +499,6 @@ public sealed class WebDisplayServer : IAsyncDisposable
                         break;
                     case "pin":
                         _viewModel.ToggleAlwaysOnTopCommand.Execute(null);
-                        break;
-                    case "source":
-                        _viewModel.ApplyDataSourceCommand.Execute(null);
                         break;
                     case "settings":
                         _viewModel.ToggleSettingsCommand.Execute(null);
@@ -548,11 +557,15 @@ public sealed class WebDisplayServer : IAsyncDisposable
         string Orientation,
         string LabelMode,
         double MapOpacity,
+        string MapboxAccessToken,
+        string MapboxStyleUrl,
+        string MapboxAreasStyleUrl,
         bool Declutter,
         bool ShowMapLayer,
         bool ShowAirportLayer,
         bool ShowNavaidLayer,
         bool ShowAirspaceBoundaries,
+        bool ShowControlledAirspaceLayer,
         bool TrailsEnabled,
         double TargetSymbolScale,
         bool IsAlwaysOnTop,
@@ -572,10 +585,14 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 ScopeOrientationMode.HeadingUp.ToString(),
                 global::TacticalDisplay.Core.Models.LabelMode.Minimal.ToString(),
                 0.65,
+                string.Empty,
+                "mapbox://styles/mapbox/outdoors-v12",
+                string.Empty,
                 false,
                 true,
                 true,
                 true,
+                false,
                 true,
                 true,
                 1,
@@ -626,8 +643,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>VTSD Tablet Display</title>
-  <link href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css" rel="stylesheet">
-  <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.css" rel="stylesheet">
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.js"></script>
   <style>
     :root { color-scheme: dark; }
     * { box-sizing: border-box; }
@@ -793,7 +810,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
       transform: translateY(1px);
       background: #34505b;
     }
-    .maplibregl-control-container {
+    .mapboxgl-control-container {
       font-family: Consolas, monospace;
       font-size: 10px;
     }
@@ -847,11 +864,11 @@ public sealed class WebDisplayServer : IAsyncDisposable
       <button type="button" data-command="navaids" id="navaidsBtn">NAV</button>
     </div>
     <div class="right-controls">
-      <button type="button" data-command="airspace" id="airspaceBtn">AREA</button>
-      <div class="side-tick"></div>
       <button type="button" data-command="pin" id="pinBtn">PIN</button>
       <div class="side-tick"></div>
-      <button type="button" data-command="source">SRC</button>
+      <button type="button" data-command="lara" id="laraBtn">LARA</button>
+      <div class="side-tick"></div>
+      <button type="button" data-command="area" id="areaBtn">AREA</button>
       <div class="side-tick"></div>
       <div class="slot"></div>
       <div class="side-tick"></div>
@@ -892,6 +909,12 @@ public sealed class WebDisplayServer : IAsyncDisposable
     const webMercatorMetersPerPixelAtEquator = 78271.516964;
     let map = null;
     let mapReady = false;
+    let currentMapboxToken = '';
+    let currentMapboxStyle = '';
+    let currentAreasStyle = '';
+    let areasOverlayPromise = null;
+    let areasLayerIds = [];
+    let areasSourceIds = [];
     const fields = {
       range: document.getElementById('range'),
       source: document.getElementById('source'),
@@ -906,7 +929,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
       labelsBtn: document.getElementById('labelsBtn'),
       airportsBtn: document.getElementById('airportsBtn'),
       navaidsBtn: document.getElementById('navaidsBtn'),
-      airspaceBtn: document.getElementById('airspaceBtn'),
+      laraBtn: document.getElementById('laraBtn'),
+      areaBtn: document.getElementById('areaBtn'),
       pinBtn: document.getElementById('pinBtn'),
       settingsBtn: document.getElementById('settingsBtn')
     };
@@ -956,7 +980,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
       setToggle(fields.labelsBtn, snapshot.labelMode !== 'Off', `LBL ${snapshot.labelMode || ''}`.trim());
       setToggle(fields.airportsBtn, snapshot.showAirportLayer, 'APT');
       setToggle(fields.navaidsBtn, snapshot.showNavaidLayer, 'NAV');
-      setToggle(fields.airspaceBtn, snapshot.showAirspaceBoundaries, 'AREA');
+      setToggle(fields.laraBtn, snapshot.showAirspaceBoundaries, 'LARA');
+      setToggle(fields.areaBtn, snapshot.showControlledAirspaceLayer, 'AREA');
       setToggle(fields.pinBtn, snapshot.isAlwaysOnTop, 'PIN');
       setToggle(fields.settingsBtn, snapshot.showSettings, 'SET');
       updateMap();
@@ -1191,15 +1216,47 @@ public sealed class WebDisplayServer : IAsyncDisposable
     }
 
     function initMap() {
-      if (!window.maplibregl) {
+      if (!window.mapboxgl) {
         fields.message.textContent = 'Map unavailable';
         return;
       }
 
-      map = new maplibregl.Map({
+      const token = (snapshot?.mapboxAccessToken || '').trim();
+      const style = (snapshot?.mapboxStyleUrl || '').trim() || 'mapbox://styles/mapbox/outdoors-v12';
+      if (!token) {
+        if (map) {
+          map.remove();
+          map = null;
+          mapReady = false;
+          currentAreasStyle = '';
+          areasLayerIds = [];
+          areasSourceIds = [];
+        }
+        fields.message.textContent = 'Map unavailable';
+        mapElement.style.opacity = '0';
+        return;
+      }
+
+      if (map && token === currentMapboxToken && style === currentMapboxStyle) {
+        return;
+      }
+
+      if (map) {
+        map.remove();
+        map = null;
+        mapReady = false;
+        currentAreasStyle = '';
+        areasLayerIds = [];
+        areasSourceIds = [];
+      }
+
+      currentMapboxToken = token;
+      currentMapboxStyle = style;
+      mapboxgl.accessToken = token;
+      map = new mapboxgl.Map({
         container: 'map',
-        style: 'https://tiles.openfreemap.org/styles/liberty',
-        center: [24.9633, 60.3172],
+        style,
+        center: snapshot?.ownship ? [snapshot.ownship.longitudeDeg, snapshot.ownship.latitudeDeg] : [24.9633, 60.3172],
         zoom: 7,
         bearing: 0,
         pitch: 0,
@@ -1215,6 +1272,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
       map.touchZoomRotate.disable();
       map.on('load', () => {
         mapReady = true;
+        fields.message.textContent = '';
+        updateAreasOverlay();
         updateMap();
         draw();
       });
@@ -1223,7 +1282,102 @@ public sealed class WebDisplayServer : IAsyncDisposable
       });
     }
 
+    function areasStyleApiUrl(styleUrl, token) {
+      const trimmed = (styleUrl || '').trim();
+      if (/^https?:\/\//i.test(trimmed)) {
+        const separator = trimmed.includes('?') ? '&' : '?';
+        return trimmed.includes('access_token=') ? trimmed : `${trimmed}${separator}access_token=${encodeURIComponent(token)}`;
+      }
+      const match = /^mapbox:\/\/styles\/([^/]+)\/([^/?#]+)/i.exec(trimmed);
+      if (!match) return '';
+      return `https://api.mapbox.com/styles/v1/${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}?access_token=${encodeURIComponent(token)}`;
+    }
+
+    function removeAreasOverlay() {
+      if (!map) return;
+      for (const id of [...areasLayerIds].reverse()) {
+        if (map.getLayer(id)) map.removeLayer(id);
+      }
+      for (const id of [...areasSourceIds].reverse()) {
+        if (map.getSource(id)) map.removeSource(id);
+      }
+      areasLayerIds = [];
+      areasSourceIds = [];
+      currentAreasStyle = '';
+    }
+
+    function setAreasVisibility(visible) {
+      if (!map) return;
+      const visibility = visible ? 'visible' : 'none';
+      for (const id of areasLayerIds) {
+        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visibility);
+      }
+    }
+
+    async function addAreasOverlay() {
+      if (!snapshot || !map || !map.isStyleLoaded()) return;
+      const styleUrl = (snapshot.mapboxAreasStyleUrl || '').trim();
+      const token = (snapshot.mapboxAccessToken || '').trim();
+      if (!styleUrl || !token) {
+        removeAreasOverlay();
+        return;
+      }
+
+      if (currentAreasStyle === styleUrl && areasLayerIds.length > 0) {
+        setAreasVisibility(!!snapshot.showControlledAirspaceLayer);
+        return;
+      }
+
+      const apiUrl = areasStyleApiUrl(styleUrl, token);
+      if (!apiUrl) {
+        removeAreasOverlay();
+        return;
+      }
+
+      removeAreasOverlay();
+      const response = await fetch(apiUrl, { cache: 'force-cache' });
+      if (!response.ok) throw new Error(`Areas style ${response.status}`);
+      const style = await response.json();
+      const sourceMap = new globalThis.Map();
+      for (const [sourceId, source] of Object.entries(style.sources || {})) {
+        const prefixedSourceId = `areas-${sourceId}`;
+        if (!map.getSource(prefixedSourceId)) {
+          map.addSource(prefixedSourceId, JSON.parse(JSON.stringify(source)));
+          areasSourceIds.push(prefixedSourceId);
+        }
+        sourceMap.set(sourceId, prefixedSourceId);
+      }
+
+      for (const layer of style.layers || []) {
+        if (!layer || layer.type === 'background') continue;
+        const copy = JSON.parse(JSON.stringify(layer));
+        copy.id = `areas-${copy.id}`;
+        if (copy.source && sourceMap.has(copy.source)) {
+          copy.source = sourceMap.get(copy.source);
+        } else if (copy.source) {
+          continue;
+        }
+        copy.layout = copy.layout || {};
+        copy.layout.visibility = snapshot.showControlledAirspaceLayer ? 'visible' : 'none';
+        if (!map.getLayer(copy.id)) {
+          map.addLayer(copy);
+          areasLayerIds.push(copy.id);
+        }
+      }
+
+      currentAreasStyle = styleUrl;
+    }
+
+    function updateAreasOverlay() {
+      if (!snapshot || !map || !map.isStyleLoaded()) return;
+      if (areasOverlayPromise) return;
+      areasOverlayPromise = addAreasOverlay()
+        .catch(() => { fields.message.textContent = 'Areas unavailable'; })
+        .finally(() => { areasOverlayPromise = null; });
+    }
+
     function updateMap() {
+      initMap();
       const show = snapshot?.available && snapshot?.ownship && snapshot?.showMapLayer && mapReady;
       mapElement.style.opacity = show ? Math.max(0, Math.min(snapshot.mapOpacity ?? 0.65, 1)).toString() : '0';
       if (!show || !map) return;
@@ -1235,6 +1389,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
         bearing: snapshot.orientation === 'HeadingUp' ? snapshot.ownship.headingDeg : 0,
         pitch: 0
       });
+      updateAreasOverlay();
     }
 
     function calculateZoom() {

@@ -144,9 +144,13 @@ public partial class OpenFreeMapControl : UserControl
             ownship.LatitudeDeg,
             ownship.LongitudeDeg,
             settings.SelectedRangeNm,
-            headingUp ? ownship.HeadingDeg : 0.0);
+            headingUp ? ownship.HeadingDeg : 0.0,
+            MapboxDefaults.ResolveAccessToken(),
+            MapboxDefaults.ResolveStyleUrl(),
+            MapboxDefaults.ResolveAreasStyleUrl(),
+            settings.ShowControlledAirspaceLayer);
         var json = JsonSerializer.Serialize(state, JsonOptions);
-        var script = $"window.updateOpenFreeMap && window.updateOpenFreeMap({json});";
+        var script = $"window.updateTacticalMap && window.updateTacticalMap({json});";
 
         if (!_webViewReady)
         {
@@ -186,7 +190,7 @@ public partial class OpenFreeMapControl : UserControl
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <link href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css" rel="stylesheet">
+          <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.css" rel="stylesheet">
           <style>
             html, body, #map {
               width: 100%;
@@ -196,18 +200,45 @@ public partial class OpenFreeMapControl : UserControl
               background: #071015;
             }
 
-            .maplibregl-control-container {
+            .mapboxgl-control-container {
               font-family: Consolas, monospace;
               font-size: 10px;
+            }
+
+            #status {
+              position: absolute;
+              left: 8px;
+              bottom: 8px;
+              padding: 4px 6px;
+              background: rgba(7, 16, 21, 0.78);
+              color: #F7C873;
+              font-family: Consolas, monospace;
+              font-size: 11px;
+              display: none;
             }
           </style>
         </head>
         <body>
           <div id="map"></div>
-          <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
+          <div id="status"></div>
+          <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.4/mapbox-gl.js"></script>
           <script>
             const metersPerNauticalMile = 1852.0;
             const webMercatorMetersPerPixelAtEquator = 78271.516964;
+            const statusEl = document.getElementById('status');
+            let map = null;
+            let currentToken = '';
+            let currentStyle = '';
+            let lastState = null;
+            let currentAreasStyle = '';
+            let areasOverlayPromise = null;
+            let areasLayerIds = [];
+            let areasSourceIds = [];
+
+            const setStatus = text => {
+              statusEl.textContent = text || '';
+              statusEl.style.display = text ? 'block' : 'none';
+            };
 
             const calculateZoom = state => {
               const rect = map.getContainer().getBoundingClientRect();
@@ -219,32 +250,169 @@ public partial class OpenFreeMapControl : UserControl
               return Math.max(0, Math.min(18, zoom));
             };
 
-            const map = new maplibregl.Map({
-              container: 'map',
-              style: 'https://tiles.openfreemap.org/styles/liberty',
-              center: [24.9633, 60.3172],
-              zoom: 7,
-              bearing: 0,
-              pitch: 0,
-              attributionControl: true,
-              interactive: false,
-            });
+            const ensureMap = state => {
+              const token = (state.mapboxAccessToken || '').trim();
+              const style = (state.mapboxStyleUrl || '').trim() || 'mapbox://styles/mapbox/outdoors-v12';
+              if (!token) {
+                setStatus('Map unavailable');
+                return false;
+              }
 
-            map.dragPan.disable();
-            map.scrollZoom.disable();
-            map.boxZoom.disable();
-            map.dragRotate.disable();
-            map.keyboard.disable();
-            map.doubleClickZoom.disable();
-            map.touchZoomRotate.disable();
+              if (map && token === currentToken && style === currentStyle) {
+                return true;
+              }
 
-            window.updateOpenFreeMap = state => {
+              if (map) {
+                map.remove();
+                map = null;
+                currentAreasStyle = '';
+                areasLayerIds = [];
+                areasSourceIds = [];
+              }
+
+              currentToken = token;
+              currentStyle = style;
+              mapboxgl.accessToken = token;
+              map = new mapboxgl.Map({
+                container: 'map',
+                style,
+                center: [state.longitudeDeg, state.latitudeDeg],
+                zoom: 7,
+                bearing: 0,
+                pitch: 0,
+                attributionControl: true,
+                interactive: false,
+              });
+
+              map.dragPan.disable();
+              map.scrollZoom.disable();
+              map.boxZoom.disable();
+              map.dragRotate.disable();
+              map.keyboard.disable();
+              map.doubleClickZoom.disable();
+              map.touchZoomRotate.disable();
+              map.on('error', event => setStatus(`Map unavailable: ${event?.error?.message || 'Mapbox error'}`));
+              map.on('load', () => {
+                setStatus('');
+                updateAreasOverlay(lastState);
+              });
+              return true;
+            };
+
+            const areasStyleApiUrl = (styleUrl, token) => {
+              const trimmed = (styleUrl || '').trim();
+              if (/^https?:\/\//i.test(trimmed)) {
+                const separator = trimmed.includes('?') ? '&' : '?';
+                return trimmed.includes('access_token=') ? trimmed : `${trimmed}${separator}access_token=${encodeURIComponent(token)}`;
+              }
+              const match = /^mapbox:\/\/styles\/([^/]+)\/([^/?#]+)/i.exec(trimmed);
+              if (!match) return '';
+              return `https://api.mapbox.com/styles/v1/${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}?access_token=${encodeURIComponent(token)}`;
+            };
+
+            const removeAreasOverlay = () => {
+              if (!map) return;
+              for (const id of [...areasLayerIds].reverse()) {
+                if (map.getLayer(id)) {
+                  map.removeLayer(id);
+                }
+              }
+              for (const id of [...areasSourceIds].reverse()) {
+                if (map.getSource(id)) {
+                  map.removeSource(id);
+                }
+              }
+              areasLayerIds = [];
+              areasSourceIds = [];
+              currentAreasStyle = '';
+            };
+
+            const setAreasVisibility = visible => {
+              if (!map) return;
+              const visibility = visible ? 'visible' : 'none';
+              for (const id of areasLayerIds) {
+                if (map.getLayer(id)) {
+                  map.setLayoutProperty(id, 'visibility', visibility);
+                }
+              }
+            };
+
+            const addAreasOverlay = async state => {
+              if (!map || !map.isStyleLoaded()) return;
+              const styleUrl = (state?.mapboxAreasStyleUrl || '').trim();
+              const token = (state?.mapboxAccessToken || '').trim();
+              if (!styleUrl || !token) {
+                removeAreasOverlay();
+                return;
+              }
+
+              if (currentAreasStyle === styleUrl && areasLayerIds.length > 0) {
+                setAreasVisibility(!!state.showControlledAirspaceLayer);
+                return;
+              }
+
+              const apiUrl = areasStyleApiUrl(styleUrl, token);
+              if (!apiUrl) {
+                removeAreasOverlay();
+                return;
+              }
+
+              removeAreasOverlay();
+              const response = await fetch(apiUrl, { cache: 'force-cache' });
+              if (!response.ok) throw new Error(`Areas style ${response.status}`);
+              const style = await response.json();
+              const sourceMap = new globalThis.Map();
+              for (const [sourceId, source] of Object.entries(style.sources || {})) {
+                const prefixedSourceId = `areas-${sourceId}`;
+                if (!map.getSource(prefixedSourceId)) {
+                  map.addSource(prefixedSourceId, JSON.parse(JSON.stringify(source)));
+                  areasSourceIds.push(prefixedSourceId);
+                }
+                sourceMap.set(sourceId, prefixedSourceId);
+              }
+
+              for (const layer of style.layers || []) {
+                if (!layer || layer.type === 'background') continue;
+                const copy = JSON.parse(JSON.stringify(layer));
+                copy.id = `areas-${copy.id}`;
+                if (copy.source && sourceMap.has(copy.source)) {
+                  copy.source = sourceMap.get(copy.source);
+                } else if (copy.source) {
+                  continue;
+                }
+                copy.layout = copy.layout || {};
+                copy.layout.visibility = state.showControlledAirspaceLayer ? 'visible' : 'none';
+                if (!map.getLayer(copy.id)) {
+                  map.addLayer(copy);
+                  areasLayerIds.push(copy.id);
+                }
+              }
+
+              currentAreasStyle = styleUrl;
+            };
+
+            const updateAreasOverlay = state => {
+              if (!state || !map || !map.isStyleLoaded()) return;
+              if (areasOverlayPromise) return;
+              areasOverlayPromise = addAreasOverlay(state)
+                .catch(() => setStatus('Areas unavailable'))
+                .finally(() => { areasOverlayPromise = null; });
+            };
+
+            window.updateTacticalMap = state => {
+              lastState = state;
+              if (!ensureMap(state)) {
+                return;
+              }
+
+              setStatus('');
               map.jumpTo({
                 center: [state.longitudeDeg, state.latitudeDeg],
                 zoom: calculateZoom(state),
                 bearing: state.bearingDeg,
                 pitch: 0,
               });
+              updateAreasOverlay(state);
             };
           </script>
         </body>
@@ -280,5 +448,9 @@ public partial class OpenFreeMapControl : UserControl
         double LatitudeDeg,
         double LongitudeDeg,
         double SelectedRangeNm,
-        double BearingDeg);
+        double BearingDeg,
+        string MapboxAccessToken,
+        string MapboxStyleUrl,
+        string MapboxAreasStyleUrl,
+        bool ShowControlledAirspaceLayer);
 }

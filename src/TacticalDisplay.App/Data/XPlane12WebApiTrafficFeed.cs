@@ -13,6 +13,8 @@ namespace TacticalDisplay.App.Data;
 public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
 {
     private const string LogSource = "XPlane12";
+    private const int MaxTcasTargets = 63;
+    private const int MaxMultiplayerTargets = 19;
     private const double MetersPerNauticalMile = 1852.0;
     private const double FeetPerMeter = 3.280839895;
     private const double KnotsPerMeterPerSecond = 1.9438444924406;
@@ -29,9 +31,13 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     private static readonly string[] OptionalTrafficDataRefs =
     [
         "sim/cockpit2/tcas/targets/modeS_id",
+        "sim/cockpit2/tcas/targets/position/lat",
+        "sim/cockpit2/tcas/targets/position/lon",
+        "sim/cockpit2/tcas/targets/position/ele",
         "sim/cockpit2/tcas/indicators/relative_bearing_degs",
         "sim/cockpit2/tcas/indicators/relative_distance_mtrs",
         "sim/cockpit2/tcas/indicators/relative_altitude_mtrs",
+        "sim/cockpit2/tcas/targets/position/hpath",
         "sim/cockpit2/tcas/targets/position/psi",
         "sim/cockpit2/tcas/targets/position/V_msc"
     ];
@@ -44,6 +50,8 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     private bool _isConnected;
     private string _apiVersion = "v1";
     private readonly Dictionary<string, long> _dataRefIds = new(StringComparer.Ordinal);
+    private DateTimeOffset _lastMultiplayerFallbackReadAt = DateTimeOffset.MinValue;
+    private IReadOnlyList<TrafficContactState> _latestMultiplayerFallbackTraffic = [];
 
     public XPlane12WebApiTrafficFeed(TacticalDisplaySettings settings)
     {
@@ -134,7 +142,26 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             }
         }
 
-        DataSourceDebugLog.Info(LogSource, $"Resolved XP12 datarefs via {_apiVersion} API | trafficRefs={OptionalTrafficDataRefs.Count(_dataRefIds.ContainsKey)}/{OptionalTrafficDataRefs.Length}");
+        for (var i = 1; i <= MaxMultiplayerTargets; i++)
+        {
+            await TryResolveOptionalDataRefAsync($"sim/multiplayer/position/plane{i}_lat", cancellationToken);
+            await TryResolveOptionalDataRefAsync($"sim/multiplayer/position/plane{i}_lon", cancellationToken);
+            await TryResolveOptionalDataRefAsync($"sim/multiplayer/position/plane{i}_el", cancellationToken);
+            await TryResolveOptionalDataRefAsync($"sim/multiplayer/position/plane{i}_psi", cancellationToken);
+        }
+
+        var tcasRefs = OptionalTrafficDataRefs.Count(_dataRefIds.ContainsKey);
+        var multiplayerRefs = Enumerable.Range(1, MaxMultiplayerTargets)
+            .SelectMany(i => new[]
+            {
+                $"sim/multiplayer/position/plane{i}_lat",
+                $"sim/multiplayer/position/plane{i}_lon",
+                $"sim/multiplayer/position/plane{i}_el",
+                $"sim/multiplayer/position/plane{i}_psi"
+            })
+            .Count(_dataRefIds.ContainsKey);
+
+        DataSourceDebugLog.Info(LogSource, $"Resolved XP12 datarefs via {_apiVersion} API | trafficRefs={tcasRefs}/{OptionalTrafficDataRefs.Length} multiplayerRefs={multiplayerRefs}/{MaxMultiplayerTargets * 4}");
     }
 
     private async Task PollLoopAsync(CancellationToken cancellationToken)
@@ -154,32 +181,192 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         var now = DateTimeOffset.UtcNow;
         var ownshipTask = ReadOwnshipAsync(now, cancellationToken);
         var modeSTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/modeS_id", cancellationToken);
+        var latitudesTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/position/lat", cancellationToken);
+        var longitudesTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/position/lon", cancellationToken);
+        var elevationsTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/position/ele", cancellationToken);
         var bearingTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/indicators/relative_bearing_degs", cancellationToken);
         var distanceTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/indicators/relative_distance_mtrs", cancellationToken);
         var altitudeTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/indicators/relative_altitude_mtrs", cancellationToken);
+        var trackTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/position/hpath", cancellationToken);
         var headingTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/position/psi", cancellationToken);
         var speedTask = GetOptionalNumericArrayAsync("sim/cockpit2/tcas/targets/position/V_msc", cancellationToken);
 
-        await Task.WhenAll(ownshipTask, modeSTask, bearingTask, distanceTask, altitudeTask, headingTask, speedTask);
+        await Task.WhenAll(
+            ownshipTask,
+            modeSTask,
+            latitudesTask,
+            longitudesTask,
+            elevationsTask,
+            bearingTask,
+            distanceTask,
+            altitudeTask,
+            trackTask,
+            headingTask,
+            speedTask);
 
         var ownship = ownshipTask.Result;
-        var contacts = BuildTrafficContacts(
+        var contacts = BuildDirectTcasTrafficContacts(
             ownship,
             now,
             modeSTask.Result,
-            bearingTask.Result,
-            distanceTask.Result,
-            altitudeTask.Result,
+            latitudesTask.Result,
+            longitudesTask.Result,
+            elevationsTask.Result,
+            trackTask.Result,
             headingTask.Result,
             speedTask.Result);
+
+        var source = "tcas-position";
+        if (contacts.Count == 0)
+        {
+            contacts = BuildRelativeTcasTrafficContacts(
+                ownship,
+                now,
+                modeSTask.Result,
+                bearingTask.Result,
+                distanceTask.Result,
+                altitudeTask.Result,
+                trackTask.Result,
+                headingTask.Result,
+                speedTask.Result);
+            source = "tcas-relative";
+        }
+
+        if (contacts.Count == 0)
+        {
+            contacts = await ReadMultiplayerFallbackTrafficAsync(ownship, now, cancellationToken);
+            source = "multiplayer";
+        }
 
         DataSourceDebugLog.ThrottledDebug(
             LogSource,
             "snapshot-summary",
             TimeSpan.FromSeconds(2),
-            () => $"Snapshot emitted | trafficCount={contacts.Count} apiVersion={_apiVersion}");
+            () => $"Snapshot emitted | trafficCount={contacts.Count} source={source} apiVersion={_apiVersion}");
 
         return new TrafficSnapshot(ownship, contacts, now);
+    }
+
+    private async Task<IReadOnlyList<TrafficContactState>> ReadMultiplayerFallbackTrafficAsync(
+        OwnshipState ownship,
+        DateTimeOffset timestamp,
+        CancellationToken cancellationToken)
+    {
+        if ((timestamp - _lastMultiplayerFallbackReadAt).TotalMilliseconds < 1000)
+        {
+            return _latestMultiplayerFallbackTraffic;
+        }
+
+        var tasks = Enumerable.Range(1, MaxMultiplayerTargets)
+            .Select(i => ReadMultiplayerTargetAsync(i, ownship, timestamp, cancellationToken))
+            .ToArray();
+
+        await Task.WhenAll(tasks);
+
+        _latestMultiplayerFallbackTraffic = tasks
+            .Select(task => task.Result)
+            .Where(contact => contact is not null)
+            .Cast<TrafficContactState>()
+            .ToList();
+        _lastMultiplayerFallbackReadAt = timestamp;
+
+        DataSourceDebugLog.ThrottledDebug(
+            LogSource,
+            "multiplayer-fallback-summary",
+            TimeSpan.FromSeconds(5),
+            () => $"Multiplayer fallback read complete | trafficCount={_latestMultiplayerFallbackTraffic.Count}");
+
+        return _latestMultiplayerFallbackTraffic;
+    }
+
+    private async Task<TrafficContactState?> ReadMultiplayerTargetAsync(
+        int index,
+        OwnshipState ownship,
+        DateTimeOffset timestamp,
+        CancellationToken cancellationToken)
+    {
+        var latitudeTask = GetOptionalDoubleAsync($"sim/multiplayer/position/plane{index}_lat", cancellationToken);
+        var longitudeTask = GetOptionalDoubleAsync($"sim/multiplayer/position/plane{index}_lon", cancellationToken);
+        var elevationTask = GetOptionalDoubleAsync($"sim/multiplayer/position/plane{index}_el", cancellationToken);
+        var headingTask = GetOptionalDoubleAsync($"sim/multiplayer/position/plane{index}_psi", cancellationToken);
+
+        await Task.WhenAll(latitudeTask, longitudeTask, elevationTask, headingTask);
+
+        var latitude = latitudeTask.Result;
+        var longitude = longitudeTask.Result;
+        var elevation = elevationTask.Result;
+        if (!IsValidLatitudeLongitude(latitude, longitude) || !elevation.HasValue)
+        {
+            return null;
+        }
+
+        var targetLatitude = latitude.GetValueOrDefault();
+        var targetLongitude = longitude.GetValueOrDefault();
+        var altitudeFt = elevation.Value * FeetPerMeter;
+        var distanceNm = GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, targetLatitude, targetLongitude);
+        if (!IsTrackableTraffic(distanceNm, altitudeFt))
+        {
+            return null;
+        }
+
+        return new TrafficContactState(
+            $"XP12-MP-{index}",
+            null,
+            targetLatitude,
+            targetLongitude,
+            altitudeFt,
+            headingTask.Result.HasValue ? GeoMath.NormalizeDegrees(headingTask.Result.Value) : null,
+            null,
+            timestamp);
+    }
+
+    private IReadOnlyList<TrafficContactState> BuildDirectTcasTrafficContacts(
+        OwnshipState ownship,
+        DateTimeOffset timestamp,
+        IReadOnlyList<double> modeSIds,
+        IReadOnlyList<double> latitudesDeg,
+        IReadOnlyList<double> longitudesDeg,
+        IReadOnlyList<double> elevationsMeters,
+        IReadOnlyList<double> tracksDeg,
+        IReadOnlyList<double> headingsDeg,
+        IReadOnlyList<double> speedsMetersPerSecond)
+    {
+        var count = new[]
+        {
+            latitudesDeg.Count,
+            longitudesDeg.Count,
+            elevationsMeters.Count
+        }.Min();
+
+        var contacts = new List<TrafficContactState>(Math.Max(0, count - 1));
+        for (var i = 1; i < count; i++)
+        {
+            var latitude = latitudesDeg[i];
+            var longitude = longitudesDeg[i];
+            if (!IsValidLatitudeLongitude(latitude, longitude))
+            {
+                continue;
+            }
+
+            var distanceNm = GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, latitude, longitude);
+            var altitudeFt = elevationsMeters[i] * FeetPerMeter;
+            if (!IsTrackableTraffic(distanceNm, altitudeFt))
+            {
+                continue;
+            }
+
+            contacts.Add(new TrafficContactState(
+                BuildTcasId(modeSIds, i),
+                null,
+                latitude,
+                longitude,
+                altitudeFt,
+                ReadHeading(tracksDeg, headingsDeg, i),
+                ReadSpeed(speedsMetersPerSecond, i),
+                timestamp));
+        }
+
+        return contacts;
     }
 
     private async Task<OwnshipState> ReadOwnshipAsync(DateTimeOffset timestamp, CancellationToken cancellationToken)
@@ -210,19 +397,19 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         return ownship;
     }
 
-    private IReadOnlyList<TrafficContactState> BuildTrafficContacts(
+    private IReadOnlyList<TrafficContactState> BuildRelativeTcasTrafficContacts(
         OwnshipState ownship,
         DateTimeOffset timestamp,
         IReadOnlyList<double> modeSIds,
         IReadOnlyList<double> relativeBearingsDeg,
         IReadOnlyList<double> distancesMeters,
         IReadOnlyList<double> relativeAltitudesMeters,
+        IReadOnlyList<double> tracksDeg,
         IReadOnlyList<double> headingsDeg,
         IReadOnlyList<double> speedsMetersPerSecond)
     {
         var count = new[]
         {
-            modeSIds.Count,
             relativeBearingsDeg.Count,
             distancesMeters.Count,
             relativeAltitudesMeters.Count
@@ -241,22 +428,35 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             var distanceNm = distanceMeters / MetersPerNauticalMile;
             var position = GeoMath.DestinationPoint(ownship.LatitudeDeg, ownship.LongitudeDeg, bearingTrue, distanceNm);
             var altitudeFt = ownship.AltitudeFt + (relativeAltitudesMeters[i] * FeetPerMeter);
-            var heading = headingsDeg.Count > i ? GeoMath.NormalizeDegrees(headingsDeg[i]) : (double?)null;
-            var speed = speedsMetersPerSecond.Count > i ? speedsMetersPerSecond[i] * KnotsPerMeterPerSecond : (double?)null;
-            var modeSId = (long)Math.Round(modeSIds[i]);
+            if (!IsTrackableTraffic(distanceNm, altitudeFt))
+            {
+                continue;
+            }
 
             contacts.Add(new TrafficContactState(
-                modeSId > 0 ? modeSId.ToString("X") : $"XP12-{i}",
+                BuildTcasId(modeSIds, i),
                 null,
                 position.latitudeDeg,
                 position.longitudeDeg,
                 altitudeFt,
-                heading,
-                speed,
+                ReadHeading(tracksDeg, headingsDeg, i),
+                ReadSpeed(speedsMetersPerSecond, i),
                 timestamp));
         }
 
         return contacts;
+    }
+
+    private async Task TryResolveOptionalDataRefAsync(string dataRefName, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _dataRefIds[dataRefName] = await ResolveDataRefIdAsync(dataRefName, cancellationToken);
+        }
+        catch
+        {
+            // Optional fallbacks differ by X-Plane version and plugin traffic provider.
+        }
     }
 
     private async Task<string> DiscoverApiVersionAsync(CancellationToken cancellationToken)
@@ -299,6 +499,13 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         return _dataRefIds.TryGetValue(dataRefName, out var dataRefId)
             ? GetNumericArrayAsync(dataRefId, cancellationToken)
             : Task.FromResult<IReadOnlyList<double>>([]);
+    }
+
+    private async Task<double?> GetOptionalDoubleAsync(string dataRefName, CancellationToken cancellationToken)
+    {
+        return _dataRefIds.TryGetValue(dataRefName, out var dataRefId)
+            ? await GetDoubleAsync(dataRefId, cancellationToken)
+            : null;
     }
 
     private async Task<long> ResolveDataRefIdAsync(string dataRefName, CancellationToken cancellationToken)
@@ -387,4 +594,52 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             JsonValueKind.String when double.TryParse(element.GetString(), out var parsed) => parsed,
             _ => 0
         };
+
+    private bool IsTrackableTraffic(double distanceNm, double altitudeFt) =>
+        distanceNm > 0 &&
+        distanceNm <= _settings.SelectedRangeNm &&
+        altitudeFt >= _settings.MinTrackedAltitudeFt;
+
+    private static bool IsValidLatitudeLongitude(double? latitudeDeg, double? longitudeDeg) =>
+        latitudeDeg.HasValue &&
+        longitudeDeg.HasValue &&
+        double.IsFinite(latitudeDeg.Value) &&
+        double.IsFinite(longitudeDeg.Value) &&
+        latitudeDeg.Value is >= -90 and <= 90 &&
+        longitudeDeg.Value is >= -180 and <= 180 &&
+        (Math.Abs(latitudeDeg.Value) > 0.000001 || Math.Abs(longitudeDeg.Value) > 0.000001);
+
+    private static string BuildTcasId(IReadOnlyList<double> modeSIds, int index)
+    {
+        if (modeSIds.Count > index)
+        {
+            var modeSId = (long)Math.Round(modeSIds[index]);
+            if (modeSId > 0)
+            {
+                return modeSId.ToString("X");
+            }
+        }
+
+        return $"XP12-{index}";
+    }
+
+    private static double? ReadHeading(IReadOnlyList<double> tracksDeg, IReadOnlyList<double> headingsDeg, int index)
+    {
+        if (headingsDeg.Count > index && double.IsFinite(headingsDeg[index]))
+        {
+            return GeoMath.NormalizeDegrees(headingsDeg[index]);
+        }
+
+        if (tracksDeg.Count > index && double.IsFinite(tracksDeg[index]))
+        {
+            return GeoMath.NormalizeDegrees(tracksDeg[index]);
+        }
+
+        return null;
+    }
+
+    private static double? ReadSpeed(IReadOnlyList<double> speedsMetersPerSecond, int index) =>
+        speedsMetersPerSecond.Count > index && double.IsFinite(speedsMetersPerSecond[index])
+            ? speedsMetersPerSecond[index] * KnotsPerMeterPerSecond
+            : null;
 }

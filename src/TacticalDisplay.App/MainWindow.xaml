@@ -311,11 +311,11 @@
                     </StackPanel>
 
                     <StackPanel Grid.Row="1" Grid.Column="2" VerticalAlignment="Center">
-                        <ToggleButton Content="AREA" Command="{Binding ToggleAirspaceCommand}" IsChecked="{Binding Settings.ShowAirspaceBoundaries, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
-                        <Border Style="{StaticResource MfdSideTickStyle}" />
                         <ToggleButton Content="PIN" Command="{Binding ToggleAlwaysOnTopCommand}" IsChecked="{Binding IsAlwaysOnTop, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <Button Content="SRC" Command="{Binding ApplyDataSourceCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <ToggleButton Content="LARA" Command="{Binding ToggleAirspaceCommand}" IsChecked="{Binding Settings.ShowAirspaceBoundaries, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <ToggleButton Content="AREA" Command="{Binding ToggleControlledAirspaceCommand}" IsChecked="{Binding Settings.ShowControlledAirspaceLayer, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
                         <Border Style="{StaticResource MfdSlotStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
@@ -386,9 +386,9 @@
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TRAIL : Show or hide target trails" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="APT : Show or hide airport data" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="NAV : Show or hide navaid data" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="AREA : Show or hide active V-LARA airspace boundaries" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="LARA : Show or hide active V-LARA airspace boundaries" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="AREA : Show or hide TMA/CTR/CTA airspace" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="PIN : Toggle always-on-top" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="SRC : Apply selected data source" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="SET : Show or hide settings panel" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="WEB : Turn tablet web server on or off" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TGT + / TGT - : Increase or decrease target symbol size" Margin="0,0,0,4" />
@@ -456,7 +456,7 @@
                                 <Button Content="Labels" Margin="4" Command="{Binding ToggleLabelsCommand}" />
                                 <Button Content="{Binding TrailsToggleText}" Margin="4" Command="{Binding ToggleTrailsCommand}" />
                                 <Button Content="{Binding MapToggleText}" Margin="4" Command="{Binding ToggleMapCommand}" />
-                                <Button Content="{Binding AirspaceToggleText}" Margin="4" Command="{Binding ToggleAirspaceCommand}" />
+                                <Button Content="{Binding LaraToggleText}" Margin="4" Command="{Binding ToggleAirspaceCommand}" />
                             </UniformGrid>
                             <TextBlock Text="{Binding MapOpacityText}"
                                        Foreground="#7CB9A9"
@@ -512,6 +512,9 @@
                             <TextBox Text="{Binding MinTrackedAltitudeFtText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      ToolTip="Targets below this altitude are hidden"
                                      Margin="4,4,4,0" />
+                            <Button Content="{Binding ControlledAirspaceToggleText}"
+                                    Margin="4,8,4,0"
+                                    Command="{Binding ToggleControlledAirspaceCommand}" />
                         </StackPanel>
                     </GroupBox>
 

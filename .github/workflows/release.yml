@@ -40,8 +40,40 @@ jobs:
       - name: Restore
         run: dotnet restore tactical-situation-display.sln
 
+      - name: Validate Mapbox Secrets
+        shell: pwsh
+        env:
+          MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
+          MAPBOX_BASEMAP_STYLE_URL: ${{ secrets.MAPBOX_BASEMAP_STYLE_URL }}
+          MAPBOX_AREAS_STYLE_URL: ${{ secrets.MAPBOX_AREAS_STYLE_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:MAPBOX_ACCESS_TOKEN)) {
+            throw "Missing required GitHub Actions secret: MAPBOX_ACCESS_TOKEN"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:MAPBOX_BASEMAP_STYLE_URL)) {
+            throw "Missing required GitHub Actions secret: MAPBOX_BASEMAP_STYLE_URL"
+          }
+
+          if ([string]::IsNullOrWhiteSpace($env:MAPBOX_AREAS_STYLE_URL)) {
+            Write-Host "MAPBOX_AREAS_STYLE_URL is empty. AREA layers will not have a bundled style yet."
+          }
+
       - name: Publish App
-        run: dotnet publish src/TacticalDisplay.App/TacticalDisplay.App.csproj -c Release -r win-x64 -o out/app -p:Version=${{ needs.resolve-version.outputs.version }}
+        shell: pwsh
+        env:
+          MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
+          MAPBOX_BASEMAP_STYLE_URL: ${{ secrets.MAPBOX_BASEMAP_STYLE_URL }}
+          MAPBOX_AREAS_STYLE_URL: ${{ secrets.MAPBOX_AREAS_STYLE_URL }}
+        run: |
+          dotnet publish src/TacticalDisplay.App/TacticalDisplay.App.csproj `
+            -c Release `
+            -r win-x64 `
+            -o out/app `
+            -p:Version=${{ needs.resolve-version.outputs.version }} `
+            -p:DefaultMapboxAccessToken="$env:MAPBOX_ACCESS_TOKEN" `
+            -p:DefaultMapboxStyleUrl="$env:MAPBOX_BASEMAP_STYLE_URL" `
+            -p:DefaultMapboxAreasStyleUrl="$env:MAPBOX_AREAS_STYLE_URL"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4

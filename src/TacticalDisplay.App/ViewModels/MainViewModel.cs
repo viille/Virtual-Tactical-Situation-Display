@@ -86,6 +86,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ToggleAirportsCommand = new RelayCommand(ToggleAirports);
         ToggleNavaidsCommand = new RelayCommand(ToggleNavaids);
         ToggleAirspaceCommand = new RelayCommand(ToggleAirspace);
+        ToggleControlledAirspaceCommand = new RelayCommand(ToggleControlledAirspace);
         ToggleLabelsCommand = new RelayCommand(ToggleLabels);
         ToggleTrailsCommand = new RelayCommand(ToggleTrails);
         ApplyBullseyeCommand = new RelayCommand(ApplyBullseye);
@@ -423,7 +424,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string MapToggleText => Settings.ShowMapLayer ? "Map ON" : "Map OFF";
     public string AirportsToggleText => Settings.ShowAirportLayer ? "Airports ON" : "Airports OFF";
     public string NavaidsToggleText => Settings.ShowNavaidLayer ? "Navaids ON" : "Navaids OFF";
-    public string AirspaceToggleText => Settings.ShowAirspaceBoundaries ? "Areas ON" : "Areas OFF";
+    public string LaraToggleText => Settings.ShowAirspaceBoundaries ? "LARA ON" : "LARA OFF";
+    public string ControlledAirspaceToggleText => Settings.ShowControlledAirspaceLayer ? "AREA ON" : "AREA OFF";
     public string TrailsToggleText => Settings.TrailsEnabled ? "Trails ON" : "Trails OFF";
     public bool ShowMsfsSettings => DataSourceModes.IsMsfs(SelectedDataSource);
     public bool ShowXPlane12Settings => DataSourceModes.IsXPlane12(SelectedDataSource);
@@ -457,6 +459,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ToggleAirportsCommand { get; }
     public RelayCommand ToggleNavaidsCommand { get; }
     public RelayCommand ToggleAirspaceCommand { get; }
+    public RelayCommand ToggleControlledAirspaceCommand { get; }
     public RelayCommand ToggleLabelsCommand { get; }
     public RelayCommand ToggleTrailsCommand { get; }
     public RelayCommand ApplyBullseyeCommand { get; }
@@ -593,7 +596,14 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private void ToggleAirspace()
     {
         Settings.ShowAirspaceBoundaries = !Settings.ShowAirspaceBoundaries;
-        Raise(nameof(AirspaceToggleText));
+        Raise(nameof(LaraToggleText));
+        Raise(nameof(Settings));
+    }
+
+    private void ToggleControlledAirspace()
+    {
+        Settings.ShowControlledAirspaceLayer = !Settings.ShowControlledAirspaceLayer;
+        Raise(nameof(ControlledAirspaceToggleText));
         Raise(nameof(Settings));
     }
 
