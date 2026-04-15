@@ -40,7 +40,7 @@ jobs:
       - name: Restore
         run: dotnet restore tactical-situation-display.sln
 
-      - name: Validate Mapbox Secrets
+      - name: Report Mapbox Defaults
         shell: pwsh
         env:
           MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
@@ -48,15 +48,15 @@ jobs:
           MAPBOX_AREAS_STYLE_URL: ${{ secrets.MAPBOX_AREAS_STYLE_URL }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:MAPBOX_ACCESS_TOKEN)) {
-            throw "Missing required GitHub Actions secret: MAPBOX_ACCESS_TOKEN"
+            Write-Host "MAPBOX_ACCESS_TOKEN is empty. Release will use user-provided local Mapbox configuration."
           }
 
           if ([string]::IsNullOrWhiteSpace($env:MAPBOX_BASEMAP_STYLE_URL)) {
-            throw "Missing required GitHub Actions secret: MAPBOX_BASEMAP_STYLE_URL"
+            Write-Host "MAPBOX_BASEMAP_STYLE_URL is empty. Release will use the app fallback style URL."
           }
 
           if ([string]::IsNullOrWhiteSpace($env:MAPBOX_AREAS_STYLE_URL)) {
-            Write-Host "MAPBOX_AREAS_STYLE_URL is empty. AREA layers will not have a bundled style yet."
+            Write-Host "MAPBOX_AREAS_STYLE_URL is empty. Area layers will use user-provided local Mapbox configuration."
           }
 
       - name: Publish App
