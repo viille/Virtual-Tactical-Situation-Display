@@ -23,6 +23,8 @@ public sealed class TacticalDisplaySettings
     public bool ShowRangeRings { get; set; } = true;
     public double TargetSymbolScale { get; set; } = 1.0;
     public bool ShowAirspaceBoundaries { get; set; } = true;
+    public bool ShowControlledAirspaceBoundaries { get; set; } = true;
+    public bool ShowLaraBoundaries { get; set; } = true;
     public bool ShowOnlyActiveAirspaceBoundaries { get; set; } = true;
     public double AirspaceOpacity { get; set; } = 1.0;
     public string AirspaceFirCode { get; set; } = "efin";

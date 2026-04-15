@@ -53,7 +53,8 @@ Frame controls:
 - `TRAIL`: show or hide target trails
 - `APT`: show or hide airport data
 - `NAV`: show or hide navaid data
-- `AREA`: show or hide active V-LARA airspace boundaries
+- `AREA`: show or hide controlled airspace boundaries (CTR/TMA/CTA)
+- `LARA`: show or hide V-LARA airspace boundaries
 - `PIN`: pin or unpin the window on top
 - `SRC`: apply the selected data source
 - `LBL`: cycle label detail level
@@ -94,9 +95,9 @@ Mouse actions:
 
 ## Airspace
 
-The app can show active V-LARA reserved airspace boundaries. It loads EFIN airspace geometry and uses the V-LARA reservations feed to highlight active reservations.
+The app can show both controlled airspace boundaries (CTR/TMA/CTA) and V-LARA reserved airspace boundaries. It loads EFIN airspace geometry and uses the V-LARA reservations feed to highlight active reservations.
 
-Use `Areas` to toggle the layer.
+Use `AREA` to toggle controlled airspace and `LARA` to toggle V-LARA boundaries.
 
 ## Bullseye
 
