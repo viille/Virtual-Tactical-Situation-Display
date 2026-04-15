@@ -58,7 +58,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         _settings = settings;
         _httpClient = new HttpClient
         {
-            Timeout = TimeSpan.FromSeconds(2)
+            Timeout = TimeSpan.FromSeconds(5)
         };
         _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
     }
@@ -461,7 +461,24 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
 
     private async Task<string> DiscoverApiVersionAsync(CancellationToken cancellationToken)
     {
-        using var response = await _httpClient.GetAsync(new Uri(GetBaseUri(), "api/capabilities"), cancellationToken);
+        HttpResponseMessage response;
+        try
+        {
+            response = await _httpClient.GetAsync(new Uri(GetBaseUri(), "api/capabilities"), cancellationToken);
+        }
+        catch (HttpRequestException ex)
+        {
+            DataSourceDebugLog.Info(LogSource, $"Capabilities endpoint request failed; falling back to X-Plane Web API v1 | error={ex.Message}");
+            return "v1";
+        }
+        catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            DataSourceDebugLog.Info(LogSource, $"Capabilities endpoint timed out; falling back to X-Plane Web API v1 | error={ex.Message}");
+            return "v1";
+        }
+
+        using (response)
+        {
         if (response.StatusCode == HttpStatusCode.NotFound)
         {
             DataSourceDebugLog.Info(LogSource, "Capabilities endpoint unavailable; falling back to X-Plane Web API v1");
@@ -492,6 +509,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             .ToList();
 
         return versions.FirstOrDefault() ?? "v1";
+        }
     }
 
     private Task<IReadOnlyList<double>> GetOptionalNumericArrayAsync(string dataRefName, CancellationToken cancellationToken)
@@ -515,7 +533,9 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         response.EnsureSuccessStatusCode();
 
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        var data = document.RootElement.GetProperty("data");
+        var data = document.RootElement.TryGetProperty("data", out var dataElement)
+            ? dataElement
+            : document.RootElement;
         if (data.ValueKind != JsonValueKind.Array || data.GetArrayLength() == 0)
         {
             throw new InvalidOperationException($"X-Plane dataref '{dataRefName}' was not found.");
