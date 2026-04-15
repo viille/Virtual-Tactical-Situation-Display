@@ -99,7 +99,6 @@ public sealed record TacticalPicture(
 public sealed record AirspaceArea(
     string Name,
     string Type,
-    string SourceType,
     int? LowerFlightLevel,
     int? UpperFlightLevel,
     bool IsActive,

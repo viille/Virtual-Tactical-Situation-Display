@@ -237,7 +237,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         if (Picture is null ||
             Settings is null ||
             Airspaces is null ||
-            (!Settings.ShowLaraBoundaries && !Settings.ShowControlledAirspaceBoundaries))
+            !Settings.ShowAirspaceBoundaries)
         {
             return;
         }
@@ -253,18 +253,6 @@ public sealed class TacticalScopeControl : FrameworkElement
         {
             foreach (var airspace in Airspaces)
             {
-                if (IsLaraAirspace(airspace))
-                {
-                    if (!Settings.ShowLaraBoundaries)
-                    {
-                        continue;
-                    }
-                }
-                else if (!Settings.ShowControlledAirspaceBoundaries)
-                {
-                    continue;
-                }
-
                 if (Settings.ShowOnlyActiveAirspaceBoundaries && !airspace.IsActive)
                 {
                     continue;
@@ -654,16 +642,6 @@ public sealed class TacticalScopeControl : FrameworkElement
         return string.IsNullOrWhiteSpace(lower) || string.IsNullOrWhiteSpace(upper)
             ? airspace.Name
             : $"{airspace.Name} {lower}-{upper}";
-    }
-
-    private static bool IsLaraAirspace(AirspaceArea airspace)
-    {
-        if (airspace.SourceType.Equals("LARA", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return airspace.Type is not "CTR" and not "TMA" and not "CTA";
     }
 
     private static Color WithScaledAlpha(byte alpha, byte red, byte green, byte blue, double opacity) =>
