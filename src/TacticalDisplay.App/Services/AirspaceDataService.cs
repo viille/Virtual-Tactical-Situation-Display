@@ -116,6 +116,7 @@ public sealed class AirspaceDataService
             airspaces.Add(new AirspaceArea(
                 name,
                 ReadString(properties, "type"),
+                ReadString(properties, "sourceType"),
                 ReadNullableInt(properties, "lowerFL"),
                 ReadNullableInt(properties, "upperFL"),
                 isActive,
@@ -135,6 +136,7 @@ public sealed class AirspaceDataService
             airspaces.Add(new AirspaceArea(
                 name,
                 "Reservation",
+                "LARA",
                 null,
                 null,
                 true,
