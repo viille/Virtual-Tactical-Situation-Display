@@ -44,8 +44,8 @@ jobs:
         shell: pwsh
         env:
           MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
-          MAPBOX_BASEMAP_STYLE_URL: ${{ secrets.MAPBOX_BASEMAP_STYLE_URL }}
-          MAPBOX_AREAS_STYLE_URL: ${{ secrets.MAPBOX_AREAS_STYLE_URL }}
+          MAPBOX_BASEMAP_STYLE_URL: ${{ vars.MAPBOX_BASEMAP_STYLE_URL }}
+          MAPBOX_AREAS_STYLE_URL: ${{ vars.AREASMAPSTYLEURL }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:MAPBOX_ACCESS_TOKEN)) {
             Write-Host "MAPBOX_ACCESS_TOKEN is empty. Release will use user-provided local Mapbox configuration."
@@ -63,8 +63,8 @@ jobs:
         shell: pwsh
         env:
           MAPBOX_ACCESS_TOKEN: ${{ secrets.MAPBOX_ACCESS_TOKEN }}
-          MAPBOX_BASEMAP_STYLE_URL: ${{ secrets.MAPBOX_BASEMAP_STYLE_URL }}
-          MAPBOX_AREAS_STYLE_URL: ${{ secrets.MAPBOX_AREAS_STYLE_URL }}
+          MAPBOX_BASEMAP_STYLE_URL: ${{ vars.MAPBOX_BASEMAP_STYLE_URL }}
+          MAPBOX_AREAS_STYLE_URL: ${{ vars.AREASMAPSTYLEURL }}
         run: |
           dotnet publish src/TacticalDisplay.App/TacticalDisplay.App.csproj `
             -c Release `
