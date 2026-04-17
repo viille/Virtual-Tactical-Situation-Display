@@ -1012,8 +1012,6 @@ public sealed class WebDisplayServer : IAsyncDisposable
         if (document.fullscreenElement) {
           await document.exitFullscreen();
         } else {
-          const proceed = window.confirm('This application is not intended to be used in fullscreen mode.\n\nContinue anyway?');
-          if (!proceed) return;
           await document.documentElement.requestFullscreen();
         }
       } catch {
