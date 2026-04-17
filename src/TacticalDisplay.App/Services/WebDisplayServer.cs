@@ -359,15 +359,16 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 settings.LabelMode.ToString(),
                 settings.MapOpacity,
                 MapboxDefaults.ResolveAccessToken(),
-                MapboxDefaults.ResolveStyleUrl(),
-                MapboxDefaults.ResolveAreasStyleUrl(),
+                MapboxDefaults.ResolveDisplayStyleUrl(settings.ShowControlledAirspaceLayer),
+                string.Empty,
                 settings.Declutter,
                 settings.ShowMapLayer,
-                settings.ShowAirportLayer,
-                settings.ShowNavaidLayer,
                 settings.ShowAirspaceBoundaries,
                 settings.ShowControlledAirspaceLayer,
                 settings.TrailsEnabled,
+                settings.ShowBullseye,
+                settings.BullseyeLatitudeDeg,
+                settings.BullseyeLongitudeDeg,
                 settings.TargetSymbolScale,
                 _viewModel.IsAlwaysOnTop,
                 _viewModel.ShowSettings,
@@ -387,15 +388,16 @@ public sealed class WebDisplayServer : IAsyncDisposable
             settings.LabelMode.ToString(),
             settings.MapOpacity,
             MapboxDefaults.ResolveAccessToken(),
-            MapboxDefaults.ResolveStyleUrl(),
-            MapboxDefaults.ResolveAreasStyleUrl(),
+            MapboxDefaults.ResolveDisplayStyleUrl(settings.ShowControlledAirspaceLayer),
+            string.Empty,
             settings.Declutter,
             settings.ShowMapLayer,
-            settings.ShowAirportLayer,
-            settings.ShowNavaidLayer,
             settings.ShowAirspaceBoundaries,
             settings.ShowControlledAirspaceLayer,
             settings.TrailsEnabled,
+            settings.ShowBullseye,
+            settings.BullseyeLatitudeDeg,
+            settings.BullseyeLongitudeDeg,
             settings.TargetSymbolScale,
             _viewModel.IsAlwaysOnTop,
             _viewModel.ShowSettings,
@@ -475,14 +477,11 @@ public sealed class WebDisplayServer : IAsyncDisposable
                     case "trails":
                         _viewModel.ToggleTrailsCommand.Execute(null);
                         break;
+                    case "bullseye":
+                        _viewModel.ToggleBullseyeCommand.Execute(null);
+                        break;
                     case "labels":
                         _viewModel.ToggleLabelsCommand.Execute(null);
-                        break;
-                    case "airports":
-                        _viewModel.ToggleAirportsCommand.Execute(null);
-                        break;
-                    case "navaids":
-                        _viewModel.ToggleNavaidsCommand.Execute(null);
                         break;
                     case "lara":
                     case "airspace":
@@ -562,11 +561,12 @@ public sealed class WebDisplayServer : IAsyncDisposable
         string MapboxAreasStyleUrl,
         bool Declutter,
         bool ShowMapLayer,
-        bool ShowAirportLayer,
-        bool ShowNavaidLayer,
         bool ShowAirspaceBoundaries,
         bool ShowControlledAirspaceLayer,
         bool TrailsEnabled,
+        bool ShowBullseye,
+        double? BullseyeLatitudeDeg,
+        double? BullseyeLongitudeDeg,
         double TargetSymbolScale,
         bool IsAlwaysOnTop,
         bool ShowSettings,
@@ -587,14 +587,15 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 0.65,
                 string.Empty,
                 "mapbox://styles/mapbox/outdoors-v12",
-                string.Empty,
+                MapboxDefaults.FallbackAreasStyleUrl,
+                false,
+                true,
                 false,
                 true,
                 true,
-                true,
                 false,
-                true,
-                true,
+                null,
+                null,
                 1,
                 false,
                 false,
@@ -859,9 +860,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
       <div class="side-tick"></div>
       <button type="button" data-command="trails" id="trailsBtn">TRAIL</button>
       <div class="side-tick"></div>
-      <button type="button" data-command="airports" id="airportsBtn">APT</button>
-      <div class="side-tick"></div>
-      <button type="button" data-command="navaids" id="navaidsBtn">NAV</button>
+      <button type="button" data-command="bullseye" id="bullseyeBtn">BE</button>
     </div>
     <div class="right-controls">
       <button type="button" data-command="pin" id="pinBtn">PIN</button>
@@ -926,9 +925,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
       mapBtn: document.getElementById('mapBtn'),
       declutterBtn: document.getElementById('declutterBtn'),
       trailsBtn: document.getElementById('trailsBtn'),
+      bullseyeBtn: document.getElementById('bullseyeBtn'),
       labelsBtn: document.getElementById('labelsBtn'),
-      airportsBtn: document.getElementById('airportsBtn'),
-      navaidsBtn: document.getElementById('navaidsBtn'),
       laraBtn: document.getElementById('laraBtn'),
       areaBtn: document.getElementById('areaBtn'),
       pinBtn: document.getElementById('pinBtn'),
@@ -977,9 +975,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
       setToggle(fields.mapBtn, snapshot.showMapLayer, 'MAP');
       setToggle(fields.declutterBtn, snapshot.declutter, 'DCLR');
       setToggle(fields.trailsBtn, snapshot.trailsEnabled, 'TRAIL');
+      setToggle(fields.bullseyeBtn, snapshot.showBullseye, 'BE');
       setToggle(fields.labelsBtn, snapshot.labelMode !== 'Off', `LBL ${snapshot.labelMode || ''}`.trim());
-      setToggle(fields.airportsBtn, snapshot.showAirportLayer, 'APT');
-      setToggle(fields.navaidsBtn, snapshot.showNavaidLayer, 'NAV');
       setToggle(fields.laraBtn, snapshot.showAirspaceBoundaries, 'LARA');
       setToggle(fields.areaBtn, snapshot.showControlledAirspaceLayer, 'AREA');
       setToggle(fields.pinBtn, snapshot.isAlwaysOnTop, 'PIN');

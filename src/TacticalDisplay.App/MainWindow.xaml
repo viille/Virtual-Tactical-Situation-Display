@@ -305,9 +305,7 @@
                         <Border Style="{StaticResource MfdSideTickStyle}" />
                         <ToggleButton Content="TRAIL" Command="{Binding ToggleTrailsCommand}" IsChecked="{Binding Settings.TrailsEnabled, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <ToggleButton Content="APT" Command="{Binding ToggleAirportsCommand}" IsChecked="{Binding Settings.ShowAirportLayer, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
-                        <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <ToggleButton Content="NAV" Command="{Binding ToggleNavaidsCommand}" IsChecked="{Binding Settings.ShowNavaidLayer, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <ToggleButton Content="BE" Command="{Binding ToggleBullseyeCommand}" IsChecked="{Binding Settings.ShowBullseye, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
                     </StackPanel>
 
                     <StackPanel Grid.Row="1" Grid.Column="2" VerticalAlignment="Center">
@@ -341,12 +339,10 @@
                                                            Picture="{Binding Picture}"
                                                            Settings="{Binding Settings}"
                                                            Airspaces="{Binding Airspaces}"
-                                                           Airports="{Binding Airports}"
-                                                           Navaids="{Binding Navaids}"
                                                            ManualTargetMetadata="{Binding ManualTargetMetadata}" />
-                            <Border HorizontalAlignment="Center"
+                            <Border HorizontalAlignment="Left"
                                     VerticalAlignment="Top"
-                                    Margin="0,8,0,0"
+                                    Margin="8,8,0,0"
                                     Padding="8,3"
                                     Background="#B0071015"
                                     BorderBrush="#355A56"
@@ -384,16 +380,15 @@
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="MAP : Show or hide map layer" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="DCLR : Reduce display clutter" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TRAIL : Show or hide target trails" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="APT : Show or hide airport data" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="NAV : Show or hide navaid data" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="BE : Show or hide bullseye" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="LARA : Show or hide active V-LARA airspace boundaries" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="AREA : Show or hide TMA/CTR/CTA airspace" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="AREA : Switch base map / TMA-CTR-CTA map" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="PIN : Toggle always-on-top" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="SET : Show or hide settings panel" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="WEB : Turn tablet web server on or off" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TGT + / TGT - : Increase or decrease target symbol size" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Top arrows : Increase or decrease map opacity" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Bottom arrows : Increase or decrease airport/navaid/label background opacity" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Bottom arrows : Increase or decrease label background opacity" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="? : Show this help" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="- : Minimize" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="X : Close" />
@@ -467,36 +462,6 @@
                                     IsSnapToTickEnabled="True"
                                     Value="{Binding MapOpacityPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     Margin="4,2,4,0" />
-                            <Button Content="{Binding AirportsToggleText}"
-                                    Margin="4,8,4,0"
-                                    Command="{Binding ToggleAirportsCommand}" />
-                            <TextBlock Text="{Binding AirportOpacityText}"
-                                       Foreground="#7CB9A9"
-                                       Margin="4,8,4,0" />
-                            <Slider Minimum="0"
-                                    Maximum="100"
-                                    TickFrequency="10"
-                                    IsSnapToTickEnabled="True"
-                                    Value="{Binding AirportOpacityPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                    Margin="4,2,4,0" />
-                            <TextBlock Text="{Binding AirportText}"
-                                       Foreground="#7CB9A9"
-                                       Margin="4,2,4,0" />
-                            <Button Content="{Binding NavaidsToggleText}"
-                                    Margin="4,8,4,0"
-                                    Command="{Binding ToggleNavaidsCommand}" />
-                            <TextBlock Text="{Binding NavaidOpacityText}"
-                                       Foreground="#7CB9A9"
-                                       Margin="4,8,4,0" />
-                            <Slider Minimum="0"
-                                    Maximum="100"
-                                    TickFrequency="10"
-                                    IsSnapToTickEnabled="True"
-                                    Value="{Binding NavaidOpacityPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                    Margin="4,2,4,0" />
-                            <TextBlock Text="{Binding NavaidText}"
-                                       Foreground="#7CB9A9"
-                                       Margin="4,2,4,0" />
                             <TextBlock Text="{Binding MapLabelBackgroundOpacityText}"
                                        Foreground="#7CB9A9"
                                        Margin="4,8,4,0" />

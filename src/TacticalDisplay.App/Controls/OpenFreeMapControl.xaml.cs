@@ -146,8 +146,8 @@ public partial class OpenFreeMapControl : UserControl
             settings.SelectedRangeNm,
             headingUp ? ownship.HeadingDeg : 0.0,
             MapboxDefaults.ResolveAccessToken(),
-            MapboxDefaults.ResolveStyleUrl(),
-            MapboxDefaults.ResolveAreasStyleUrl(),
+            MapboxDefaults.ResolveDisplayStyleUrl(settings.ShowControlledAirspaceLayer),
+            string.Empty,
             settings.ShowControlledAirspaceLayer);
         var json = JsonSerializer.Serialize(state, JsonOptions);
         var script = $"window.updateTacticalMap && window.updateTacticalMap({json});";

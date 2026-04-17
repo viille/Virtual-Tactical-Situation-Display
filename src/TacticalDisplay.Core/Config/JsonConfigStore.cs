@@ -118,8 +118,6 @@ public sealed class JsonConfigStore
     {
         settings.AirspaceOpacity = System.Math.Clamp(settings.AirspaceOpacity, 0.1, 1.0);
         settings.MapOpacity = System.Math.Clamp(settings.MapOpacity, 0.0, 1.0);
-        settings.AirportOpacity = System.Math.Clamp(settings.AirportOpacity, 0.0, 1.0);
-        settings.NavaidOpacity = System.Math.Clamp(settings.NavaidOpacity, 0.0, 1.0);
         settings.MapLabelBackgroundOpacity = System.Math.Clamp(settings.MapLabelBackgroundOpacity, 0.0, 1.0);
         settings.TargetSymbolScale = System.Math.Clamp(settings.TargetSymbolScale, 0.6, 1.8);
         settings.WindowWidth = System.Math.Clamp(settings.WindowWidth, 640, 3840);

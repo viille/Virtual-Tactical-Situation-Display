@@ -4,7 +4,7 @@
     <EmbeddedWatchdogPublishDir>$(MSBuildProjectDirectory)\obj\$(Configuration)\net8.0-windows10.0.17763.0\Watchdog\</EmbeddedWatchdogPublishDir>
     <DefaultMapboxAccessToken></DefaultMapboxAccessToken>
     <DefaultMapboxStyleUrl></DefaultMapboxStyleUrl>
-    <DefaultMapboxAreasStyleUrl></DefaultMapboxAreasStyleUrl>
+    <DefaultMapboxAreasStyleUrl>mapbox://styles/ottotuhkunen/cmo1iv0wh006n01sjgbnlef0q</DefaultMapboxAreasStyleUrl>
   </PropertyGroup>
 
   <ItemGroup>
@@ -57,7 +57,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>0.10.1</Version>
+    <Version>0.11.0</Version>
     <ApplicationIcon>Assets\VTSD.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

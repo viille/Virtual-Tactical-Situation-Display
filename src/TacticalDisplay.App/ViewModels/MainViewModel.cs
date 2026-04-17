@@ -19,8 +19,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private readonly JsonConfigStore _configStore;
     private readonly ClassificationConfig _classification;
     private readonly AirspaceDataService _airspaceDataService = new();
-    private readonly AirportDataService _airportDataService;
-    private readonly NavaidDataService _navaidDataService;
     private TrafficRepository _repository = new();
     private ITrafficDataFeed _feed;
     private readonly DispatcherTimer _renderTimer;
@@ -28,16 +26,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private readonly CancellationTokenSource _runCts = new();
     private TacticalPicture? _picture;
     private IReadOnlyList<AirspaceArea> _airspaces = [];
-    private IReadOnlyList<AirportMapPoint> _airports = [];
-    private IReadOnlyList<NavaidMapPoint> _navaids = [];
     private string _connectionText = "Disconnected";
     private string _simConnectText = "N/A";
     private string _trafficText = "0 contacts";
     private string _sourceText = string.Empty;
     private string _webDisplayText = "Web: starting";
     private string _airspaceText = "Airspace: loading";
-    private string _airportText = "Airports: loading";
-    private string _navaidText = "Navaids: loading";
     private string _bullseyeLatitudeText = string.Empty;
     private string _bullseyeLongitudeText = string.Empty;
     private string _bullseyeText = "Bullseye: off";
@@ -60,8 +54,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         var configPath = ResolveConfigDirectory();
         DataSourceDebugLog.Info("App", $"Application startup | configDir={configPath} logFile={DataSourceDebugLog.CurrentLogFilePath}");
         _configStore = new JsonConfigStore(configPath);
-        _airportDataService = new AirportDataService(configPath);
-        _navaidDataService = new NavaidDataService(configPath);
         Settings = _configStore.LoadDisplaySettings();
         DataSourceDebugLog.SetEnabled(Settings.EnableDataSourceDebugLogging);
         DataSourceDebugLog.Info("App", $"Data source debug logging enabled={Settings.EnableDataSourceDebugLogging}");
@@ -83,12 +75,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         DecreaseTargetSymbolScaleCommand = new RelayCommand(() => AdjustTargetSymbolScale(-0.1));
         ToggleDeclutterCommand = new RelayCommand(ToggleDeclutter);
         ToggleMapCommand = new RelayCommand(ToggleMap);
-        ToggleAirportsCommand = new RelayCommand(ToggleAirports);
-        ToggleNavaidsCommand = new RelayCommand(ToggleNavaids);
         ToggleAirspaceCommand = new RelayCommand(ToggleAirspace);
         ToggleControlledAirspaceCommand = new RelayCommand(ToggleControlledAirspace);
         ToggleLabelsCommand = new RelayCommand(ToggleLabels);
         ToggleTrailsCommand = new RelayCommand(ToggleTrails);
+        ToggleBullseyeCommand = new RelayCommand(ToggleBullseye);
         ApplyBullseyeCommand = new RelayCommand(ApplyBullseye);
         ClearBullseyeCommand = new RelayCommand(ClearBullseye);
         SaveSettingsCommand = new RelayCommand(() => _configStore.SaveDisplaySettings(Settings));
@@ -109,8 +100,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _airspaceTimer.Tick += (_, _) => _ = LoadAirspacesAsync();
         _airspaceTimer.Start();
         _ = LoadAirspacesAsync();
-        _ = LoadAirportsAsync();
-        _ = LoadNavaidsAsync();
         InitializeBullseyeText();
         XPlane12ApiBaseUrlText = Settings.XPlane12ApiBaseUrl;
         MinTrackedAltitudeFtText = Settings.MinTrackedAltitudeFt.ToString("0.##", CultureInfo.InvariantCulture);
@@ -129,18 +118,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         get => _airspaces;
         private set => SetField(ref _airspaces, value);
-    }
-
-    public IReadOnlyList<AirportMapPoint> Airports
-    {
-        get => _airports;
-        private set => SetField(ref _airports, value);
-    }
-
-    public IReadOnlyList<NavaidMapPoint> Navaids
-    {
-        get => _navaids;
-        private set => SetField(ref _navaids, value);
     }
 
     public string ConnectionText
@@ -183,18 +160,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         private set => SetField(ref _airspaceText, value);
     }
 
-    public string AirportText
-    {
-        get => _airportText;
-        private set => SetField(ref _airportText, value);
-    }
-
-    public string NavaidText
-    {
-        get => _navaidText;
-        private set => SetField(ref _navaidText, value);
-    }
-
     public double AirspaceOpacityPercent
     {
         get => Math.Round(Settings.AirspaceOpacity * 100);
@@ -234,46 +199,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     }
 
     public string MapOpacityText => $"Map opacity: {MapOpacityPercent:0}%";
-
-    public double AirportOpacityPercent
-    {
-        get => Math.Round(Settings.AirportOpacity * 100);
-        set
-        {
-            var opacity = Math.Clamp(value / 100.0, 0.0, 1.0);
-            if (Math.Abs(Settings.AirportOpacity - opacity) < 0.001)
-            {
-                return;
-            }
-
-            Settings.AirportOpacity = opacity;
-            Raise();
-            Raise(nameof(AirportOpacityText));
-            Raise(nameof(Settings));
-        }
-    }
-
-    public string AirportOpacityText => $"Airport opacity: {AirportOpacityPercent:0}%";
-
-    public double NavaidOpacityPercent
-    {
-        get => Math.Round(Settings.NavaidOpacity * 100);
-        set
-        {
-            var opacity = Math.Clamp(value / 100.0, 0.0, 1.0);
-            if (Math.Abs(Settings.NavaidOpacity - opacity) < 0.001)
-            {
-                return;
-            }
-
-            Settings.NavaidOpacity = opacity;
-            Raise();
-            Raise(nameof(NavaidOpacityText));
-            Raise(nameof(Settings));
-        }
-    }
-
-    public string NavaidOpacityText => $"Navaid opacity: {NavaidOpacityPercent:0}%";
 
     public double MapLabelBackgroundOpacityPercent
     {
@@ -422,8 +347,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string AppVersionText { get; set; } = "ver unknown";
     public string DeclutterToggleText => Settings.Declutter ? "Declutter ON" : "Declutter OFF";
     public string MapToggleText => Settings.ShowMapLayer ? "Map ON" : "Map OFF";
-    public string AirportsToggleText => Settings.ShowAirportLayer ? "Airports ON" : "Airports OFF";
-    public string NavaidsToggleText => Settings.ShowNavaidLayer ? "Navaids ON" : "Navaids OFF";
     public string LaraToggleText => Settings.ShowAirspaceBoundaries ? "LARA ON" : "LARA OFF";
     public string ControlledAirspaceToggleText => Settings.ShowControlledAirspaceLayer ? "AREA ON" : "AREA OFF";
     public string TrailsToggleText => Settings.TrailsEnabled ? "Trails ON" : "Trails OFF";
@@ -456,12 +379,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand DecreaseTargetSymbolScaleCommand { get; }
     public RelayCommand ToggleDeclutterCommand { get; }
     public RelayCommand ToggleMapCommand { get; }
-    public RelayCommand ToggleAirportsCommand { get; }
-    public RelayCommand ToggleNavaidsCommand { get; }
     public RelayCommand ToggleAirspaceCommand { get; }
     public RelayCommand ToggleControlledAirspaceCommand { get; }
     public RelayCommand ToggleLabelsCommand { get; }
     public RelayCommand ToggleTrailsCommand { get; }
+    public RelayCommand ToggleBullseyeCommand { get; }
     public RelayCommand ApplyBullseyeCommand { get; }
     public RelayCommand ClearBullseyeCommand { get; }
     public RelayCommand SaveSettingsCommand { get; }
@@ -530,24 +452,14 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private void AdjustMapOverlayOpacity(double delta)
     {
-        var airportOpacity = Math.Clamp(Settings.AirportOpacity + delta, 0.0, 1.0);
-        var navaidOpacity = Math.Clamp(Settings.NavaidOpacity + delta, 0.0, 1.0);
         var labelBackgroundOpacity = Math.Clamp(Settings.MapLabelBackgroundOpacity + delta, 0.0, 1.0);
 
-        if (Math.Abs(Settings.AirportOpacity - airportOpacity) < 0.001
-            && Math.Abs(Settings.NavaidOpacity - navaidOpacity) < 0.001
-            && Math.Abs(Settings.MapLabelBackgroundOpacity - labelBackgroundOpacity) < 0.001)
+        if (Math.Abs(Settings.MapLabelBackgroundOpacity - labelBackgroundOpacity) < 0.001)
         {
             return;
         }
 
-        Settings.AirportOpacity = airportOpacity;
-        Settings.NavaidOpacity = navaidOpacity;
         Settings.MapLabelBackgroundOpacity = labelBackgroundOpacity;
-        Raise(nameof(AirportOpacityPercent));
-        Raise(nameof(AirportOpacityText));
-        Raise(nameof(NavaidOpacityPercent));
-        Raise(nameof(NavaidOpacityText));
         Raise(nameof(MapLabelBackgroundOpacityPercent));
         Raise(nameof(MapLabelBackgroundOpacityText));
         Raise(nameof(Settings));
@@ -579,20 +491,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(Settings));
     }
 
-    private void ToggleAirports()
-    {
-        Settings.ShowAirportLayer = !Settings.ShowAirportLayer;
-        Raise(nameof(AirportsToggleText));
-        Raise(nameof(Settings));
-    }
-
-    private void ToggleNavaids()
-    {
-        Settings.ShowNavaidLayer = !Settings.ShowNavaidLayer;
-        Raise(nameof(NavaidsToggleText));
-        Raise(nameof(Settings));
-    }
-
     private void ToggleAirspace()
     {
         Settings.ShowAirspaceBoundaries = !Settings.ShowAirspaceBoundaries;
@@ -621,6 +519,20 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         Settings.TrailsEnabled = !Settings.TrailsEnabled;
         Raise(nameof(TrailsToggleText));
+        Raise(nameof(Settings));
+    }
+
+    private void ToggleBullseye()
+    {
+        if (!Settings.BullseyeLatitudeDeg.HasValue || !Settings.BullseyeLongitudeDeg.HasValue)
+        {
+            ApplyBullseye();
+            return;
+        }
+
+        Settings.ShowBullseye = !Settings.ShowBullseye;
+        _configStore.SaveDisplaySettings(Settings);
+        UpdateBullseyeText();
         Raise(nameof(Settings));
     }
 
@@ -1014,64 +926,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             AirspaceText = $"Airspace: unavailable ({ex.Message})";
             DataSourceDebugLog.Info("Airspace", $"Airspace load failed | {ex}");
         }
-    }
-
-    private async Task LoadAirportsAsync()
-    {
-        try
-        {
-            var airports = await _airportDataService.LoadAsync(_runCts.Token);
-            if (!Application.Current.Dispatcher.CheckAccess())
-            {
-                Application.Current.Dispatcher.Invoke(() => ApplyLoadedAirports(airports));
-                return;
-            }
-
-            ApplyLoadedAirports(airports);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            AirportText = $"Airports: unavailable ({ex.Message})";
-            DataSourceDebugLog.Info("Airports", $"Airport load failed | {ex}");
-        }
-    }
-
-    private void ApplyLoadedAirports(IReadOnlyList<AirportMapPoint> airports)
-    {
-        Airports = airports;
-        AirportText = $"Airports: {airports.Count}";
-    }
-
-    private async Task LoadNavaidsAsync()
-    {
-        try
-        {
-            var navaids = await _navaidDataService.LoadAsync(_runCts.Token);
-            if (!Application.Current.Dispatcher.CheckAccess())
-            {
-                Application.Current.Dispatcher.Invoke(() => ApplyLoadedNavaids(navaids));
-                return;
-            }
-
-            ApplyLoadedNavaids(navaids);
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            NavaidText = $"Navaids: unavailable ({ex.Message})";
-            DataSourceDebugLog.Info("Navaids", $"Navaid load failed | {ex}");
-        }
-    }
-
-    private void ApplyLoadedNavaids(IReadOnlyList<NavaidMapPoint> navaids)
-    {
-        Navaids = navaids;
-        NavaidText = $"Navaids: {navaids.Count}";
     }
 
     private void ApplyLoadedAirspaces(IReadOnlyList<AirspaceArea> airspaces)

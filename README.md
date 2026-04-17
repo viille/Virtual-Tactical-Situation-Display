@@ -43,12 +43,13 @@ SimConnect is bundled with the app. X-Plane 12 uses `http://localhost:8086/` by 
 ## Display Controls
 
 The app opens directly into the tactical display. The settings panel is hidden by default and can be opened with `SET`.
+The current orientation and range are shown in the upper-left corner of the display surface.
 
 ## Tablet Display
 
 The desktop app starts a lightweight web display on port `8787`. Open the `Web: http://...:8787/` address shown in the app footer from a tablet or another device on the same local network.
 
-The tablet display renders the Mapbox map and tactical canvas on the device and stays synchronized with the desktop app. It includes controls for range, orientation, map opacity, map, declutter, trails, labels, map overlay opacity, airports, navaids, LARA airspace, controlled airspace layers, pin, settings, and target symbol size. These controls update the same display state as the main window controls.
+The tablet display renders the Mapbox map and tactical canvas on the device and stays synchronized with the desktop app. It includes controls for range, orientation, map opacity, map, declutter, trails, bullseye, labels, map-label background opacity, LARA airspace, controlled airspace layers, pin, settings, and target symbol size. These controls update the same display state as the main window controls.
 
 The tablet display can be turned on or off with the `WEB` frame button next to `SET`, or from the `Tablet Web` section in the settings panel.
 
@@ -61,13 +62,12 @@ Frame controls:
 - `MAP`: show or hide the map layer
 - `DCLR`: reduce display clutter
 - `TRAIL`: show or hide target trails
-- `APT`: show or hide airport data
-- `NAV`: show or hide navaid data
+- `BE`: show or hide bullseye
 - `LARA`: show or hide active V-LARA airspace boundaries
-- `AREA`: show or hide bundled TMA, CTR, and CTA map layers
+- `AREA`: switch between the base map and the TMA/CTR/CTA map style
 - `PIN`: pin or unpin the window on top
 - `LBL`: cycle label detail level
-- bottom up/down arrows: increase or decrease airport, navaid, and map-label background opacity together
+- bottom up/down arrows: increase or decrease map-label background opacity
 - `SET`: show or hide the settings panel
 - `WEB`: turn tablet web server on or off
 - `TGT +` / `TGT -`: increase or decrease target symbol size
@@ -112,6 +112,7 @@ Use `LARA` to toggle the layer.
 ## Bullseye
 
 Enter latitude and longitude in the settings panel, then click `Set Bullseye`.
+After coordinates have been set, use `BE` to show or hide bullseye without clearing the saved coordinates.
 
 Accepted examples:
 - `N60.3172` and `E024.9633`
