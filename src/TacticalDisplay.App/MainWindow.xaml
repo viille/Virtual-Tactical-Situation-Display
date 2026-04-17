@@ -215,6 +215,13 @@
                                 Orientation="Horizontal"
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
+                        <Button x:Name="ExitFullscreenButton"
+                                Content="EXIT"
+                                Width="46"
+                                Visibility="Collapsed"
+                                Click="OnExitFullscreenButtonClick"
+                                WindowChrome.IsHitTestVisibleInChrome="True"
+                                Style="{StaticResource MfdWindowButtonStyle}" />
                         <Button Content="?"
                                 Click="OnHelpButtonClick"
                                 WindowChrome.IsHitTestVisibleInChrome="True"
@@ -391,6 +398,7 @@
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Bottom arrows : Increase or decrease label background opacity" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="? : Show this help" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="- : Minimize" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="EXIT / Esc : Leave fullscreen-like maximized mode" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="X : Close" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="" Margin="0,0,0,4" />

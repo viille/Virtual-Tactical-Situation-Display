@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private double _cachedSettingsPanelWidth = 320;
     private bool _isClosing;
     private bool _shutdownCompleted;
+    private bool _fullscreenWarningOpen;
 
     public MainWindow()
     {
@@ -42,6 +43,8 @@ public partial class MainWindow : Window
         ApplyLayoutState(resizeWindow: false);
         Loaded += OnLoaded;
         Closing += OnClosingAsync;
+        StateChanged += OnWindowStateChanged;
+        KeyDown += OnWindowKeyDown;
     }
 
     private static string GetDisplayVersion()
@@ -312,6 +315,64 @@ public partial class MainWindow : Window
     private void OnMinimizeButtonClick(object sender, RoutedEventArgs e)
     {
         WindowState = WindowState.Minimized;
+    }
+
+    private void OnExitFullscreenButtonClick(object sender, RoutedEventArgs e)
+    {
+        ExitFullscreenLikeState();
+    }
+
+    private void OnWindowStateChanged(object? sender, EventArgs e)
+    {
+        var isFullscreenLike = WindowState == WindowState.Maximized;
+        ExitFullscreenButton.Visibility = isFullscreenLike ? Visibility.Visible : Visibility.Collapsed;
+
+        if (isFullscreenLike)
+        {
+            ShowFullscreenWarning();
+        }
+    }
+
+    private void OnWindowKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape || WindowState != WindowState.Maximized)
+        {
+            return;
+        }
+
+        ExitFullscreenLikeState();
+        e.Handled = true;
+    }
+
+    private void ExitFullscreenLikeState()
+    {
+        if (WindowState == WindowState.Maximized)
+        {
+            WindowState = WindowState.Normal;
+        }
+    }
+
+    private void ShowFullscreenWarning()
+    {
+        if (_fullscreenWarningOpen)
+        {
+            return;
+        }
+
+        _fullscreenWarningOpen = true;
+        try
+        {
+            MessageBox.Show(
+                this,
+                "This application is not intended to be used in fullscreen mode.\n\nUse the EXIT button or press Esc to return to windowed mode.",
+                "Fullscreen Not Recommended",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+        }
+        finally
+        {
+            _fullscreenWarningOpen = false;
+        }
     }
 
     private void OnHelpButtonClick(object sender, RoutedEventArgs e)
