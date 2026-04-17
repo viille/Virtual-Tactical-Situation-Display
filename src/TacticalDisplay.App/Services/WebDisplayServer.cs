@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
@@ -14,6 +15,7 @@ namespace TacticalDisplay.App.Services;
 public sealed class WebDisplayServer : IAsyncDisposable
 {
     public const int DefaultPort = 8787;
+    private static readonly TimeSpan CommandDispatchRefreshThreshold = TimeSpan.FromMilliseconds(1500);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -440,80 +442,96 @@ public sealed class WebDisplayServer : IAsyncDisposable
             return new CommandResult(false, "Application is shutting down");
         }
 
+        var stopwatch = Stopwatch.StartNew();
         try
         {
-            return _dispatcher.Invoke(() =>
-            {
-                var normalized = command.Trim().ToLowerInvariant();
-                switch (normalized)
-                {
-                    case "range-up":
-                        _viewModel.IncreaseRangeCommand.Execute(null);
-                        break;
-                    case "range-down":
-                        _viewModel.DecreaseRangeCommand.Execute(null);
-                        break;
-                    case "orientation":
-                        _viewModel.ToggleOrientationCommand.Execute(null);
-                        break;
-                    case "map-opacity-up":
-                        _viewModel.IncreaseMapOpacityCommand.Execute(null);
-                        break;
-                    case "map-opacity-down":
-                        _viewModel.DecreaseMapOpacityCommand.Execute(null);
-                        break;
-                    case "overlay-opacity-up":
-                        _viewModel.IncreaseMapOverlayOpacityCommand.Execute(null);
-                        break;
-                    case "overlay-opacity-down":
-                        _viewModel.DecreaseMapOverlayOpacityCommand.Execute(null);
-                        break;
-                    case "map":
-                        _viewModel.ToggleMapCommand.Execute(null);
-                        break;
-                    case "declutter":
-                        _viewModel.ToggleDeclutterCommand.Execute(null);
-                        break;
-                    case "trails":
-                        _viewModel.ToggleTrailsCommand.Execute(null);
-                        break;
-                    case "bullseye":
-                        _viewModel.ToggleBullseyeCommand.Execute(null);
-                        break;
-                    case "labels":
-                        _viewModel.ToggleLabelsCommand.Execute(null);
-                        break;
-                    case "lara":
-                    case "airspace":
-                        _viewModel.ToggleAirspaceCommand.Execute(null);
-                        break;
-                    case "area":
-                        _viewModel.ToggleControlledAirspaceCommand.Execute(null);
-                        break;
-                    case "target-up":
-                        _viewModel.IncreaseTargetSymbolScaleCommand.Execute(null);
-                        break;
-                    case "target-down":
-                        _viewModel.DecreaseTargetSymbolScaleCommand.Execute(null);
-                        break;
-                    case "pin":
-                        _viewModel.ToggleAlwaysOnTopCommand.Execute(null);
-                        break;
-                    case "settings":
-                        _viewModel.ToggleSettingsCommand.Execute(null);
-                        break;
-                    default:
-                        return new CommandResult(false, $"Unknown command: {command}");
-                }
+            var result = _dispatcher.CheckAccess()
+                ? ExecuteCommandOnUi(command)
+                : _dispatcher.InvokeAsync(() => ExecuteCommandOnUi(command), DispatcherPriority.Send)
+                    .Task
+                    .GetAwaiter()
+                    .GetResult();
 
-                return new CommandResult(true, null);
-            }, DispatcherPriority.Send);
+            stopwatch.Stop();
+            if (result.Ok && stopwatch.Elapsed > CommandDispatchRefreshThreshold)
+            {
+                _viewModel.RequestCommandRefresh($"web-command:{command}", stopwatch.Elapsed);
+            }
+
+            return result;
         }
         catch (Exception ex)
         {
             DataSourceDebugLog.Info("Web", $"Command failed | command={command} error={ex}");
             return new CommandResult(false, ex.Message);
         }
+    }
+
+    private CommandResult ExecuteCommandOnUi(string command)
+    {
+        var normalized = command.Trim().ToLowerInvariant();
+        switch (normalized)
+        {
+            case "range-up":
+                _viewModel.IncreaseRangeCommand.Execute(null);
+                break;
+            case "range-down":
+                _viewModel.DecreaseRangeCommand.Execute(null);
+                break;
+            case "orientation":
+                _viewModel.ToggleOrientationCommand.Execute(null);
+                break;
+            case "map-opacity-up":
+                _viewModel.IncreaseMapOpacityCommand.Execute(null);
+                break;
+            case "map-opacity-down":
+                _viewModel.DecreaseMapOpacityCommand.Execute(null);
+                break;
+            case "overlay-opacity-up":
+                _viewModel.IncreaseMapOverlayOpacityCommand.Execute(null);
+                break;
+            case "overlay-opacity-down":
+                _viewModel.DecreaseMapOverlayOpacityCommand.Execute(null);
+                break;
+            case "map":
+                _viewModel.ToggleMapCommand.Execute(null);
+                break;
+            case "declutter":
+                _viewModel.ToggleDeclutterCommand.Execute(null);
+                break;
+            case "trails":
+                _viewModel.ToggleTrailsCommand.Execute(null);
+                break;
+            case "bullseye":
+                _viewModel.ToggleBullseyeCommand.Execute(null);
+                break;
+            case "labels":
+                _viewModel.ToggleLabelsCommand.Execute(null);
+                break;
+            case "lara":
+            case "airspace":
+                _viewModel.ToggleAirspaceCommand.Execute(null);
+                break;
+            case "area":
+                _viewModel.ToggleControlledAirspaceCommand.Execute(null);
+                break;
+            case "target-up":
+                _viewModel.IncreaseTargetSymbolScaleCommand.Execute(null);
+                break;
+            case "target-down":
+                _viewModel.DecreaseTargetSymbolScaleCommand.Execute(null);
+                break;
+            case "pin":
+                _viewModel.ToggleAlwaysOnTopCommand.Execute(null);
+                break;
+            case "settings":
+                _viewModel.ToggleSettingsCommand.Execute(null);
+                break;
+            default:
+                return new CommandResult(false, $"Unknown command: {command}");
+        }
+
+        return new CommandResult(true, null);
     }
 
     private static IReadOnlyList<string> ResolveLocalUrls(int port)

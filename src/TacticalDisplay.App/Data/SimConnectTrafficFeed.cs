@@ -11,6 +11,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
 {
     private const string NativeSimConnectDllName = "SimConnect.dll";
     private const string LogSource = "MSFS";
+    private static readonly TimeSpan TrafficStallRecoveryThreshold = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan OwnshipFreshThreshold = TimeSpan.FromSeconds(5);
     private readonly TacticalDisplaySettings _settings;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(3);
     private readonly object _stateLock = new();
@@ -20,6 +22,10 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
     private readonly Dictionary<uint, TrafficContactState> _latestTraffic = [];
     private readonly Dictionary<uint, int> _ghostHitCounts = [];
     private readonly HashSet<uint> _suppressedTrafficIds = [];
+    private DateTimeOffset _lastOwnshipSampleAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastTrafficRequestAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastTrafficSampleAt = DateTimeOffset.MinValue;
+    private bool _hasReceivedTrafficThisSession;
 
     public SimConnectTrafficFeed(TacticalDisplaySettings settings)
     {
@@ -109,13 +115,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         try
         {
             DataSourceDebugLog.Info(LogSource, "SimConnect session opened");
+            ResetSessionTrafficState();
             ConfigureDataDefinitions(api, simHandle);
             SetConnected(true);
 
             var pollMs = (int)System.Math.Clamp(1000.0 / System.Math.Max(_settings.PollRateHz, 1), 100, 1000);
             var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(pollMs));
-            var lastTrafficRequestAt = DateTimeOffset.MinValue;
-
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 api.RequestDataOnSimObject(
@@ -130,7 +135,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     0);
 
                 var now = DateTimeOffset.UtcNow;
-                if ((now - lastTrafficRequestAt).TotalMilliseconds >= 500)
+                if ((now - _lastTrafficRequestAt).TotalMilliseconds >= 500)
                 {
                     var radiusMeters = (uint)System.Math.Clamp(_settings.SelectedRangeNm * 1852.0, 18520.0, 222240.0);
                     DataSourceDebugLog.ThrottledDebug(
@@ -144,10 +149,22 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                         (uint)DefinitionId.Traffic,
                         radiusMeters,
                         (uint)SimObjectType.Aircraft);
-                    lastTrafficRequestAt = now;
+                    _lastTrafficRequestAt = now;
                 }
 
-                DrainDispatch(api, simHandle);
+                if (!DrainDispatch(api, simHandle))
+                {
+                    return;
+                }
+
+                if (ShouldRecoverFromTrafficStall(DateTimeOffset.UtcNow))
+                {
+                    DataSourceDebugLog.Warn(
+                        LogSource,
+                        $"Traffic feed stalled while ownship is fresh; recycling SimConnect session | stallSeconds={(DateTimeOffset.UtcNow - _lastTrafficSampleAt).TotalSeconds:0.0}");
+                    return;
+                }
+
                 EmitSnapshot();
             }
         }
@@ -174,7 +191,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "GROUND VELOCITY", "knots", (uint)SimConnectDataType.Float64, 0, 15);
     }
 
-    private void DrainDispatch(NativeSimConnectApi api, IntPtr simHandle)
+    private bool DrainDispatch(NativeSimConnectApi api, IntPtr simHandle)
     {
         while (api.GetNextDispatch(simHandle, out var pData, out var cbData) == 0)
         {
@@ -189,13 +206,15 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 case SimConnectRecvId.Quit:
                     DataSourceDebugLog.Warn(LogSource, "Received SimConnect quit event");
                     SetConnected(false, forceNotify: true);
-                    return;
+                    return false;
                 case SimConnectRecvId.SimobjectData:
                 case SimConnectRecvId.SimobjectDataByType:
                     HandleSimobjectData(pData);
                     break;
             }
         }
+
+        return true;
     }
 
     private void HandleSimobjectData(IntPtr pData)
@@ -210,6 +229,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             var now = DateTimeOffset.UtcNow;
             lock (_stateLock)
             {
+                _lastOwnshipSampleAt = now;
                 _latestOwnship = new OwnshipState(
                     "OWN",
                     ownshipRaw.Latitude,
@@ -235,15 +255,6 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 return;
             }
 
-            lock (_stateLock)
-            {
-                if (_suppressedTrafficIds.Contains(recv.dwObjectID))
-                {
-                    _latestTraffic.Remove(recv.dwObjectID);
-                    return;
-                }
-            }
-
             var trafficRaw = Marshal.PtrToStructure<TrafficRaw>(payloadPtr);
             var now = DateTimeOffset.UtcNow;
             if (IsLikelyOwnshipGhost(trafficRaw))
@@ -265,7 +276,14 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
 
             lock (_stateLock)
             {
+                if (_suppressedTrafficIds.Remove(recv.dwObjectID))
+                {
+                    DataSourceDebugLog.Debug(LogSource, $"Released reused traffic object ID from ownship ghost suppression | objectId={recv.dwObjectID}");
+                }
+
                 _ghostHitCounts.Remove(recv.dwObjectID);
+                _lastTrafficSampleAt = now;
+                _hasReceivedTrafficThisSession = true;
                 _latestTraffic[recv.dwObjectID] = new TrafficContactState(
                     recv.dwObjectID.ToString(),
                     null,
@@ -283,6 +301,59 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 TimeSpan.FromSeconds(3),
                 () => $"Traffic sample | objectId={recv.dwObjectID} lat={trafficRaw.Latitude:F5} lon={trafficRaw.Longitude:F5} altFt={trafficRaw.AltitudeFt:F0} hdg={GeoMath.NormalizeDegrees(trafficRaw.HeadingDeg):F1} spdKt={trafficRaw.SpeedKt:F0}");
         }
+    }
+
+    private void ResetSessionTrafficState()
+    {
+        lock (_stateLock)
+        {
+            _latestOwnship = null;
+            _latestTraffic.Clear();
+            _ghostHitCounts.Clear();
+            _suppressedTrafficIds.Clear();
+            _lastOwnshipSampleAt = DateTimeOffset.MinValue;
+            _lastTrafficRequestAt = DateTimeOffset.MinValue;
+            _lastTrafficSampleAt = DateTimeOffset.MinValue;
+            _hasReceivedTrafficThisSession = false;
+        }
+
+        DataSourceDebugLog.Info(LogSource, "Reset SimConnect session traffic state");
+    }
+
+    private bool ShouldRecoverFromTrafficStall(DateTimeOffset now)
+    {
+        DateTimeOffset lastOwnshipSampleAt;
+        DateTimeOffset lastTrafficRequestAt;
+        DateTimeOffset lastTrafficSampleAt;
+        bool hasReceivedTrafficThisSession;
+
+        lock (_stateLock)
+        {
+            lastOwnshipSampleAt = _lastOwnshipSampleAt;
+            lastTrafficRequestAt = _lastTrafficRequestAt;
+            lastTrafficSampleAt = _lastTrafficSampleAt;
+            hasReceivedTrafficThisSession = _hasReceivedTrafficThisSession;
+        }
+
+        if (!hasReceivedTrafficThisSession)
+        {
+            return false;
+        }
+
+        if (lastOwnshipSampleAt == DateTimeOffset.MinValue ||
+            now - lastOwnshipSampleAt > OwnshipFreshThreshold)
+        {
+            return false;
+        }
+
+        if (lastTrafficRequestAt == DateTimeOffset.MinValue ||
+            now - lastTrafficRequestAt > OwnshipFreshThreshold)
+        {
+            return false;
+        }
+
+        return lastTrafficSampleAt != DateTimeOffset.MinValue &&
+            now - lastTrafficSampleAt > TrafficStallRecoveryThreshold;
     }
 
     private bool IsLikelyOwnshipGhost(TrafficRaw trafficRaw)
@@ -700,7 +771,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         public double SpeedKt;
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Ansi, Pack = 1)]
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct TrafficRaw
     {
         public double Latitude;
@@ -708,9 +779,6 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         public double AltitudeFt;
         public double HeadingDeg;
         public double SpeedKt;
-
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
-        public string Callsign;
     }
 
     private enum SimConnectRecvId : uint

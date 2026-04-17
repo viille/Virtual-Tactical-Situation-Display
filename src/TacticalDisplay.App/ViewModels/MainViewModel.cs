@@ -16,6 +16,8 @@ namespace TacticalDisplay.App.ViewModels;
 
 public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 {
+    private static readonly TimeSpan CommandRefreshThreshold = TimeSpan.FromMilliseconds(1500);
+    private static readonly TimeSpan CommandRefreshThrottle = TimeSpan.FromSeconds(1);
     private readonly JsonConfigStore _configStore;
     private readonly ClassificationConfig _classification;
     private readonly AirspaceDataService _airspaceDataService = new();
@@ -47,6 +49,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private readonly Dictionary<string, ManualTargetMetadata> _manualTargetMetadata;
     private bool _showSimConnectDebugOnFailure;
     private DateTimeOffset? _simConnectCheckingStartedAt;
+    private DateTimeOffset _lastCommandRefreshAt = DateTimeOffset.MinValue;
 
     public MainViewModel()
     {
@@ -64,29 +67,29 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _feed.ConnectionChanged += OnConnectionChanged;
         _feed.SnapshotReceived += OnSnapshotReceived;
 
-        ToggleOrientationCommand = new RelayCommand(ToggleOrientation);
-        IncreaseRangeCommand = new RelayCommand(IncreaseRange);
-        DecreaseRangeCommand = new RelayCommand(DecreaseRange);
-        IncreaseMapOpacityCommand = new RelayCommand(() => AdjustMapOpacity(0.05));
-        DecreaseMapOpacityCommand = new RelayCommand(() => AdjustMapOpacity(-0.05));
-        IncreaseMapOverlayOpacityCommand = new RelayCommand(() => AdjustMapOverlayOpacity(0.05));
-        DecreaseMapOverlayOpacityCommand = new RelayCommand(() => AdjustMapOverlayOpacity(-0.05));
-        IncreaseTargetSymbolScaleCommand = new RelayCommand(() => AdjustTargetSymbolScale(0.1));
-        DecreaseTargetSymbolScaleCommand = new RelayCommand(() => AdjustTargetSymbolScale(-0.1));
-        ToggleDeclutterCommand = new RelayCommand(ToggleDeclutter);
-        ToggleMapCommand = new RelayCommand(ToggleMap);
-        ToggleAirspaceCommand = new RelayCommand(ToggleAirspace);
-        ToggleControlledAirspaceCommand = new RelayCommand(ToggleControlledAirspace);
-        ToggleLabelsCommand = new RelayCommand(ToggleLabels);
-        ToggleTrailsCommand = new RelayCommand(ToggleTrails);
-        ToggleBullseyeCommand = new RelayCommand(ToggleBullseye);
-        ApplyBullseyeCommand = new RelayCommand(ApplyBullseye);
-        ClearBullseyeCommand = new RelayCommand(ClearBullseye);
-        SaveSettingsCommand = new RelayCommand(() => _configStore.SaveDisplaySettings(Settings));
-        ApplyDataSourceCommand = new RelayCommand(ApplyDataSource);
-        ToggleSettingsCommand = new RelayCommand(ToggleSettingsPanel);
-        ToggleAlwaysOnTopCommand = new RelayCommand(ToggleAlwaysOnTop);
-        OpenDebugLogFolderCommand = new RelayCommand(OpenDebugLogFolder);
+        ToggleOrientationCommand = CreateUiCommand(nameof(ToggleOrientationCommand), ToggleOrientation);
+        IncreaseRangeCommand = CreateUiCommand(nameof(IncreaseRangeCommand), IncreaseRange);
+        DecreaseRangeCommand = CreateUiCommand(nameof(DecreaseRangeCommand), DecreaseRange);
+        IncreaseMapOpacityCommand = CreateUiCommand(nameof(IncreaseMapOpacityCommand), () => AdjustMapOpacity(0.05));
+        DecreaseMapOpacityCommand = CreateUiCommand(nameof(DecreaseMapOpacityCommand), () => AdjustMapOpacity(-0.05));
+        IncreaseMapOverlayOpacityCommand = CreateUiCommand(nameof(IncreaseMapOverlayOpacityCommand), () => AdjustMapOverlayOpacity(0.05));
+        DecreaseMapOverlayOpacityCommand = CreateUiCommand(nameof(DecreaseMapOverlayOpacityCommand), () => AdjustMapOverlayOpacity(-0.05));
+        IncreaseTargetSymbolScaleCommand = CreateUiCommand(nameof(IncreaseTargetSymbolScaleCommand), () => AdjustTargetSymbolScale(0.1));
+        DecreaseTargetSymbolScaleCommand = CreateUiCommand(nameof(DecreaseTargetSymbolScaleCommand), () => AdjustTargetSymbolScale(-0.1));
+        ToggleDeclutterCommand = CreateUiCommand(nameof(ToggleDeclutterCommand), ToggleDeclutter);
+        ToggleMapCommand = CreateUiCommand(nameof(ToggleMapCommand), ToggleMap);
+        ToggleAirspaceCommand = CreateUiCommand(nameof(ToggleAirspaceCommand), ToggleAirspace);
+        ToggleControlledAirspaceCommand = CreateUiCommand(nameof(ToggleControlledAirspaceCommand), ToggleControlledAirspace);
+        ToggleLabelsCommand = CreateUiCommand(nameof(ToggleLabelsCommand), ToggleLabels);
+        ToggleTrailsCommand = CreateUiCommand(nameof(ToggleTrailsCommand), ToggleTrails);
+        ToggleBullseyeCommand = CreateUiCommand(nameof(ToggleBullseyeCommand), ToggleBullseye);
+        ApplyBullseyeCommand = CreateUiCommand(nameof(ApplyBullseyeCommand), ApplyBullseye);
+        ClearBullseyeCommand = CreateUiCommand(nameof(ClearBullseyeCommand), ClearBullseye);
+        SaveSettingsCommand = CreateUiCommand(nameof(SaveSettingsCommand), () => _configStore.SaveDisplaySettings(Settings));
+        ApplyDataSourceCommand = CreateUiCommand(nameof(ApplyDataSourceCommand), ApplyDataSource);
+        ToggleSettingsCommand = CreateUiCommand(nameof(ToggleSettingsCommand), ToggleSettingsPanel);
+        ToggleAlwaysOnTopCommand = CreateUiCommand(nameof(ToggleAlwaysOnTopCommand), ToggleAlwaysOnTop);
+        OpenDebugLogFolderCommand = CreateUiCommand(nameof(OpenDebugLogFolderCommand), OpenDebugLogFolder);
 
         _renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000.0 / Settings.RenderRateFps) };
         _renderTimer.Tick += (_, _) =>
@@ -395,6 +398,26 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string HeaderText =>
         $"{(Settings.OrientationMode == ScopeOrientationMode.NorthUp ? "N-UP" : "HDG-UP")}  |  RANGE {Settings.SelectedRangeNm} NM";
 
+    public void RequestCommandRefresh(string reason, TimeSpan elapsed)
+    {
+        if (!Application.Current.Dispatcher.CheckAccess())
+        {
+            Application.Current.Dispatcher.BeginInvoke(() => RequestCommandRefresh(reason, elapsed));
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastCommandRefreshAt < CommandRefreshThrottle)
+        {
+            return;
+        }
+
+        _lastCommandRefreshAt = now;
+        DataSourceDebugLog.Warn("App", $"Command response was slow; refreshing display state | reason={reason} elapsedMs={elapsed.TotalMilliseconds:0}");
+        RefreshPicture();
+        RaiseCommandStateProperties();
+    }
+
     public async ValueTask DisposeAsync()
     {
         DataSourceDebugLog.Info("App", "Application shutdown");
@@ -496,6 +519,33 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Settings.ShowAirspaceBoundaries = !Settings.ShowAirspaceBoundaries;
         Raise(nameof(LaraToggleText));
         Raise(nameof(Settings));
+    }
+
+    private RelayCommand CreateUiCommand(string name, Action execute) =>
+        new(() =>
+        {
+            var startedAt = DateTimeOffset.UtcNow;
+            execute();
+            var elapsed = DateTimeOffset.UtcNow - startedAt;
+            if (elapsed > CommandRefreshThreshold)
+            {
+                RequestCommandRefresh(name, elapsed);
+            }
+        });
+
+    private void RaiseCommandStateProperties()
+    {
+        Raise(nameof(HeaderText));
+        Raise(nameof(Settings));
+        Raise(nameof(SimulatorFooterText));
+        Raise(nameof(DeclutterToggleText));
+        Raise(nameof(MapToggleText));
+        Raise(nameof(LaraToggleText));
+        Raise(nameof(ControlledAirspaceToggleText));
+        Raise(nameof(TrailsToggleText));
+        Raise(nameof(SettingsToggleText));
+        Raise(nameof(TopMostToggleText));
+        Raise(nameof(WebServerToggleText));
     }
 
     private void ToggleControlledAirspace()
