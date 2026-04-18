@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Windows;
@@ -24,7 +23,8 @@ public partial class OpenFreeMapControl : UserControl
 
     private bool _webViewReady;
     private bool _initializing;
-    private string? _pendingScript;
+    private string? _pendingMapStateJson;
+    private bool _mapStateInFlight;
 
     public static readonly DependencyProperty PictureProperty = DependencyProperty.Register(
         nameof(Picture),
@@ -82,6 +82,7 @@ public partial class OpenFreeMapControl : UserControl
             await MapWebView.EnsureCoreWebView2Async(environment);
             MapWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             MapWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
+            MapWebView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
             MapWebView.NavigateToString(CreateMapHtml());
         }
         catch (WebView2RuntimeNotFoundException ex)
@@ -103,10 +104,16 @@ public partial class OpenFreeMapControl : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        _pendingScript = null;
+        if (MapWebView.CoreWebView2 is not null)
+        {
+            MapWebView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
+        }
+
+        _pendingMapStateJson = null;
+        _mapStateInFlight = false;
     }
 
-    private async void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
+    private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
         _webViewReady = e.IsSuccess;
         StatusText.Visibility = e.IsSuccess ? Visibility.Collapsed : Visibility.Visible;
@@ -117,12 +124,7 @@ public partial class OpenFreeMapControl : UserControl
         }
 
         UpdateMapState();
-        if (_pendingScript is not null)
-        {
-            var script = _pendingScript;
-            _pendingScript = null;
-            await ExecuteMapScriptAsync(script);
-        }
+        SendPendingMapState();
     }
 
     private void UpdateMapState()
@@ -149,38 +151,58 @@ public partial class OpenFreeMapControl : UserControl
             MapboxDefaults.ResolveDisplayStyleUrl(settings.ShowControlledAirspaceLayer),
             string.Empty,
             settings.ShowControlledAirspaceLayer);
+
         var json = JsonSerializer.Serialize(state, JsonOptions);
-        var script = $"window.updateTacticalMap && window.updateTacticalMap({json});";
-
-        if (!_webViewReady)
-        {
-            _pendingScript = script;
-            return;
-        }
-
-        _ = ExecuteMapScriptAsync(script);
+        QueueMapState(json);
     }
 
-    private async Task ExecuteMapScriptAsync(string script)
+    private void QueueMapState(string json)
     {
-        if (MapWebView.CoreWebView2 is null)
+        _pendingMapStateJson = json;
+        if (_webViewReady && !_mapStateInFlight)
         {
-            _pendingScript = script;
+            SendPendingMapState();
+        }
+    }
+
+    private void SendPendingMapState()
+    {
+        if (!_webViewReady ||
+            _mapStateInFlight ||
+            MapWebView.CoreWebView2 is null ||
+            _pendingMapStateJson is null)
+        {
             return;
         }
 
+        var json = _pendingMapStateJson;
+        _pendingMapStateJson = null;
+        _mapStateInFlight = true;
         try
         {
-            await MapWebView.CoreWebView2.ExecuteScriptAsync(script);
+            MapWebView.CoreWebView2.PostWebMessageAsJson(json);
         }
         catch (InvalidOperationException)
         {
-            _pendingScript = script;
+            _pendingMapStateJson ??= json;
+            _mapStateInFlight = false;
         }
-        catch (COMException)
+        catch (ArgumentException)
         {
-            _pendingScript = script;
+            _pendingMapStateJson ??= json;
+            _mapStateInFlight = false;
         }
+    }
+
+    private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
+    {
+        if (!string.Equals(e.TryGetWebMessageAsString(), "map-state-applied", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _mapStateInFlight = false;
+        SendPendingMapState();
     }
 
     private static string CreateMapHtml() =>
@@ -414,6 +436,16 @@ public partial class OpenFreeMapControl : UserControl
               });
               updateAreasOverlay(state);
             };
+
+            if (window.chrome?.webview) {
+              window.chrome.webview.addEventListener('message', event => {
+                try {
+                  window.updateTacticalMap(event.data);
+                } finally {
+                  window.chrome.webview.postMessage('map-state-applied');
+                }
+              });
+            }
           </script>
         </body>
         </html>

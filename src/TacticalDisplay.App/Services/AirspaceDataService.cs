@@ -1,12 +1,17 @@
 using System.Globalization;
+using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using TacticalDisplay.Core.Models;
 
 namespace TacticalDisplay.App.Services;
 
-public sealed class AirspaceDataService
+public sealed class AirspaceDataService : IDisposable
 {
+    private static readonly TimeSpan StaticAirspaceCacheMaxAge = TimeSpan.FromHours(24);
+
     private readonly HttpClient _httpClient = new()
     {
         Timeout = TimeSpan.FromSeconds(10)
@@ -21,11 +26,65 @@ public sealed class AirspaceDataService
         var url = $"{baseUrl}/{firCode}.geojson";
         var activeAirspaces = await LoadActiveAirspacesAsync(settings, cancellationToken);
 
-        using var response = await _httpClient.GetAsync(url, cancellationToken);
-        response.EnsureSuccessStatusCode();
-        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
-        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        using var document = await LoadStaticAirspaceDocumentAsync(url, firCode, cancellationToken);
         return ParseGeoJson(document.RootElement, activeAirspaces);
+    }
+
+    private async Task<JsonDocument> LoadStaticAirspaceDocumentAsync(
+        string url,
+        string firCode,
+        CancellationToken cancellationToken)
+    {
+        var cachePath = ResolveStaticAirspaceCachePath(url, firCode);
+        if (IsFreshCache(cachePath, StaticAirspaceCacheMaxAge))
+        {
+            return await ReadJsonDocumentFromFileAsync(cachePath, cancellationToken);
+        }
+
+        var tempPath = $"{cachePath}.tmp";
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(cachePath)!);
+            using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            await using (var source = await response.Content.ReadAsStreamAsync(cancellationToken))
+            await using (var target = File.Create(tempPath))
+            {
+                await source.CopyToAsync(target, cancellationToken);
+            }
+
+            File.Move(tempPath, cachePath, overwrite: true);
+        }
+        catch
+        {
+            if (File.Exists(tempPath))
+            {
+                File.Delete(tempPath);
+            }
+
+            if (!File.Exists(cachePath))
+            {
+                throw;
+            }
+        }
+
+        return await ReadJsonDocumentFromFileAsync(cachePath, cancellationToken);
+    }
+
+    private static async Task<JsonDocument> ReadJsonDocumentFromFileAsync(string path, CancellationToken cancellationToken)
+    {
+        await using var stream = File.OpenRead(path);
+        return await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+    }
+
+    private static bool IsFreshCache(string path, TimeSpan maxAge) =>
+        File.Exists(path) &&
+        DateTimeOffset.UtcNow - File.GetLastWriteTimeUtc(path) < maxAge;
+
+    private static string ResolveStaticAirspaceCachePath(string url, string firCode)
+    {
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(url)))[..16].ToLowerInvariant();
+        return Path.Combine(AppDataPaths.AirspaceCacheDirectory, $"{firCode}-{hash}.geojson");
     }
 
     private async Task<Dictionary<string, AirspaceActivation>> LoadActiveAirspacesAsync(TacticalDisplaySettings settings, CancellationToken cancellationToken)
@@ -272,6 +331,8 @@ public sealed class AirspaceDataService
     }
 
     private static int? FlightLevelToAltitudeFt(int? flightLevel) => flightLevel * 100;
+
+    public void Dispose() => _httpClient.Dispose();
 
     private sealed record AirspaceActivation(
         int? LowerAltitudeFt,

@@ -17,6 +17,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(3);
     private readonly object _stateLock = new();
     private CancellationTokenSource? _loopCts;
+    private Task? _loopTask;
     private bool _isRunning;
     private OwnshipState? _latestOwnship;
     private readonly Dictionary<uint, TrafficContactState> _latestTraffic = [];
@@ -46,17 +47,32 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         DataSourceDebugLog.Info(LogSource, $"Start requested | pollRateHz={_settings.PollRateHz:0.##} rangeNm={_settings.SelectedRangeNm}");
         _isRunning = true;
         _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _ = Task.Run(() => RunAsync(_loopCts.Token), CancellationToken.None);
+        _loopTask = Task.Run(() => RunAsync(_loopCts.Token), CancellationToken.None);
         return Task.CompletedTask;
     }
 
-    public Task StopAsync()
+    public async Task StopAsync()
     {
         DataSourceDebugLog.Info(LogSource, "Stop requested");
         _isRunning = false;
-        _loopCts?.Cancel();
+        var loopCts = _loopCts;
+        var loopTask = _loopTask;
+        loopCts?.Cancel();
+        _loopCts = null;
+        _loopTask = null;
+        if (loopTask is not null)
+        {
+            try
+            {
+                await loopTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        loopCts?.Dispose();
         SetConnected(false);
-        return Task.CompletedTask;
     }
 
     public async ValueTask DisposeAsync() => await StopAsync();
@@ -120,7 +136,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             SetConnected(true);
 
             var pollMs = (int)System.Math.Clamp(1000.0 / System.Math.Max(_settings.PollRateHz, 1), 100, 1000);
-            var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(pollMs));
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(pollMs));
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
                 api.RequestDataOnSimObject(

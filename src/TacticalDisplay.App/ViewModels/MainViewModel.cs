@@ -433,6 +433,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         {
             _configStore.SaveDisplaySettings(Settings);
             _configStore.SaveManualTargetMetadata(_manualTargetMetadata);
+            _airspaceDataService.Dispose();
             _runCts.Dispose();
         }
     }

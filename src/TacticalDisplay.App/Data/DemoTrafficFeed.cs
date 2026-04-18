@@ -7,6 +7,7 @@ public sealed class DemoTrafficFeed : ITrafficDataFeed
 {
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _loopCts;
+    private Task? _loopTask;
     private DateTimeOffset _lastUpdate = DateTimeOffset.UtcNow;
     private OwnshipTrack _ownship = new(60.3172, 24.9633, 23000, 045, 380);
     private readonly List<ContactTrack> _contacts =
@@ -32,25 +33,42 @@ public sealed class DemoTrafficFeed : ITrafficDataFeed
         _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _lastUpdate = DateTimeOffset.UtcNow;
         _timer = new PeriodicTimer(TimeSpan.FromMilliseconds(200));
-        _ = Task.Run(() => LoopAsync(_loopCts.Token), CancellationToken.None);
+        _loopTask = Task.Run(() => LoopAsync(_loopCts.Token), CancellationToken.None);
         IsConnected = true;
         ConnectionChanged?.Invoke(this, true);
         return Task.CompletedTask;
     }
 
-    public Task StopAsync()
+    public async Task StopAsync()
     {
-        _loopCts?.Cancel();
+        var loopCts = _loopCts;
+        var loopTask = _loopTask;
+        loopCts?.Cancel();
         _timer?.Dispose();
         _loopCts = null;
         _timer = null;
+        _loopTask = null;
+        if (loopTask is not null)
+        {
+            try
+            {
+                await loopTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+            catch (ObjectDisposedException)
+            {
+            }
+        }
+
+        loopCts?.Dispose();
+
         if (IsConnected)
         {
             IsConnected = false;
             ConnectionChanged?.Invoke(this, false);
         }
-
-        return Task.CompletedTask;
     }
 
     public async ValueTask DisposeAsync()

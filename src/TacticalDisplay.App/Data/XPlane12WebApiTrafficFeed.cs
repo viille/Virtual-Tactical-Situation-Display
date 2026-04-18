@@ -46,6 +46,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     private readonly HttpClient _httpClient;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(3);
     private CancellationTokenSource? _loopCts;
+    private Task? _loopTask;
     private bool _isRunning;
     private bool _isConnected;
     private string _apiVersion = "v1";
@@ -77,17 +78,32 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         DataSourceDebugLog.Info(LogSource, $"Start requested | apiBaseUrl={GetBaseUri()} pollRateHz={_settings.PollRateHz:0.##}");
         _isRunning = true;
         _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        _ = Task.Run(() => RunAsync(_loopCts.Token), CancellationToken.None);
+        _loopTask = Task.Run(() => RunAsync(_loopCts.Token), CancellationToken.None);
         return Task.CompletedTask;
     }
 
-    public Task StopAsync()
+    public async Task StopAsync()
     {
         DataSourceDebugLog.Info(LogSource, "Stop requested");
         _isRunning = false;
-        _loopCts?.Cancel();
+        var loopCts = _loopCts;
+        var loopTask = _loopTask;
+        loopCts?.Cancel();
+        _loopCts = null;
+        _loopTask = null;
+        if (loopTask is not null)
+        {
+            try
+            {
+                await loopTask;
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }
+
+        loopCts?.Dispose();
         SetConnected(false);
-        return Task.CompletedTask;
     }
 
     public async ValueTask DisposeAsync()

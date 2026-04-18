@@ -8,6 +8,8 @@ public static class AppDataPaths
 
     public static string ApplicationDataDirectory => Path.Combine(GetRoamingAppDataDirectory(), ApplicationDirectoryName);
     public static string WebViewUserDataDirectory => Path.Combine(ApplicationDataDirectory, "WebView2");
+    public static string CacheDirectory => Path.Combine(ApplicationDataDirectory, "cache");
+    public static string AirspaceCacheDirectory => Path.Combine(CacheDirectory, "airspace");
     public static string DataSourceDebugLogFilePath => Path.Combine(ApplicationDataDirectory, "logs", "debug.log");
 
     public static void MigrateLegacyConfigIfNeeded()

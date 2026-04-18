@@ -86,11 +86,12 @@ public sealed class TacticalScopeControl : FrameworkElement
 
         var center = new Point(RenderSize.Width / 2.0, RenderSize.Height / 2.0);
         var radius = System.Math.Min(RenderSize.Width, RenderSize.Height) * 0.45;
-        DrawRings(dc, center, radius, Picture.Ownship.HeadingDeg);
-        DrawOptionalOverlay(() => DrawAirspaces(dc, center, radius));
-        DrawOptionalOverlay(() => DrawBullseye(dc, center, radius));
-        DrawOwnship(dc, center, radius, Picture.Ownship.HeadingDeg);
-        DrawTargets(dc, center, radius);
+        var ownshipHeadingDeg = Picture.Ownship.HeadingDeg;
+        DrawRings(dc, center, radius, ownshipHeadingDeg);
+        DrawOptionalOverlay(() => DrawAirspaces(dc, center, radius, ownshipHeadingDeg));
+        DrawOptionalOverlay(() => DrawBullseye(dc, center, radius, ownshipHeadingDeg));
+        DrawOwnship(dc, center, radius, ownshipHeadingDeg);
+        DrawTargets(dc, center, radius, ownshipHeadingDeg);
     }
 
     private static void DrawOptionalOverlay(Action draw)
@@ -206,7 +207,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         dc.Pop();
     }
 
-    private void DrawAirspaces(DrawingContext dc, Point center, double radius)
+    private void DrawAirspaces(DrawingContext dc, Point center, double radius, double ownshipHeadingDeg)
     {
         if (Picture is null ||
             Settings is null ||
@@ -234,7 +235,7 @@ public sealed class TacticalScopeControl : FrameworkElement
 
                 foreach (var polygon in airspace.Polygons)
                 {
-                    var projected = ProjectAirspacePolygon(polygon, center, radius);
+                    var projected = ProjectAirspacePolygon(polygon, center, radius, ownshipHeadingDeg);
                     if (projected.Count < 2 || !IntersectsViewport(projected))
                     {
                         continue;
@@ -246,7 +247,7 @@ public sealed class TacticalScopeControl : FrameworkElement
 
                 if (airspace.IsActive && !string.IsNullOrWhiteSpace(airspace.Name))
                 {
-                    DrawAirspaceLabel(dc, airspace, center, radius, opacity);
+                    DrawAirspaceLabel(dc, airspace, center, radius, opacity, ownshipHeadingDeg);
                 }
             }
         }
@@ -256,7 +257,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         }
     }
 
-    private IReadOnlyList<Point> ProjectAirspacePolygon(AirspacePolygon polygon, Point center, double radius)
+    private IReadOnlyList<Point> ProjectAirspacePolygon(AirspacePolygon polygon, Point center, double radius, double ownshipHeadingDeg)
     {
         if (Picture is null || Settings is null)
         {
@@ -275,7 +276,7 @@ public sealed class TacticalScopeControl : FrameworkElement
                 coordinate.LatitudeDeg,
                 coordinate.LongitudeDeg,
                 Settings.SelectedRangeNm,
-                Picture.Ownship.HeadingDeg,
+                ownshipHeadingDeg,
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
                 clampToRange: false);
             if (!IsDrawableOverlayPoint(point.x, point.y))
@@ -325,7 +326,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         Math.Abs(x) <= MaxOverlayCoordinate &&
         Math.Abs(y) <= MaxOverlayCoordinate;
 
-    private void DrawAirspaceLabel(DrawingContext dc, AirspaceArea airspace, Point center, double radius, double opacity)
+    private void DrawAirspaceLabel(DrawingContext dc, AirspaceArea airspace, Point center, double radius, double opacity, double ownshipHeadingDeg)
     {
         if (Picture is null || Settings is null)
         {
@@ -355,7 +356,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             latitude,
             longitude,
             Settings.SelectedRangeNm,
-            Picture.Ownship.HeadingDeg,
+            ownshipHeadingDeg,
             Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
         DrawCenteredText(dc, BuildAirspaceLabelText(airspace), point.x, point.y, WithScaledAlpha(255, 247, 200, 115, opacity), 11, FontWeights.SemiBold);
     }
@@ -379,7 +380,7 @@ public sealed class TacticalScopeControl : FrameworkElement
     private static Color WithScaledAlpha(byte alpha, byte red, byte green, byte blue, double opacity) =>
         Color.FromArgb((byte)Math.Clamp(alpha * opacity, 0, 255), red, green, blue);
 
-    private void DrawBullseye(DrawingContext dc, Point center, double radius)
+    private void DrawBullseye(DrawingContext dc, Point center, double radius, double ownshipHeadingDeg)
     {
         if (Picture is null ||
             Settings is null ||
@@ -414,7 +415,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             Settings.BullseyeLatitudeDeg.Value,
             Settings.BullseyeLongitudeDeg.Value,
             Settings.SelectedRangeNm,
-            Picture.Ownship.HeadingDeg,
+            ownshipHeadingDeg,
             Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
         var p = new Point(point.x, point.y);
         if (!new Rect(0, 0, RenderSize.Width, RenderSize.Height).Contains(p))
@@ -430,7 +431,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         DrawText(dc, $"BULL {bearing:000}/{range:0.0}", p.X + 12, p.Y + 8, Color.FromRgb(247, 200, 115), 11, FontWeights.SemiBold);
     }
 
-    private void DrawTargets(DrawingContext dc, Point center, double radius)
+    private void DrawTargets(DrawingContext dc, Point center, double radius, double ownshipHeadingDeg)
     {
         if (Picture is null || Settings is null)
         {
@@ -461,12 +462,12 @@ public sealed class TacticalScopeControl : FrameworkElement
                 target.RangeNm,
                 target.BearingDegTrue,
                 Settings.SelectedRangeNm,
-                Picture.Ownship.HeadingDeg,
+                ownshipHeadingDeg,
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
 
             if (Settings.TrailsEnabled && !Settings.Declutter)
             {
-                DrawTrail(dc, target, center, radius);
+                DrawTrail(dc, target, center, radius, ownshipHeadingDeg);
             }
 
             var projectedPoint = new Point(projected.x, projected.y);
@@ -474,7 +475,7 @@ public sealed class TacticalScopeControl : FrameworkElement
                 dc,
                 projectedPoint,
                 target,
-                Picture.Ownship.HeadingDeg,
+                ownshipHeadingDeg,
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
                 Settings.TargetSymbolScale);
             _hitTargets.Add((target.Id, projectedPoint));
@@ -486,7 +487,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         }
     }
 
-    private void DrawTrail(DrawingContext dc, ComputedTarget target, Point center, double radius)
+    private void DrawTrail(DrawingContext dc, ComputedTarget target, Point center, double radius, double ownshipHeadingDeg)
     {
         if (Picture is null || Settings is null || target.History.Count < 2)
         {
@@ -508,7 +509,7 @@ public sealed class TacticalScopeControl : FrameworkElement
                 point.LatitudeDeg,
                 point.LongitudeDeg,
                 Settings.SelectedRangeNm,
-                Picture.Ownship.HeadingDeg,
+                ownshipHeadingDeg,
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
                 clampToRange: false);
             var current = new Point(projection.x, projection.y);
