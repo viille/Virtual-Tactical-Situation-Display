@@ -149,17 +149,33 @@ public partial class MainWindow : Window
 
                 try
                 {
-                    if (await _updateCheckService.DownloadAndStartUpdateAsync(result, CancellationToken.None))
+                    var progressWindow = new UpdateProgressWindow
+                    {
+                        Owner = this
+                    };
+                    var progress = new Progress<UpdateProgress>(progressWindow.Update);
+                    progressWindow.Show();
+                    if (await _updateCheckService.DownloadAndStartUpdateAsync(result, progress, CancellationToken.None))
                     {
                         Close();
                     }
                     else
                     {
+                        progressWindow.Close();
                         UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
                     }
                 }
                 catch
                 {
+                    foreach (Window window in OwnedWindows)
+                    {
+                        if (window is UpdateProgressWindow)
+                        {
+                            window.Close();
+                            break;
+                        }
+                    }
+
                     UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
                 }
             }

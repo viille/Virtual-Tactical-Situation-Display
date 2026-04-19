@@ -65,13 +65,17 @@ public sealed class UpdateCheckService
             releaseNotes);
     }
 
-    public async Task<bool> DownloadAndStartUpdateAsync(UpdateCheckResult result, CancellationToken cancellationToken)
+    public async Task<bool> DownloadAndStartUpdateAsync(
+        UpdateCheckResult result,
+        IProgress<UpdateProgress>? progress,
+        CancellationToken cancellationToken)
     {
         if (result.AssetDownloadUri is null)
         {
             return false;
         }
 
+        progress?.Report(new UpdateProgress("Preparing update...", null));
         var currentExePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
         if (string.IsNullOrWhiteSpace(currentExePath) || !File.Exists(currentExePath))
         {
@@ -89,12 +93,14 @@ public sealed class UpdateCheckService
         var newExePath = Path.Combine(updateDirectory, AppAssetName);
         var updaterExePath = Path.Combine(updateDirectory, "TacticalDisplay.Updater.exe");
 
-        await DownloadFileAsync(result.AssetDownloadUri, newExePath, cancellationToken);
+        await DownloadFileAsync(result.AssetDownloadUri, newExePath, progress, cancellationToken);
+        progress?.Report(new UpdateProgress("Preparing installer...", null));
         if (!TryExtractUpdater(updaterExePath))
         {
             return false;
         }
 
+        progress?.Report(new UpdateProgress("Installing update and restarting...", null));
         Process.Start(new ProcessStartInfo
         {
             FileName = updaterExePath,
@@ -108,6 +114,9 @@ public sealed class UpdateCheckService
 
         return true;
     }
+
+    public Task<bool> DownloadAndStartUpdateAsync(UpdateCheckResult result, CancellationToken cancellationToken) =>
+        DownloadAndStartUpdateAsync(result, null, cancellationToken);
 
     public static void OpenReleasesPage(Uri releaseUri)
     {
@@ -177,7 +186,11 @@ public sealed class UpdateCheckService
         return null;
     }
 
-    private static async Task DownloadFileAsync(Uri uri, string targetPath, CancellationToken cancellationToken)
+    private static async Task DownloadFileAsync(
+        Uri uri,
+        string targetPath,
+        IProgress<UpdateProgress>? progress,
+        CancellationToken cancellationToken)
     {
         using var client = new HttpClient
         {
@@ -187,9 +200,22 @@ public sealed class UpdateCheckService
         using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
+        var contentLength = response.Content.Headers.ContentLength;
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
         await using var target = File.Create(targetPath);
-        await source.CopyToAsync(target, cancellationToken);
+        var buffer = new byte[128 * 1024];
+        long totalRead = 0;
+        int read;
+        progress?.Report(new UpdateProgress("Downloading update...", contentLength.HasValue ? 0 : null));
+        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            totalRead += read;
+            var percent = contentLength.HasValue && contentLength.Value > 0
+                ? Math.Clamp(totalRead * 100.0 / contentLength.Value, 0, 100)
+                : (double?)null;
+            progress?.Report(new UpdateProgress("Downloading update...", percent));
+        }
     }
 
     private static bool TryExtractUpdater(string targetPath)
@@ -222,6 +248,8 @@ public sealed record UpdateCheckResult(
     Uri ReleaseUri,
     Uri? AssetDownloadUri,
     string? ReleaseNotes);
+
+public sealed record UpdateProgress(string Message, double? Percent);
 
 internal static class ProcessStartInfoExtensions
 {

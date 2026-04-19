@@ -1,7 +1,14 @@
 using System.Diagnostics;
+using System.Drawing;
+using System.Windows.Forms;
 
 const int maxAttempts = 60;
 const int delayMs = 500;
+Application.EnableVisualStyles();
+Application.SetCompatibleTextRenderingDefault(false);
+using var statusWindow = new UpdateStatusWindow();
+statusWindow.Show();
+Application.DoEvents();
 
 try
 {
@@ -34,10 +41,12 @@ try
         targetDirectory,
         $"{Path.GetFileNameWithoutExtension(targetExePath)}.update{Path.GetExtension(targetExePath)}");
 
+    statusWindow.SetStatus("Waiting for app to close...");
     for (var attempt = 0; attempt < maxAttempts; attempt++)
     {
         try
         {
+            statusWindow.SetStatus($"Installing update... ({attempt + 1}/{maxAttempts})");
             if (File.Exists(stagedExePath))
             {
                 File.Delete(stagedExePath);
@@ -53,6 +62,7 @@ try
             File.Move(targetExePath, backupExePath);
             File.Move(stagedExePath, targetExePath);
 
+            statusWindow.SetStatus("Starting updated app...");
             StartUpdatedApp(targetExePath);
             TryDelete(sourceExePath);
             TryDelete(stagedExePath);
@@ -67,10 +77,14 @@ try
         }
     }
 
+    statusWindow.SetStatus("Update failed.");
+    Thread.Sleep(2500);
     return 5;
 }
 catch
 {
+    statusWindow.SetStatus("Update failed.");
+    Thread.Sleep(2500);
     return 1;
 }
 
@@ -122,5 +136,68 @@ static void TryDelete(string path)
     }
     catch
     {
+    }
+}
+
+internal sealed class UpdateStatusWindow : Form
+{
+    private readonly Label _statusLabel = new()
+    {
+        AutoSize = false,
+        Dock = DockStyle.Top,
+        Height = 44,
+        TextAlign = ContentAlignment.MiddleLeft,
+        ForeColor = Color.FromArgb(217, 242, 236),
+        Font = new Font("Consolas", 10, FontStyle.Regular)
+    };
+
+    private readonly ProgressBar _progress = new()
+    {
+        Dock = DockStyle.Top,
+        Height = 18,
+        Style = ProgressBarStyle.Marquee,
+        MarqueeAnimationSpeed = 25
+    };
+
+    public UpdateStatusWindow()
+    {
+        Text = "Updating Tactical Display";
+        Width = 420;
+        Height = 145;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        StartPosition = FormStartPosition.CenterScreen;
+        BackColor = Color.FromArgb(7, 16, 21);
+        ShowInTaskbar = true;
+
+        var panel = new Panel
+        {
+            Dock = DockStyle.Fill,
+            Padding = new Padding(14),
+            BackColor = Color.FromArgb(16, 32, 40)
+        };
+        var title = new Label
+        {
+            AutoSize = false,
+            Dock = DockStyle.Top,
+            Height = 28,
+            Text = "Installing update",
+            TextAlign = ContentAlignment.MiddleLeft,
+            ForeColor = Color.FromArgb(154, 250, 215),
+            Font = new Font("Consolas", 12, FontStyle.Bold)
+        };
+
+        panel.Controls.Add(_progress);
+        panel.Controls.Add(_statusLabel);
+        panel.Controls.Add(title);
+        Controls.Add(panel);
+        SetStatus("Preparing update...");
+    }
+
+    public void SetStatus(string text)
+    {
+        _statusLabel.Text = text;
+        Application.DoEvents();
     }
 }
