@@ -46,6 +46,24 @@ public sealed class TacticalScopeControl : FrameworkElement
         typeof(TacticalScopeControl),
         new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty InterceptTargetIdProperty = DependencyProperty.Register(
+        nameof(InterceptTargetId),
+        typeof(string),
+        typeof(TacticalScopeControl),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    public static readonly DependencyProperty InterceptSelectionArmedProperty = DependencyProperty.Register(
+        nameof(InterceptSelectionArmed),
+        typeof(bool),
+        typeof(TacticalScopeControl),
+        new FrameworkPropertyMetadata(false));
+
+    public static readonly DependencyProperty TargetLabelBackgroundOpacityProperty = DependencyProperty.Register(
+        nameof(TargetLabelBackgroundOpacity),
+        typeof(double),
+        typeof(TacticalScopeControl),
+        new FrameworkPropertyMetadata(0.75, FrameworkPropertyMetadataOptions.AffectsRender));
+
     public TacticalPicture? Picture
     {
         get => (TacticalPicture?)GetValue(PictureProperty);
@@ -70,6 +88,24 @@ public sealed class TacticalScopeControl : FrameworkElement
         set => SetValue(AirspacesProperty, value);
     }
 
+    public string? InterceptTargetId
+    {
+        get => (string?)GetValue(InterceptTargetIdProperty);
+        set => SetValue(InterceptTargetIdProperty, value);
+    }
+
+    public bool InterceptSelectionArmed
+    {
+        get => (bool)GetValue(InterceptSelectionArmedProperty);
+        set => SetValue(InterceptSelectionArmedProperty, value);
+    }
+
+    public double TargetLabelBackgroundOpacity
+    {
+        get => (double)GetValue(TargetLabelBackgroundOpacityProperty);
+        set => SetValue(TargetLabelBackgroundOpacityProperty, value);
+    }
+
     public event EventHandler<ScopeTargetClickEventArgs>? TargetClicked;
     public event EventHandler<ScopeLabelMovedEventArgs>? LabelMoved;
 
@@ -87,10 +123,13 @@ public sealed class TacticalScopeControl : FrameworkElement
         var center = new Point(RenderSize.Width / 2.0, RenderSize.Height / 2.0);
         var radius = System.Math.Min(RenderSize.Width, RenderSize.Height) * 0.45;
         var ownshipHeadingDeg = Picture.Ownship.HeadingDeg;
-        DrawRings(dc, center, radius, ownshipHeadingDeg);
+        DrawRings(dc, center, radius);
+        DrawFrameCompass(dc, center, ownshipHeadingDeg);
+        DrawHeadingReadout(dc, center, ownshipHeadingDeg);
         DrawOptionalOverlay(() => DrawAirspaces(dc, center, radius, ownshipHeadingDeg));
         DrawOptionalOverlay(() => DrawBullseye(dc, center, radius, ownshipHeadingDeg));
-        DrawOwnship(dc, center, radius, ownshipHeadingDeg);
+        DrawOptionalOverlay(() => DrawIntercept(dc, center, radius, ownshipHeadingDeg));
+        DrawOwnship(dc, center, ownshipHeadingDeg);
         DrawTargets(dc, center, radius, ownshipHeadingDeg);
     }
 
@@ -127,84 +166,132 @@ public sealed class TacticalScopeControl : FrameworkElement
         dc.DrawRectangle(brush, null, rect);
     }
 
-    private void DrawRings(DrawingContext dc, Point center, double radius, double ownHeadingDeg)
+    private void DrawRings(DrawingContext dc, Point center, double radius)
     {
         if (Settings is null || !Settings.ShowRangeRings)
         {
             return;
         }
 
-        var ringHaloPen = new Pen(new SolidColorBrush(Color.FromArgb(200, 0, 8, 10)), 2.6);
-        var ringPen = new Pen(new SolidColorBrush(Color.FromArgb(220, 140, 255, 220)), 1.1);
-        var ringCount = 4;
-        for (var i = 1; i <= ringCount; i++)
+        var ringHaloPen = new Pen(new SolidColorBrush(Color.FromArgb(230, 0, 8, 10)), 3.6);
+        var ringPen = new Pen(new SolidColorBrush(Color.FromArgb(210, 180, 255, 235)), 1.2);
+        for (var i = 1; i <= 4; i++)
         {
-            var ringRadius = radius * i / ringCount;
+            var ringRadius = radius * i / 4.0;
             dc.DrawEllipse(null, ringHaloPen, center, ringRadius, ringRadius);
             dc.DrawEllipse(null, ringPen, center, ringRadius, ringRadius);
-            var label = $"{Settings.SelectedRangeNm * i / ringCount:0} NM";
-            DrawHaloText(dc, label, center.X + 5, center.Y - ringRadius - 16, Color.FromRgb(175, 255, 220), 11, FontWeights.SemiBold);
+            var label = $"{Settings.SelectedRangeNm * i / 4:0} NM";
+            DrawCenteredHaloText(dc, label, center.X, center.Y - ringRadius - 13, Color.FromRgb(175, 255, 220), 10, FontWeights.SemiBold);
         }
-
-        DrawCompassRose(dc, center, radius, ownHeadingDeg);
     }
 
-    private void DrawCompassRose(DrawingContext dc, Point center, double radius, double ownHeadingDeg)
+    private void DrawFrameCompass(DrawingContext dc, Point center, double ownshipHeadingDeg)
     {
-        if (Settings is null)
+        if (Settings is null || RenderSize.Width <= 24 || RenderSize.Height <= 24)
         {
             return;
         }
 
-        var radialHaloPen = new Pen(new SolidColorBrush(Color.FromArgb(140, 0, 8, 10)), 1.8);
-        var radialPen = new Pen(new SolidColorBrush(Color.FromArgb(150, 150, 255, 225)), 0.8);
+        var headingOffset = Settings.OrientationMode == ScopeOrientationMode.HeadingUp ? ownshipHeadingDeg : 0;
+        var compassRadius = Math.Max(12, Math.Min(RenderSize.Width, RenderSize.Height) / 2.0 - 8);
+        var haloPen = new Pen(new SolidColorBrush(Color.FromArgb(220, 0, 7, 10)), 3.4);
+        var minorPen = new Pen(new SolidColorBrush(Color.FromArgb(155, 170, 205, 210)), 1.1);
+        var majorPen = new Pen(new SolidColorBrush(Color.FromArgb(210, 215, 245, 240)), 1.7);
+        var ringHaloPen = new Pen(new SolidColorBrush(Color.FromArgb(180, 0, 7, 10)), 3.2);
+        var ringPen = new Pen(new SolidColorBrush(Color.FromArgb(140, 170, 205, 210)), 1.0);
 
-        var directions = new (string label, double bearingDeg)[]
-        {
-            ("360", 0),
-            ("045", 45),
-            ("090", 90),
-            ("135", 135),
-            ("180", 180),
-            ("225", 225),
-            ("270", 270),
-            ("315", 315)
-        };
+        dc.DrawEllipse(null, ringHaloPen, center, compassRadius, compassRadius);
+        dc.DrawEllipse(null, ringPen, center, compassRadius, compassRadius);
 
-        foreach (var direction in directions)
+        for (var bearing = 0; bearing < 360; bearing += 10)
         {
-            var displayBearing = Settings.OrientationMode == ScopeOrientationMode.HeadingUp
-                ? GeoMath.NormalizeDegrees(direction.bearingDeg - ownHeadingDeg)
-                : direction.bearingDeg;
-            var rad = displayBearing * System.Math.PI / 180.0;
-            var lineEndRadius = radius - 8;
-            var textRadius = radius + 14;
-            var lineEnd = new Point(
-                center.X + lineEndRadius * System.Math.Sin(rad),
-                center.Y - lineEndRadius * System.Math.Cos(rad));
-            var x = center.X + textRadius * System.Math.Sin(rad);
-            var y = center.Y - textRadius * System.Math.Cos(rad);
-            dc.DrawLine(radialHaloPen, center, lineEnd);
-            dc.DrawLine(radialPen, center, lineEnd);
-            DrawCenteredHaloText(dc, direction.label, x, y, Color.FromRgb(175, 255, 225), 13, FontWeights.Bold);
+            var displayBearing = GeoMath.NormalizeDegrees(bearing - headingOffset);
+            var edge = PointOnCircle(center, compassRadius, displayBearing);
+            var length = bearing % 30 == 0 ? 12.0 : 7.0;
+            var inner = PointOnCircle(center, compassRadius - length, displayBearing);
+            var pen = bearing % 30 == 0 ? majorPen : minorPen;
+            dc.DrawLine(haloPen, edge, inner);
+            dc.DrawLine(pen, edge, inner);
         }
+
+        DrawCompassCardinal(dc, "N", 0, headingOffset, center, compassRadius);
+        DrawCompassCardinal(dc, "E", 90, headingOffset, center, compassRadius);
+        DrawCompassCardinal(dc, "S", 180, headingOffset, center, compassRadius);
+        DrawCompassCardinal(dc, "W", 270, headingOffset, center, compassRadius);
     }
 
-    private void DrawOwnship(DrawingContext dc, Point center, double radius, double headingDeg)
+    private void DrawCompassCardinal(
+        DrawingContext dc,
+        string label,
+        double bearing,
+        double headingOffset,
+        Point center,
+        double compassRadius)
     {
-        var triangle = new StreamGeometry();
-        using (var ctx = triangle.Open())
+        var displayBearing = GeoMath.NormalizeDegrees(bearing - headingOffset);
+        var point = PointOnCircle(center, compassRadius - 27, displayBearing);
+        var formatted = CreateFormattedText(label, Color.FromRgb(236, 250, 246), 18, FontWeights.Bold);
+        var origin = new Point(point.X - formatted.Width / 2.0, point.Y - formatted.Height / 2.0);
+        var geometry = formatted.BuildGeometry(origin);
+        dc.DrawGeometry(null, new Pen(new SolidColorBrush(Color.FromArgb(245, 0, 7, 10)), 3.2), geometry);
+        dc.DrawText(formatted, origin);
+    }
+
+    private static Point PointOnCircle(Point center, double radius, double bearingDeg)
+    {
+        var rad = bearingDeg * Math.PI / 180.0;
+        return new Point(
+            center.X + radius * Math.Sin(rad),
+            center.Y - radius * Math.Cos(rad));
+    }
+
+    private void DrawHeadingReadout(DrawingContext dc, Point center, double ownHeadingDeg)
+    {
+        if (RenderSize.Width <= 0)
         {
-            ctx.BeginFigure(new Point(center.X, center.Y - 10), true, true);
-            ctx.LineTo(new Point(center.X - 8, center.Y + 8), true, false);
-            ctx.LineTo(new Point(center.X + 8, center.Y + 8), true, false);
+            return;
         }
 
+        DrawTopReadout(dc, $"HDG {GeoMath.NormalizeDegrees(ownHeadingDeg):000}", center.X, 10.0, Color.FromRgb(175, 255, 225));
+    }
+
+    private void DrawTopReadout(DrawingContext dc, string text, double centerX, double y, Color foreground)
+    {
+        var formatted = CreateFormattedText(text, foreground, 14, FontWeights.Bold);
+        var point = new Point(centerX - formatted.Width / 2.0, y);
+        if (RenderSize.Width > 0)
+        {
+            point.X = Math.Clamp(point.X, 2, Math.Max(2, RenderSize.Width - formatted.Width - 18));
+        }
+
+        var background = new SolidColorBrush(Color.FromArgb(176, 3, 10, 16));
+        var border = new Pen(new SolidColorBrush(Color.FromArgb(110, 110, 180, 170)), 1);
+        dc.DrawRoundedRectangle(
+            background,
+            border,
+            new Rect(point.X - 8, point.Y - 3, formatted.Width + 16, formatted.Height + 6),
+            2,
+            2);
+        DrawTextHalo(dc, CreateFormattedText(text, Color.FromArgb(245, 0, 8, 10), 14, FontWeights.Bold), point);
+        dc.DrawText(formatted, point);
+    }
+
+    private void DrawOwnship(DrawingContext dc, Point center, double headingDeg)
+    {
         var rotation = Settings?.OrientationMode == ScopeOrientationMode.HeadingUp ? 0 : headingDeg;
+        var haloPen = new Pen(new SolidColorBrush(Color.FromArgb(245, 0, 8, 10)), 3.2);
+        var symbolPen = new Pen(new SolidColorBrush(Color.FromRgb(220, 252, 246)), 1.5);
         dc.PushTransform(new RotateTransform(rotation, center.X, center.Y));
-        dc.DrawGeometry(new SolidColorBrush(Color.FromRgb(170, 255, 220)), new Pen(Brushes.Black, 1), triangle);
-        dc.DrawLine(new Pen(new SolidColorBrush(Color.FromRgb(170, 255, 220)), 1.5), center, new Point(center.X, center.Y - radius));
+        DrawOwnshipCross(dc, center, haloPen);
+        DrawOwnshipCross(dc, center, symbolPen);
         dc.Pop();
+    }
+
+    private static void DrawOwnshipCross(DrawingContext dc, Point center, Pen pen)
+    {
+        dc.DrawLine(pen, new Point(center.X, center.Y - 13), new Point(center.X, center.Y + 13));
+        dc.DrawLine(pen, new Point(center.X - 13, center.Y), new Point(center.X + 13, center.Y));
+        dc.DrawLine(pen, new Point(center.X - 4.5, center.Y + 13), new Point(center.X + 4.5, center.Y + 13));
     }
 
     private void DrawAirspaces(DrawingContext dc, Point center, double radius, double ownshipHeadingDeg)
@@ -220,6 +307,8 @@ public sealed class TacticalScopeControl : FrameworkElement
         var opacity = Math.Clamp(Settings.AirspaceOpacity, 0.1, 1.0);
         var pen = new Pen(new SolidColorBrush(WithScaledAlpha(210, 247, 200, 115, opacity)), 1.2);
         var activeFill = new SolidColorBrush(WithScaledAlpha(34, 247, 200, 115, opacity));
+        var adizPen = new Pen(new SolidColorBrush(WithScaledAlpha(220, 255, 80, 80, opacity)), 1.4);
+        var adizFill = new SolidColorBrush(WithScaledAlpha(28, 255, 80, 80, opacity));
         var inactivePen = new Pen(new SolidColorBrush(WithScaledAlpha(70, 110, 180, 170, opacity)), 0.8);
         var inactiveFill = new SolidColorBrush(WithScaledAlpha(12, 110, 180, 170, opacity));
 
@@ -228,7 +317,8 @@ public sealed class TacticalScopeControl : FrameworkElement
         {
             foreach (var airspace in Airspaces)
             {
-                if (Settings.ShowOnlyActiveAirspaceBoundaries && !airspace.IsActive)
+                var isAdiz = IsAdizAirspace(airspace);
+                if (Settings.ShowOnlyActiveAirspaceBoundaries && !airspace.IsActive && !isAdiz)
                 {
                     continue;
                 }
@@ -242,12 +332,19 @@ public sealed class TacticalScopeControl : FrameworkElement
                     }
 
                     var geometry = BuildAirspaceGeometry(projected);
-                    dc.DrawGeometry(airspace.IsActive ? activeFill : inactiveFill, airspace.IsActive ? pen : inactivePen, geometry);
+                    if (isAdiz)
+                    {
+                        dc.DrawGeometry(adizFill, adizPen, geometry);
+                    }
+                    else
+                    {
+                        dc.DrawGeometry(airspace.IsActive ? activeFill : inactiveFill, airspace.IsActive ? pen : inactivePen, geometry);
+                    }
                 }
 
-                if (airspace.IsActive && !string.IsNullOrWhiteSpace(airspace.Name))
+                if ((airspace.IsActive || isAdiz) && !string.IsNullOrWhiteSpace(airspace.Name))
                 {
-                    DrawAirspaceLabel(dc, airspace, center, radius, opacity, ownshipHeadingDeg);
+                    DrawAirspaceLabel(dc, airspace, center, radius, opacity, ownshipHeadingDeg, isAdiz);
                 }
             }
         }
@@ -326,7 +423,20 @@ public sealed class TacticalScopeControl : FrameworkElement
         Math.Abs(x) <= MaxOverlayCoordinate &&
         Math.Abs(y) <= MaxOverlayCoordinate;
 
-    private void DrawAirspaceLabel(DrawingContext dc, AirspaceArea airspace, Point center, double radius, double opacity, double ownshipHeadingDeg)
+    private static bool IsAdizAirspace(AirspaceArea airspace) =>
+        airspace.Name.Contains("ADIZ", StringComparison.OrdinalIgnoreCase) ||
+        airspace.Name.Equals("EFR100", StringComparison.OrdinalIgnoreCase) ||
+        airspace.Name.Equals("EFD400", StringComparison.OrdinalIgnoreCase) ||
+        airspace.Type.Contains("ADIZ", StringComparison.OrdinalIgnoreCase);
+
+    private void DrawAirspaceLabel(
+        DrawingContext dc,
+        AirspaceArea airspace,
+        Point center,
+        double radius,
+        double opacity,
+        double ownshipHeadingDeg,
+        bool isAdiz)
     {
         if (Picture is null || Settings is null)
         {
@@ -358,7 +468,10 @@ public sealed class TacticalScopeControl : FrameworkElement
             Settings.SelectedRangeNm,
             ownshipHeadingDeg,
             Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
-        DrawCenteredText(dc, BuildAirspaceLabelText(airspace), point.x, point.y, WithScaledAlpha(255, 247, 200, 115, opacity), 11, FontWeights.SemiBold);
+        var labelColor = isAdiz
+            ? WithScaledAlpha(255, 255, 120, 120, opacity)
+            : WithScaledAlpha(255, 247, 200, 115, opacity);
+        DrawCenteredText(dc, BuildAirspaceLabelText(airspace), point.x, point.y, labelColor, 11, FontWeights.SemiBold);
     }
 
     private static string BuildAirspaceLabelText(AirspaceArea airspace)
@@ -370,7 +483,9 @@ public sealed class TacticalScopeControl : FrameworkElement
             return $"{airspace.Name} {airspace.ActiveLowerAltitudeFt.Value}-{airspace.ActiveUpperAltitudeFt.Value}";
         }
 
-        var lower = airspace.LowerFlightLevel.HasValue ? $"FL{airspace.LowerFlightLevel.Value:000}" : string.Empty;
+        var lower = airspace.LowerFlightLevel.HasValue
+            ? airspace.LowerFlightLevel.Value == 0 ? "SFC" : $"FL{airspace.LowerFlightLevel.Value:000}"
+            : string.Empty;
         var upper = airspace.UpperFlightLevel.HasValue ? $"FL{airspace.UpperFlightLevel.Value:000}" : string.Empty;
         return string.IsNullOrWhiteSpace(lower) || string.IsNullOrWhiteSpace(upper)
             ? airspace.Name
@@ -478,6 +593,11 @@ public sealed class TacticalScopeControl : FrameworkElement
                 ownshipHeadingDeg,
                 Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
                 Settings.TargetSymbolScale);
+            if (IsInterceptTarget(target.Id))
+            {
+                DrawInterceptTargetHighlight(dc, projectedPoint, Settings.TargetSymbolScale);
+            }
+
             _hitTargets.Add((target.Id, projectedPoint));
             var effectiveLabelMode = Settings.LabelMode;
             if (effectiveLabelMode != LabelMode.Off && !IsLabelHidden(target.Id))
@@ -561,6 +681,216 @@ public sealed class TacticalScopeControl : FrameworkElement
         }
     }
 
+    private bool IsInterceptTarget(string targetId) =>
+        !string.IsNullOrWhiteSpace(InterceptTargetId) &&
+        string.Equals(InterceptTargetId, targetId, StringComparison.OrdinalIgnoreCase);
+
+    private void DrawIntercept(DrawingContext dc, Point center, double radius, double ownshipHeadingDeg)
+    {
+        if (Picture is null || Settings is null || string.IsNullOrWhiteSpace(InterceptTargetId))
+        {
+            return;
+        }
+
+        var target = Picture.Targets.FirstOrDefault(t => IsInterceptTarget(t.Id));
+        if (target is null || target.RangeNm > Settings.SelectedRangeNm)
+        {
+            return;
+        }
+
+        var targetPoint = ProjectTargetPoint(target, center, radius, ownshipHeadingDeg);
+        var pen = new Pen(new SolidColorBrush(Color.FromRgb(255, 210, 90)), 1.4)
+        {
+            DashStyle = new DashStyle([6, 4], 0)
+        };
+        dc.DrawLine(pen, center, targetPoint);
+
+        var solution = CalculateInterceptSolution(Picture.Ownship, target);
+        if (solution.HasSolution)
+        {
+            var interceptPoint = ProjectGeographicPoint(
+                solution.LatitudeDeg,
+                solution.LongitudeDeg,
+                center,
+                radius,
+                ownshipHeadingDeg,
+                clampToRange: false);
+            if (IsDrawableOverlayPoint(interceptPoint.X, interceptPoint.Y) &&
+                IntersectsViewport([center, interceptPoint]))
+            {
+                var pointPen = new Pen(new SolidColorBrush(Color.FromRgb(255, 210, 90)), 1.5);
+                dc.DrawEllipse(null, pointPen, interceptPoint, 7, 7);
+                dc.DrawLine(pointPen, new Point(interceptPoint.X - 10, interceptPoint.Y), new Point(interceptPoint.X + 10, interceptPoint.Y));
+                dc.DrawLine(pointPen, new Point(interceptPoint.X, interceptPoint.Y - 10), new Point(interceptPoint.X, interceptPoint.Y + 10));
+                dc.DrawLine(new Pen(new SolidColorBrush(Color.FromArgb(110, 255, 210, 90)), 1), targetPoint, interceptPoint);
+            }
+        }
+
+        DrawInterceptReadout(dc, target, solution, center);
+    }
+
+    private Point ProjectTargetPoint(ComputedTarget target, Point center, double radius, double ownshipHeadingDeg)
+    {
+        var projected = ScopeProjection.ProjectToScope(
+            center.X,
+            center.Y,
+            radius,
+            target.RangeNm,
+            target.BearingDegTrue,
+            Settings!.SelectedRangeNm,
+            ownshipHeadingDeg,
+            Settings.OrientationMode == ScopeOrientationMode.HeadingUp);
+        return new Point(projected.x, projected.y);
+    }
+
+    private Point ProjectGeographicPoint(
+        double latitudeDeg,
+        double longitudeDeg,
+        Point center,
+        double radius,
+        double ownshipHeadingDeg,
+        bool clampToRange)
+    {
+        var point = ScopeProjection.ProjectGeographicToScope(
+            center.X,
+            center.Y,
+            radius,
+            Picture!.Ownship.LatitudeDeg,
+            Picture.Ownship.LongitudeDeg,
+            latitudeDeg,
+            longitudeDeg,
+            Settings!.SelectedRangeNm,
+            ownshipHeadingDeg,
+            Settings.OrientationMode == ScopeOrientationMode.HeadingUp,
+            clampToRange);
+        return new Point(point.x, point.y);
+    }
+
+    private void DrawInterceptTargetHighlight(DrawingContext dc, Point point, double targetSymbolScale)
+    {
+        var scale = Math.Clamp(targetSymbolScale, 0.6, 1.8);
+        var pen = new Pen(new SolidColorBrush(Color.FromRgb(255, 210, 90)), 1.4);
+        dc.DrawRectangle(null, pen, new Rect(point.X - 11 * scale, point.Y - 11 * scale, 22 * scale, 22 * scale));
+    }
+
+    private void DrawInterceptReadout(DrawingContext dc, ComputedTarget target, InterceptSolution solution, Point scopeCenter)
+    {
+        var text = solution.HasSolution
+            ? $"INT {target.DisplayName} HDG {solution.HeadingDeg:000} TTI {FormatInterceptTime(solution.TimeSeconds)}"
+            : $"INT {target.DisplayName} NO INT";
+        DrawTopReadout(dc, text, scopeCenter.X + 150, 10.0, solution.HasSolution ? Color.FromRgb(255, 225, 120) : Color.FromRgb(255, 125, 125));
+    }
+
+    private void DrawInterceptLabel(DrawingContext dc, ComputedTarget target, InterceptSolution solution, Point point)
+    {
+        var altitude = target.RelativeAltitudeFt >= 0
+            ? $"+{target.RelativeAltitudeFt:0}"
+            : $"{target.RelativeAltitudeFt:0}";
+        var line1 = $"INT {target.DisplayName}";
+        var line2 = $"BRG {target.BearingDegTrue:000} RNG {target.RangeNm:0.0}";
+        var line3 = $"ALT {altitude} FT";
+        var line4 = solution.HasSolution
+            ? $"HDG {solution.HeadingDeg:000} TTI {FormatInterceptTime(solution.TimeSeconds)}"
+            : "NO INT";
+
+        var lines = new[]
+        {
+            new LabelLine(line1, Color.FromRgb(255, 225, 120), 12, FontWeights.SemiBold),
+            new LabelLine(line2, Color.FromRgb(255, 245, 190), 11, FontWeights.Normal),
+            new LabelLine(line3, Color.FromRgb(255, 245, 190), 11, FontWeights.Normal),
+            new LabelLine(line4, solution.HasSolution ? Color.FromRgb(255, 245, 190) : Color.FromRgb(255, 125, 125), 11, FontWeights.Normal)
+        };
+        var measured = MeasureLabel(lines);
+        var rect = ClampToViewport(
+            new Rect(point.X, point.Y, measured.Size.Width, measured.Size.Height),
+            new Rect(2, 2, Math.Max(2, RenderSize.Width - 4), Math.Max(2, RenderSize.Height - 4)));
+        DrawLabelBox(dc, measured.Lines, new LabelPlacement(rect, measured.Lines), TargetLabelBackgroundOpacity);
+    }
+
+    private static string FormatInterceptTime(double seconds)
+    {
+        var totalSeconds = Math.Max(0, (int)Math.Round(seconds));
+        return $"{totalSeconds / 60:00}:{totalSeconds % 60:00}";
+    }
+
+    private static InterceptSolution CalculateInterceptSolution(OwnshipState ownship, ComputedTarget target)
+    {
+        var ownSpeedKt = ownship.SpeedKt ?? 0;
+        var targetSpeedKt = target.SpeedKt ?? 0;
+        var targetHeadingDeg = target.HeadingDeg ?? 0;
+        if (ownSpeedKt <= 1 || target.RangeNm <= 0)
+        {
+            return InterceptSolution.None;
+        }
+
+        var targetBearingRad = target.BearingDegTrue * Math.PI / 180.0;
+        var targetX = target.RangeNm * Math.Sin(targetBearingRad);
+        var targetY = target.RangeNm * Math.Cos(targetBearingRad);
+        var targetHeadingRad = targetHeadingDeg * Math.PI / 180.0;
+        var targetVelocityX = targetSpeedKt * Math.Sin(targetHeadingRad);
+        var targetVelocityY = targetSpeedKt * Math.Cos(targetHeadingRad);
+        var a = (targetVelocityX * targetVelocityX) + (targetVelocityY * targetVelocityY) - (ownSpeedKt * ownSpeedKt);
+        var b = 2 * ((targetX * targetVelocityX) + (targetY * targetVelocityY));
+        var c = (targetX * targetX) + (targetY * targetY);
+        var timeHours = SolvePositiveInterceptTimeHours(a, b, c);
+        if (!timeHours.HasValue)
+        {
+            return InterceptSolution.None;
+        }
+
+        var interceptX = targetX + (targetVelocityX * timeHours.Value);
+        var interceptY = targetY + (targetVelocityY * timeHours.Value);
+        var interceptRange = Math.Sqrt((interceptX * interceptX) + (interceptY * interceptY));
+        if (interceptRange <= 0.001)
+        {
+            return InterceptSolution.None;
+        }
+
+        var headingDeg = GeoMath.NormalizeDegrees(Math.Atan2(interceptX, interceptY) * 180.0 / Math.PI);
+        var destination = GeoMath.DestinationPoint(
+            ownship.LatitudeDeg,
+            ownship.LongitudeDeg,
+            headingDeg,
+            interceptRange);
+
+        return new InterceptSolution(
+            true,
+            headingDeg,
+            timeHours.Value * 3600.0,
+            destination.latitudeDeg,
+            destination.longitudeDeg);
+    }
+
+    private static double? SolvePositiveInterceptTimeHours(double a, double b, double c)
+    {
+        const double epsilon = 1e-9;
+        if (Math.Abs(a) < epsilon)
+        {
+            if (Math.Abs(b) < epsilon)
+            {
+                return null;
+            }
+
+            var linear = -c / b;
+            return linear > 0 ? linear : null;
+        }
+
+        var discriminant = (b * b) - (4 * a * c);
+        if (discriminant < 0)
+        {
+            return null;
+        }
+
+        var root = Math.Sqrt(discriminant);
+        var t1 = (-b - root) / (2 * a);
+        var t2 = (-b + root) / (2 * a);
+        return new[] { t1, t2 }
+            .Where(t => t > 0)
+            .OrderBy(t => t)
+            .Cast<double?>()
+            .FirstOrDefault();
+    }
+
     private static void DrawTargetHeading(
         DrawingContext dc,
         Point p,
@@ -601,7 +931,7 @@ public sealed class TacticalScopeControl : FrameworkElement
 
         var placement = FindLabelPlacement(symbolPoint, lines, occupiedRects);
         var finalPlacement = ApplyLabelOffset(target.Id, placement);
-        DrawLabelBox(dc, finalPlacement.Lines, finalPlacement);
+        DrawLabelBox(dc, finalPlacement.Lines, finalPlacement, TargetLabelBackgroundOpacity);
         DrawLeaderLine(dc, symbolPoint, finalPlacement.Bounds);
         occupiedRects.Add(finalPlacement.Bounds);
         var currentOffset = new Vector(
@@ -813,11 +1143,19 @@ public sealed class TacticalScopeControl : FrameworkElement
         return new MeasuredLabel(totalSize, measured);
     }
 
-    private static void DrawLabelBox(DrawingContext dc, IReadOnlyList<MeasuredLabelLine> lines, LabelPlacement placement)
+    private static void DrawLabelBox(
+        DrawingContext dc,
+        IReadOnlyList<MeasuredLabelLine> lines,
+        LabelPlacement placement,
+        double backgroundOpacity)
     {
-        var background = new SolidColorBrush(Color.FromArgb(168, 3, 10, 16));
-        var border = new Pen(new SolidColorBrush(Color.FromArgb(96, 110, 180, 170)), 1);
-        dc.DrawRoundedRectangle(background, border, placement.Bounds, 3, 3);
+        var opacity = Math.Clamp(backgroundOpacity, 0.0, 1.0);
+        if (opacity > 0.01)
+        {
+            var background = new SolidColorBrush(WithScaledAlpha(168, 3, 10, 16, opacity));
+            var border = new Pen(new SolidColorBrush(WithScaledAlpha(96, 110, 180, 170, opacity)), 1);
+            dc.DrawRoundedRectangle(background, border, placement.Bounds, 3, 3);
+        }
 
         var y = placement.Bounds.Y + LabelPaddingY;
         foreach (var line in lines)
@@ -895,6 +1233,13 @@ public sealed class TacticalScopeControl : FrameworkElement
         {
             if (e.ChangedButton == MouseButton.Left)
             {
+                if (InterceptSelectionArmed)
+                {
+                    TargetClicked?.Invoke(this, new ScopeTargetClickEventArgs(labelHit.TargetId, e.ChangedButton));
+                    e.Handled = true;
+                    return;
+                }
+
                 CaptureMouse();
                 _dragState = new DragState(labelHit.TargetId, pos, labelHit.BaseTopLeft, labelHit.CurrentOffset);
                 e.Handled = true;
@@ -975,6 +1320,11 @@ public sealed class TacticalScopeControl : FrameworkElement
     private sealed record MeasuredLabelLine(LabelLine Line, FormattedText Formatted);
     private sealed record MeasuredLabel(Size Size, IReadOnlyList<MeasuredLabelLine> Lines);
     private sealed record LabelPlacement(Rect Bounds, IReadOnlyList<MeasuredLabelLine> Lines);
+    private sealed record InterceptSolution(bool HasSolution, double HeadingDeg, double TimeSeconds, double LatitudeDeg, double LongitudeDeg)
+    {
+        public static InterceptSolution None { get; } = new(false, 0, 0, 0, 0);
+    }
+
     private sealed record HitLabel(string TargetId, Point SymbolPoint, Point BaseTopLeft, Rect Bounds, Vector CurrentOffset);
     private sealed record DragState(string TargetId, Point StartPosition, Point BaseTopLeft, Vector StartOffset);
 }

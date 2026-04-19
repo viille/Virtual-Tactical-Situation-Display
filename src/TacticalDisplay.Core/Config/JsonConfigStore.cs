@@ -145,8 +145,6 @@ public sealed class JsonConfigStore
 
         if (!Enum.IsDefined(settings.OrientationMode) ||
             !Enum.IsDefined(settings.LabelMode) ||
-            !Enum.IsDefined(settings.RangeFilter) ||
-            !Enum.IsDefined(settings.AltitudeFilter) ||
             !Enum.IsDefined(settings.CategoryFilter))
         {
             throw new InvalidDataException("Display settings contain an invalid enum value.");

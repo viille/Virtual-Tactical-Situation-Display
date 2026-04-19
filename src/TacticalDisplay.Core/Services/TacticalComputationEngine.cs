@@ -18,17 +18,12 @@ public sealed class TacticalComputationEngine
         }
 
         var rangeNm = GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, contact.LatitudeDeg, contact.LongitudeDeg);
-        if (!PassRangeFilter(rangeNm, settings.RangeFilter))
+        if (rangeNm > settings.SelectedRangeNm)
         {
             return null;
         }
 
         var relAltFt = contact.AltitudeFt - ownship.AltitudeFt;
-        if (!PassAltitudeFilter(relAltFt, settings.AltitudeFilter))
-        {
-            return null;
-        }
-
         var trueBearing = GeoMath.InitialBearingDeg(ownship.LatitudeDeg, ownship.LongitudeDeg, contact.LatitudeDeg, contact.LongitudeDeg);
         var relativeBearing = GeoMath.SignedRelativeBearingDeg(ownship.HeadingDeg, trueBearing);
         var category = tracked.IsStale ? TargetCategory.Stale : tracked.Category;
@@ -54,22 +49,6 @@ public sealed class TacticalComputationEngine
             history,
             contact.Timestamp);
     }
-
-    private static bool PassRangeFilter(double rangeNm, RangeFilterMode mode) =>
-        mode switch
-        {
-            RangeFilterMode.Within50Nm => rangeNm <= 50,
-            RangeFilterMode.Within20Nm => rangeNm <= 20,
-            _ => true
-        };
-
-    private static bool PassAltitudeFilter(double relAltFt, AltitudeFilterMode mode) =>
-        mode switch
-        {
-            AltitudeFilterMode.PlusMinus5000Ft => System.Math.Abs(relAltFt) <= 5000,
-            AltitudeFilterMode.PlusMinus10000Ft => System.Math.Abs(relAltFt) <= 10000,
-            _ => true
-        };
 
     private static bool PassMinimumTrackedAltitude(double altitudeFt, double minTrackedAltitudeFt) =>
         altitudeFt >= minTrackedAltitudeFt;

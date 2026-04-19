@@ -11,6 +11,7 @@ namespace TacticalDisplay.App.Services;
 public sealed class AirspaceDataService : IDisposable
 {
     private static readonly TimeSpan StaticAirspaceCacheMaxAge = TimeSpan.FromHours(24);
+    private const string LocalAdizResourceName = "TacticalDisplay.App.Data.ADIZ.geojson";
 
     private readonly HttpClient _httpClient = new()
     {
@@ -27,7 +28,8 @@ public sealed class AirspaceDataService : IDisposable
         var activeAirspaces = await LoadActiveAirspacesAsync(settings, cancellationToken);
 
         using var document = await LoadStaticAirspaceDocumentAsync(url, firCode, cancellationToken);
-        return ParseGeoJson(document.RootElement, activeAirspaces);
+        var airspaces = ParseGeoJson(document.RootElement, activeAirspaces);
+        return await AddLocalAdizAirspacesAsync(airspaces, cancellationToken);
     }
 
     private async Task<JsonDocument> LoadStaticAirspaceDocumentAsync(
@@ -203,6 +205,38 @@ public sealed class AirspaceDataService : IDisposable
         }
 
         return airspaces;
+    }
+
+    private static async Task<IReadOnlyList<AirspaceArea>> AddLocalAdizAirspacesAsync(
+        IReadOnlyList<AirspaceArea> airspaces,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = typeof(AirspaceDataService).Assembly.GetManifestResourceStream(LocalAdizResourceName);
+        if (stream is null)
+        {
+            return airspaces;
+        }
+
+        using var document = await JsonDocument.ParseAsync(stream, cancellationToken: cancellationToken);
+        var localAirspaces = ParseGeoJson(document.RootElement, new Dictionary<string, AirspaceActivation>());
+        if (localAirspaces.Count == 0)
+        {
+            return airspaces;
+        }
+
+        var names = new HashSet<string>(airspaces.Select(static area => area.Name), StringComparer.OrdinalIgnoreCase);
+        var merged = new List<AirspaceArea>(airspaces);
+        foreach (var localAirspace in localAirspaces)
+        {
+            if (string.IsNullOrWhiteSpace(localAirspace.Name) || !names.Add(localAirspace.Name))
+            {
+                continue;
+            }
+
+            merged.Add(localAirspace);
+        }
+
+        return merged;
     }
 
     private static IReadOnlyList<AirspacePolygon> ParsePolygonCoordinates(JsonElement coordinates)

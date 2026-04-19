@@ -46,6 +46,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private string _selectedDataSource = DataSourceModes.Demo;
     private bool _showSettings;
     private bool _isAlwaysOnTop;
+    private bool _showBullseyePopup;
+    private bool _interceptSelectionArmed;
+    private string? _interceptTargetId;
     private readonly Dictionary<string, ManualTargetMetadata> _manualTargetMetadata;
     private bool _showSimConnectDebugOnFailure;
     private DateTimeOffset? _simConnectCheckingStartedAt;
@@ -83,8 +86,10 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ToggleLabelsCommand = CreateUiCommand(nameof(ToggleLabelsCommand), ToggleLabels);
         ToggleTrailsCommand = CreateUiCommand(nameof(ToggleTrailsCommand), ToggleTrails);
         ToggleBullseyeCommand = CreateUiCommand(nameof(ToggleBullseyeCommand), ToggleBullseye);
+        ToggleInterceptCommand = CreateUiCommand(nameof(ToggleInterceptCommand), ToggleIntercept);
         ApplyBullseyeCommand = CreateUiCommand(nameof(ApplyBullseyeCommand), ApplyBullseye);
         ClearBullseyeCommand = CreateUiCommand(nameof(ClearBullseyeCommand), ClearBullseye);
+        CancelBullseyeCommand = CreateUiCommand(nameof(CancelBullseyeCommand), CancelBullseye);
         SaveSettingsCommand = CreateUiCommand(nameof(SaveSettingsCommand), () => _configStore.SaveDisplaySettings(Settings));
         ApplyDataSourceCommand = CreateUiCommand(nameof(ApplyDataSourceCommand), ApplyDataSource);
         ToggleSettingsCommand = CreateUiCommand(nameof(ToggleSettingsCommand), ToggleSettingsPanel);
@@ -320,7 +325,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             Settings.EnableWebServer = value;
             _configStore.SaveDisplaySettings(Settings);
             Raise();
-            Raise(nameof(WebServerToggleText));
         }
     }
 
@@ -344,15 +348,41 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    public bool ShowBullseyePopup
+    {
+        get => _showBullseyePopup;
+        private set => SetField(ref _showBullseyePopup, value);
+    }
+
     public string SettingsToggleText => ShowSettings ? "Hide Settings" : "Show Settings";
     public string TopMostToggleText => IsAlwaysOnTop ? "Unpin Window" : "Pin On Top";
-    public string WebServerToggleText => WebServerEnabled ? "Tablet web server ON" : "Tablet web server OFF";
     public string AppVersionText { get; set; } = "ver unknown";
-    public string DeclutterToggleText => Settings.Declutter ? "Declutter ON" : "Declutter OFF";
-    public string MapToggleText => Settings.ShowMapLayer ? "Map ON" : "Map OFF";
-    public string LaraToggleText => Settings.ShowAirspaceBoundaries ? "LARA ON" : "LARA OFF";
-    public string ControlledAirspaceToggleText => Settings.ShowControlledAirspaceLayer ? "AREA ON" : "AREA OFF";
-    public string TrailsToggleText => Settings.TrailsEnabled ? "Trails ON" : "Trails OFF";
+    public bool InterceptSelectionArmed
+    {
+        get => _interceptSelectionArmed;
+        private set
+        {
+            SetField(ref _interceptSelectionArmed, value);
+            Raise(nameof(InterceptToggleText));
+            Raise(nameof(InterceptModeActive));
+        }
+    }
+
+    public string? InterceptTargetId
+    {
+        get => _interceptTargetId;
+        private set
+        {
+            SetField(ref _interceptTargetId, value);
+            Raise(nameof(InterceptToggleText));
+            Raise(nameof(InterceptModeActive));
+        }
+    }
+
+    public bool InterceptModeActive => InterceptSelectionArmed || !string.IsNullOrWhiteSpace(InterceptTargetId);
+    public string InterceptToggleText => InterceptSelectionArmed
+        ? "INT SEL"
+        : string.IsNullOrWhiteSpace(InterceptTargetId) ? "INT" : "INT ON";
     public bool ShowMsfsSettings => DataSourceModes.IsMsfs(SelectedDataSource);
     public bool ShowXPlane12Settings => DataSourceModes.IsXPlane12(SelectedDataSource);
     public bool ShowXPlaneLegacySettings => DataSourceModes.IsXPlaneLegacy(SelectedDataSource);
@@ -362,7 +392,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         "Simulator:";
     public string SimulatorFooterText => $"{SimulatorStatusLabel} {SimConnectText}";
 
-    public ObservableCollection<int> RangeOptions { get; } = [10, 20, 40, 80, 120];
     public IReadOnlyDictionary<string, ManualTargetMetadata> ManualTargetMetadata => _manualTargetMetadata;
     public ObservableCollection<string> AvailableDataSources { get; } =
     [
@@ -387,8 +416,10 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ToggleLabelsCommand { get; }
     public RelayCommand ToggleTrailsCommand { get; }
     public RelayCommand ToggleBullseyeCommand { get; }
+    public RelayCommand ToggleInterceptCommand { get; }
     public RelayCommand ApplyBullseyeCommand { get; }
     public RelayCommand ClearBullseyeCommand { get; }
+    public RelayCommand CancelBullseyeCommand { get; }
     public RelayCommand SaveSettingsCommand { get; }
     public RelayCommand ApplyDataSourceCommand { get; }
     public RelayCommand ToggleSettingsCommand { get; }
@@ -476,17 +507,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private void AdjustMapOverlayOpacity(double delta)
     {
-        var labelBackgroundOpacity = Math.Clamp(Settings.MapLabelBackgroundOpacity + delta, 0.0, 1.0);
-
-        if (Math.Abs(Settings.MapLabelBackgroundOpacity - labelBackgroundOpacity) < 0.001)
-        {
-            return;
-        }
-
-        Settings.MapLabelBackgroundOpacity = labelBackgroundOpacity;
-        Raise(nameof(MapLabelBackgroundOpacityPercent));
-        Raise(nameof(MapLabelBackgroundOpacityText));
-        Raise(nameof(Settings));
+        MapLabelBackgroundOpacityPercent = Math.Round((Math.Clamp(Settings.MapLabelBackgroundOpacity + delta, 0.0, 1.0)) * 100);
     }
 
     private void AdjustTargetSymbolScale(double delta)
@@ -504,21 +525,18 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private void ToggleDeclutter()
     {
         Settings.Declutter = !Settings.Declutter;
-        Raise(nameof(DeclutterToggleText));
         Raise(nameof(Settings));
     }
 
     private void ToggleMap()
     {
         Settings.ShowMapLayer = !Settings.ShowMapLayer;
-        Raise(nameof(MapToggleText));
         Raise(nameof(Settings));
     }
 
     private void ToggleAirspace()
     {
         Settings.ShowAirspaceBoundaries = !Settings.ShowAirspaceBoundaries;
-        Raise(nameof(LaraToggleText));
         Raise(nameof(Settings));
     }
 
@@ -539,20 +557,13 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(HeaderText));
         Raise(nameof(Settings));
         Raise(nameof(SimulatorFooterText));
-        Raise(nameof(DeclutterToggleText));
-        Raise(nameof(MapToggleText));
-        Raise(nameof(LaraToggleText));
-        Raise(nameof(ControlledAirspaceToggleText));
-        Raise(nameof(TrailsToggleText));
         Raise(nameof(SettingsToggleText));
         Raise(nameof(TopMostToggleText));
-        Raise(nameof(WebServerToggleText));
     }
 
     private void ToggleControlledAirspace()
     {
         Settings.ShowControlledAirspaceLayer = !Settings.ShowControlledAirspaceLayer;
-        Raise(nameof(ControlledAirspaceToggleText));
         Raise(nameof(Settings));
     }
 
@@ -569,22 +580,38 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private void ToggleTrails()
     {
         Settings.TrailsEnabled = !Settings.TrailsEnabled;
-        Raise(nameof(TrailsToggleText));
         Raise(nameof(Settings));
     }
 
     private void ToggleBullseye()
     {
-        if (!Settings.BullseyeLatitudeDeg.HasValue || !Settings.BullseyeLongitudeDeg.HasValue)
+        if (Settings.ShowBullseye &&
+            Settings.BullseyeLatitudeDeg.HasValue &&
+            Settings.BullseyeLongitudeDeg.HasValue)
         {
-            ApplyBullseye();
+            ClearBullseye();
             return;
         }
 
-        Settings.ShowBullseye = !Settings.ShowBullseye;
-        _configStore.SaveDisplaySettings(Settings);
-        UpdateBullseyeText();
-        Raise(nameof(Settings));
+        if (Settings.BullseyeLatitudeDeg.HasValue && Settings.BullseyeLongitudeDeg.HasValue)
+        {
+            BullseyeLatitudeText = Settings.BullseyeLatitudeDeg.Value.ToString("0.######", CultureInfo.InvariantCulture);
+            BullseyeLongitudeText = Settings.BullseyeLongitudeDeg.Value.ToString("0.######", CultureInfo.InvariantCulture);
+        }
+
+        ShowBullseyePopup = true;
+    }
+
+    private void ToggleIntercept()
+    {
+        if (!InterceptSelectionArmed && !string.IsNullOrWhiteSpace(InterceptTargetId))
+        {
+            InterceptTargetId = null;
+            RefreshPicture();
+            return;
+        }
+
+        InterceptSelectionArmed = !InterceptSelectionArmed;
     }
 
     private void ToggleSettingsPanel() => ShowSettings = !ShowSettings;
@@ -631,11 +658,26 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private void ApplyBullseye()
     {
-        if (!TryParseCoordinate(BullseyeLatitudeText, -90, 90, "NS", out var latitude) ||
-            !TryParseCoordinate(BullseyeLongitudeText, -180, 180, "EW", out var longitude))
+        if (ApplyBullseyeCoordinates(BullseyeLatitudeText, BullseyeLongitudeText))
+        {
+            ShowBullseyePopup = false;
+        }
+    }
+
+    public bool TryApplyBullseye(string latitudeText, string longitudeText)
+    {
+        BullseyeLatitudeText = latitudeText;
+        BullseyeLongitudeText = longitudeText;
+        return ApplyBullseyeCoordinates(latitudeText, longitudeText);
+    }
+
+    private bool ApplyBullseyeCoordinates(string latitudeText, string longitudeText)
+    {
+        if (!TryParseCoordinate(latitudeText, -90, 90, "NS", out var latitude) ||
+            !TryParseCoordinate(longitudeText, -180, 180, "EW", out var longitude))
         {
             BullseyeText = "Bullseye: invalid coordinate";
-            return;
+            return false;
         }
 
         Settings.BullseyeLatitudeDeg = latitude;
@@ -644,6 +686,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _configStore.SaveDisplaySettings(Settings);
         UpdateBullseyeText();
         Raise(nameof(Settings));
+        return true;
     }
 
     private void ClearBullseye()
@@ -653,9 +696,16 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Settings.BullseyeLongitudeDeg = null;
         BullseyeLatitudeText = string.Empty;
         BullseyeLongitudeText = string.Empty;
+        ShowBullseyePopup = false;
         _configStore.SaveDisplaySettings(Settings);
         UpdateBullseyeText();
         Raise(nameof(Settings));
+    }
+
+    private void CancelBullseye()
+    {
+        ShowBullseyePopup = false;
+        InitializeBullseyeText();
     }
 
     private void UpdateBullseyeText()
@@ -1026,6 +1076,26 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         RefreshPicture();
     }
 
+    public bool TrySelectInterceptTarget(string targetId)
+    {
+        if (!InterceptSelectionArmed)
+        {
+            return false;
+        }
+
+        ToggleInterceptTarget(targetId);
+        InterceptSelectionArmed = false;
+        return true;
+    }
+
+    public void ToggleInterceptTarget(string targetId)
+    {
+        InterceptTargetId = string.Equals(InterceptTargetId, targetId, StringComparison.OrdinalIgnoreCase)
+            ? null
+            : targetId;
+        RefreshPicture();
+    }
+
     public string? GetManualName(string targetId) =>
         _manualTargetMetadata.TryGetValue(targetId, out var metadata) ? metadata.DisplayName : null;
 
@@ -1086,7 +1156,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(SimulatorFooterText));
         Raise(nameof(DataSourceDebugLoggingEnabled));
         Raise(nameof(WebServerEnabled));
-        Raise(nameof(WebServerToggleText));
 
         if (!DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode))
         {

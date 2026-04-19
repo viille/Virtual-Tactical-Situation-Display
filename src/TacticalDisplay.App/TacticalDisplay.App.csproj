@@ -37,6 +37,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Data\ADIZ.geojson" />
+  </ItemGroup>
+
+  <ItemGroup>
     <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
       <_Parameter1>DefaultMapboxAccessToken</_Parameter1>
       <_Parameter2>$(DefaultMapboxAccessToken)</_Parameter2>
@@ -57,7 +61,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>0.11.3</Version>
+    <Version>0.12.0</Version>
     <ApplicationIcon>Assets\VTSD.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

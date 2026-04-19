@@ -148,9 +148,7 @@ public partial class OpenFreeMapControl : UserControl
             settings.SelectedRangeNm,
             headingUp ? ownship.HeadingDeg : 0.0,
             MapboxDefaults.ResolveAccessToken(),
-            MapboxDefaults.ResolveDisplayStyleUrl(settings.ShowControlledAirspaceLayer),
-            string.Empty,
-            settings.ShowControlledAirspaceLayer);
+            MapboxDefaults.ResolveDisplayStyleUrl(settings.ShowControlledAirspaceLayer));
 
         var json = JsonSerializer.Serialize(state, JsonOptions);
         QueueMapState(json);
@@ -252,10 +250,6 @@ public partial class OpenFreeMapControl : UserControl
             let currentToken = '';
             let currentStyle = '';
             let lastState = null;
-            let currentAreasStyle = '';
-            let areasOverlayPromise = null;
-            let areasLayerIds = [];
-            let areasSourceIds = [];
 
             const setStatus = text => {
               statusEl.textContent = text || '';
@@ -287,9 +281,6 @@ public partial class OpenFreeMapControl : UserControl
               if (map) {
                 map.remove();
                 map = null;
-                currentAreasStyle = '';
-                areasLayerIds = [];
-                areasSourceIds = [];
               }
 
               currentToken = token;
@@ -316,109 +307,8 @@ public partial class OpenFreeMapControl : UserControl
               map.on('error', event => setStatus(`Map unavailable: ${event?.error?.message || 'Mapbox error'}`));
               map.on('load', () => {
                 setStatus('');
-                updateAreasOverlay(lastState);
               });
               return true;
-            };
-
-            const areasStyleApiUrl = (styleUrl, token) => {
-              const trimmed = (styleUrl || '').trim();
-              if (/^https?:\/\//i.test(trimmed)) {
-                const separator = trimmed.includes('?') ? '&' : '?';
-                return trimmed.includes('access_token=') ? trimmed : `${trimmed}${separator}access_token=${encodeURIComponent(token)}`;
-              }
-              const match = /^mapbox:\/\/styles\/([^/]+)\/([^/?#]+)/i.exec(trimmed);
-              if (!match) return '';
-              return `https://api.mapbox.com/styles/v1/${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}?access_token=${encodeURIComponent(token)}`;
-            };
-
-            const removeAreasOverlay = () => {
-              if (!map) return;
-              for (const id of [...areasLayerIds].reverse()) {
-                if (map.getLayer(id)) {
-                  map.removeLayer(id);
-                }
-              }
-              for (const id of [...areasSourceIds].reverse()) {
-                if (map.getSource(id)) {
-                  map.removeSource(id);
-                }
-              }
-              areasLayerIds = [];
-              areasSourceIds = [];
-              currentAreasStyle = '';
-            };
-
-            const setAreasVisibility = visible => {
-              if (!map) return;
-              const visibility = visible ? 'visible' : 'none';
-              for (const id of areasLayerIds) {
-                if (map.getLayer(id)) {
-                  map.setLayoutProperty(id, 'visibility', visibility);
-                }
-              }
-            };
-
-            const addAreasOverlay = async state => {
-              if (!map || !map.isStyleLoaded()) return;
-              const styleUrl = (state?.mapboxAreasStyleUrl || '').trim();
-              const token = (state?.mapboxAccessToken || '').trim();
-              if (!styleUrl || !token) {
-                removeAreasOverlay();
-                return;
-              }
-
-              if (currentAreasStyle === styleUrl && areasLayerIds.length > 0) {
-                setAreasVisibility(!!state.showControlledAirspaceLayer);
-                return;
-              }
-
-              const apiUrl = areasStyleApiUrl(styleUrl, token);
-              if (!apiUrl) {
-                removeAreasOverlay();
-                return;
-              }
-
-              removeAreasOverlay();
-              const response = await fetch(apiUrl, { cache: 'force-cache' });
-              if (!response.ok) throw new Error(`Areas style ${response.status}`);
-              const style = await response.json();
-              const sourceMap = new globalThis.Map();
-              for (const [sourceId, source] of Object.entries(style.sources || {})) {
-                const prefixedSourceId = `areas-${sourceId}`;
-                if (!map.getSource(prefixedSourceId)) {
-                  map.addSource(prefixedSourceId, JSON.parse(JSON.stringify(source)));
-                  areasSourceIds.push(prefixedSourceId);
-                }
-                sourceMap.set(sourceId, prefixedSourceId);
-              }
-
-              for (const layer of style.layers || []) {
-                if (!layer || layer.type === 'background') continue;
-                const copy = JSON.parse(JSON.stringify(layer));
-                copy.id = `areas-${copy.id}`;
-                if (copy.source && sourceMap.has(copy.source)) {
-                  copy.source = sourceMap.get(copy.source);
-                } else if (copy.source) {
-                  continue;
-                }
-                copy.layout = copy.layout || {};
-                copy.layout.visibility = state.showControlledAirspaceLayer ? 'visible' : 'none';
-                if (!map.getLayer(copy.id)) {
-                  map.addLayer(copy);
-                  areasLayerIds.push(copy.id);
-                }
-              }
-
-              currentAreasStyle = styleUrl;
-            };
-
-            const updateAreasOverlay = state => {
-              if (!state || !map || !map.isStyleLoaded()) return;
-              if (areasOverlayPromise) return;
-              areasOverlayPromise = addAreasOverlay(state)
-                .catch(() => setStatus('Areas unavailable'))
-                .finally(() => { areasOverlayPromise = null; });
             };
 
             window.updateTacticalMap = state => {
@@ -434,7 +324,6 @@ public partial class OpenFreeMapControl : UserControl
                 bearing: state.bearingDeg,
                 pitch: 0,
               });
-              updateAreasOverlay(state);
             };
 
             if (window.chrome?.webview) {
@@ -482,7 +371,5 @@ public partial class OpenFreeMapControl : UserControl
         double SelectedRangeNm,
         double BearingDeg,
         string MapboxAccessToken,
-        string MapboxStyleUrl,
-        string MapboxAreasStyleUrl,
-        bool ShowControlledAirspaceLayer);
+        string MapboxStyleUrl);
 }

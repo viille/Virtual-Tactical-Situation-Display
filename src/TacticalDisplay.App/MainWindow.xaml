@@ -37,9 +37,12 @@
             <Setter Property="BorderBrush" Value="#617480" />
             <Setter Property="BorderThickness" Value="1" />
         </Style>
+        <Style x:Key="MfdSideButtonStyle" TargetType="Button" BasedOn="{StaticResource MfdButtonStyle}">
+            <Setter Property="Width" Value="60" />
+        </Style>
         <Style x:Key="MfdSlotStyle" TargetType="Border">
             <Setter Property="Height" Value="34" />
-            <Setter Property="MinWidth" Value="44" />
+            <Setter Property="Width" Value="60" />
             <Setter Property="Margin" Value="5" />
             <Setter Property="Background" Value="#263742" />
             <Setter Property="BorderBrush" Value="#566976" />
@@ -147,6 +150,9 @@
                 </Setter.Value>
             </Setter>
         </Style>
+        <Style x:Key="MfdSideToggleButtonStyle" TargetType="ToggleButton" BasedOn="{StaticResource MfdToggleButtonStyle}">
+            <Setter Property="Width" Value="60" />
+        </Style>
     </Window.Resources>
     <Window.InputBindings>
         <KeyBinding Modifiers="Control"
@@ -244,7 +250,7 @@
                                     Orientation="Horizontal"
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Top">
-                            <Button Content="LBL" Command="{Binding ToggleLabelsCommand}" Style="{StaticResource MfdButtonStyle}" />
+                            <ToggleButton Content="WEB" IsChecked="{Binding WebServerEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource MfdToggleButtonStyle}" />
                             <Border Style="{StaticResource MfdTickStyle}" />
                             <StackPanel VerticalAlignment="Center" Margin="10,0">
                                 <Button Content="&#x2191;" Command="{Binding IncreaseMapOverlayOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
@@ -252,8 +258,6 @@
                             </StackPanel>
                             <Border Style="{StaticResource MfdTickStyle}" />
                             <ToggleButton Content="SET" Command="{Binding ToggleSettingsCommand}" IsChecked="{Binding ShowSettings, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
-                            <Border Style="{StaticResource MfdTickStyle}" />
-                            <ToggleButton Content="WEB" IsChecked="{Binding WebServerEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource MfdToggleButtonStyle}" />
                         </StackPanel>
                         <StackPanel Grid.Row="1"
                                     Orientation="Horizontal"
@@ -304,29 +308,47 @@
                     </Grid>
 
                     <StackPanel Grid.Row="1" Grid.Column="0" VerticalAlignment="Center">
-                        <Button Content="RNG +" Command="{Binding IncreaseRangeCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <Button Content="RNG +" Command="{Binding IncreaseRangeCommand}" Style="{StaticResource MfdSideButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <Button Content="RNG -" Command="{Binding DecreaseRangeCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <Button Content="RNG -" Command="{Binding DecreaseRangeCommand}" Style="{StaticResource MfdSideButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <ToggleButton Content="DCLR" Command="{Binding ToggleDeclutterCommand}" IsChecked="{Binding Settings.Declutter, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <ToggleButton Content="DCLR" Command="{Binding ToggleDeclutterCommand}" IsChecked="{Binding Settings.Declutter, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <ToggleButton Content="TRAIL" Command="{Binding ToggleTrailsCommand}" IsChecked="{Binding Settings.TrailsEnabled, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <ToggleButton Content="TRAIL" Command="{Binding ToggleTrailsCommand}" IsChecked="{Binding Settings.TrailsEnabled, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <ToggleButton Content="BE" Command="{Binding ToggleBullseyeCommand}" IsChecked="{Binding Settings.ShowBullseye, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <ToggleButton Content="BE" Command="{Binding ToggleBullseyeCommand}" IsChecked="{Binding Settings.ShowBullseye, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdSideTickStyle}" />
+                        <ToggleButton Command="{Binding ToggleInterceptCommand}" IsChecked="{Binding InterceptModeActive, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}">
+                            <TextBlock Text="{Binding InterceptToggleText}">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Foreground" Value="#D9F2EC" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding InterceptModeActive}" Value="True">
+                                                <Setter Property="Foreground" Value="#E9FFF8" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding InterceptSelectionArmed}" Value="True">
+                                                <Setter Property="Foreground" Value="#FFD25A" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
+                        </ToggleButton>
                     </StackPanel>
 
                     <StackPanel Grid.Row="1" Grid.Column="2" VerticalAlignment="Center">
-                        <ToggleButton Content="PIN" Command="{Binding ToggleAlwaysOnTopCommand}" IsChecked="{Binding IsAlwaysOnTop, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <ToggleButton Content="PIN" Command="{Binding ToggleAlwaysOnTopCommand}" IsChecked="{Binding IsAlwaysOnTop, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <ToggleButton Content="LARA" Command="{Binding ToggleAirspaceCommand}" IsChecked="{Binding Settings.ShowAirspaceBoundaries, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <ToggleButton Content="LARA" Command="{Binding ToggleAirspaceCommand}" IsChecked="{Binding Settings.ShowAirspaceBoundaries, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <ToggleButton Content="AREA" Command="{Binding ToggleControlledAirspaceCommand}" IsChecked="{Binding Settings.ShowControlledAirspaceLayer, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <ToggleButton Content="AREA" Command="{Binding ToggleControlledAirspaceCommand}" IsChecked="{Binding Settings.ShowControlledAirspaceLayer, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <Border Style="{StaticResource MfdSlotStyle}" />
+                        <Button Content="LBL" Command="{Binding ToggleLabelsCommand}" Style="{StaticResource MfdSideButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <Button Content="TGT +" Command="{Binding IncreaseTargetSymbolScaleCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <Button Content="TGT +" Command="{Binding IncreaseTargetSymbolScaleCommand}" Style="{StaticResource MfdSideButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <Button Content="TGT -" Command="{Binding DecreaseTargetSymbolScaleCommand}" Style="{StaticResource MfdButtonStyle}" />
+                        <Button Content="TGT -" Command="{Binding DecreaseTargetSymbolScaleCommand}" Style="{StaticResource MfdSideButtonStyle}" />
                     </StackPanel>
 
                     <Border x:Name="DisplaySurface"
@@ -346,6 +368,9 @@
                                                            Picture="{Binding Picture}"
                                                            Settings="{Binding Settings}"
                                                            Airspaces="{Binding Airspaces}"
+                                                           InterceptTargetId="{Binding InterceptTargetId}"
+                                                           InterceptSelectionArmed="{Binding InterceptSelectionArmed}"
+                                                           TargetLabelBackgroundOpacity="{Binding Settings.MapLabelBackgroundOpacity}"
                                                            ManualTargetMetadata="{Binding ManualTargetMetadata}" />
                             <Border HorizontalAlignment="Left"
                                     VerticalAlignment="Top"
@@ -384,10 +409,12 @@
                                         <StackPanel>
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="RNG + / RNG - : Change visible range" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="N/HDG : Switch north-up / heading-up" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Scope : 1/4 range rings, circular compass, HDG at top" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="MAP : Show or hide map layer" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="DCLR : Reduce display clutter" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TRAIL : Show or hide target trails" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="BE : Show or hide bullseye" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="BE : Set bullseye coordinates or clear active bullseye" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="INT : Select or clear intercept target" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="LARA : Show or hide active V-LARA airspace boundaries" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="AREA : Switch base map / TMA-CTR-CTA map" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="PIN : Toggle always-on-top" Margin="0,0,0,4" />
@@ -408,6 +435,9 @@
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="HOT 170 479" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="( Name / Distance / Altitude difference ft )" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="( Aspect / Heading / Closure kt )" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="INT mode:" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Click INT, then left click a target to select or clear intercept guidance." Margin="0,0,0,4" />
                                         </StackPanel>
                                     </ScrollViewer>
                                     <TextBlock Grid.Row="2"
@@ -418,6 +448,95 @@
                                                Margin="0,8,0,0"
                                                HorizontalAlignment="Center" />
                                 </Grid>
+                            </Border>
+                            <Border Background="#D8071015"
+                                    BorderBrush="#FFD25A"
+                                    BorderThickness="1"
+                                    CornerRadius="6"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"
+                                    Width="340"
+                                    Padding="14">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ShowBullseyePopup}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <StackPanel>
+                                    <TextBlock Text="Set Bullseye"
+                                               FontFamily="Consolas"
+                                               FontSize="16"
+                                               FontWeight="Bold"
+                                               Foreground="#FFD25A"
+                                               Margin="0,0,0,10" />
+                                    <TextBlock Text="Latitude"
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Foreground="#9AFAD7" />
+                                    <Grid Margin="0,3,0,8">
+                                        <TextBox x:Name="PopupBullseyeLatitudeBox"
+                                                 Text="{Binding BullseyeLatitudeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="Latitude, decimal degrees. Example: N60.3172" />
+                                        <TextBlock Text="N60.3172"
+                                                   Foreground="#778C8A"
+                                                   Margin="6,2,0,0"
+                                                   IsHitTestVisible="False">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Text, ElementName=PopupBullseyeLatitudeBox}" Value="">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                    <TextBlock Text="Longitude"
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Foreground="#9AFAD7" />
+                                    <Grid Margin="0,3,0,8">
+                                        <TextBox x:Name="PopupBullseyeLongitudeBox"
+                                                 Text="{Binding BullseyeLongitudeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 ToolTip="Longitude, decimal degrees. Example: E024.9633" />
+                                        <TextBlock Text="E024.9633"
+                                                   Foreground="#778C8A"
+                                                   Margin="6,2,0,0"
+                                                   IsHitTestVisible="False">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Text, ElementName=PopupBullseyeLongitudeBox}" Value="">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                    <TextBlock Text="{Binding BullseyeText}"
+                                               FontFamily="Consolas"
+                                               FontSize="11"
+                                               Foreground="#9AFAD7"
+                                               Margin="0,0,0,10" />
+                                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                        <Button Content="Cancel"
+                                                Command="{Binding CancelBullseyeCommand}"
+                                                MinWidth="72"
+                                                Margin="0,0,8,0" />
+                                        <Button Content="Set"
+                                                Command="{Binding ApplyBullseyeCommand}"
+                                                MinWidth="72" />
+                                    </StackPanel>
+                                </StackPanel>
                             </Border>
                         </Grid>
                     </Border>
@@ -453,17 +572,9 @@
 
                     <GroupBox Header="Display" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
                         <StackPanel>
-                            <UniformGrid Columns="2" Rows="3">
-                                <Button Content="N/HDG" Margin="4" Command="{Binding ToggleOrientationCommand}" />
-                                <Button Content="{Binding DeclutterToggleText}" Margin="4" Command="{Binding ToggleDeclutterCommand}" />
-                                <Button Content="Labels" Margin="4" Command="{Binding ToggleLabelsCommand}" />
-                                <Button Content="{Binding TrailsToggleText}" Margin="4" Command="{Binding ToggleTrailsCommand}" />
-                                <Button Content="{Binding MapToggleText}" Margin="4" Command="{Binding ToggleMapCommand}" />
-                                <Button Content="{Binding LaraToggleText}" Margin="4" Command="{Binding ToggleAirspaceCommand}" />
-                            </UniformGrid>
                             <TextBlock Text="{Binding MapOpacityText}"
                                        Foreground="#7CB9A9"
-                                       Margin="4,8,4,0" />
+                                       Margin="4,0,4,0" />
                             <Slider Minimum="0"
                                     Maximum="100"
                                     TickFrequency="10"
@@ -485,25 +596,6 @@
                             <TextBox Text="{Binding MinTrackedAltitudeFtText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      ToolTip="Targets below this altitude are hidden"
                                      Margin="4,4,4,0" />
-                            <Button Content="{Binding ControlledAirspaceToggleText}"
-                                    Margin="4,8,4,0"
-                                    Command="{Binding ToggleControlledAirspaceCommand}" />
-                        </StackPanel>
-                    </GroupBox>
-
-                    <GroupBox Header="Tablet Web" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
-                        <StackPanel>
-                            <CheckBox Content="{Binding WebServerToggleText}"
-                                      IsChecked="{Binding WebServerEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                      Foreground="#9AFAD7" />
-                            <TextBlock Text="{Binding WebDisplayText}"
-                                       Foreground="#7CB9A9"
-                                       TextWrapping="Wrap"
-                                       Margin="0,6,0,0" />
-                            <TextBlock Text="Turn this off when you do not want to expose the tablet display on the local network."
-                                       Foreground="#7CB9A9"
-                                       TextWrapping="Wrap"
-                                       Margin="0,6,0,0" />
                         </StackPanel>
                     </GroupBox>
 
@@ -583,60 +675,6 @@
                         </StackPanel>
                     </GroupBox>
 
-                    <GroupBox Header="Bullseye" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
-                        <StackPanel>
-                            <UniformGrid Columns="2" Rows="2">
-                                <Grid Margin="4">
-                                    <TextBox x:Name="BullseyeLatitudeBox"
-                                             Text="{Binding BullseyeLatitudeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             ToolTip="Latitude, decimal degrees" />
-                                    <TextBlock Text="N60.3172"
-                                               Foreground="#778C8A"
-                                               Margin="6,2,0,0"
-                                               IsHitTestVisible="False">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Text, ElementName=BullseyeLatitudeBox}" Value="">
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                </Grid>
-                                <Grid Margin="4">
-                                    <TextBox x:Name="BullseyeLongitudeBox"
-                                             Text="{Binding BullseyeLongitudeText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             ToolTip="Longitude, decimal degrees" />
-                                    <TextBlock Text="E024.9633"
-                                               Foreground="#778C8A"
-                                               Margin="6,2,0,0"
-                                               IsHitTestVisible="False">
-                                        <TextBlock.Style>
-                                            <Style TargetType="TextBlock">
-                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                <Style.Triggers>
-                                                    <DataTrigger Binding="{Binding Text, ElementName=BullseyeLongitudeBox}" Value="">
-                                                        <Setter Property="Visibility" Value="Visible" />
-                                                    </DataTrigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </TextBlock.Style>
-                                    </TextBlock>
-                                </Grid>
-                                <Button Content="Set Bullseye"
-                                        Command="{Binding ApplyBullseyeCommand}"
-                                        Margin="4" />
-                                <Button Content="Clear Bullseye"
-                                        Command="{Binding ClearBullseyeCommand}"
-                                        Margin="4" />
-                            </UniformGrid>
-                            <TextBlock Text="{Binding BullseyeText}" Foreground="#9AFAD7" Margin="0,4,0,0" />
-                        </StackPanel>
-                    </GroupBox>
-
                     <Button Content="Save Settings"
                             Command="{Binding SaveSettingsCommand}"
                             Margin="0,0,0,8" />
@@ -653,7 +691,7 @@
                                        Foreground="#7CB9A9"
                                        TextWrapping="Wrap"
                                        Margin="0,4,0,0" />
-                            <TextBlock Text="Range/alt/category filters can be edited in display.json."
+                            <TextBlock Text="Category filter can be edited in display.json. Range and minimum altitude use the display controls."
                                        Foreground="#7CB9A9"
                                        TextWrapping="Wrap"
                                        Margin="0,8,0,0" />

@@ -24,20 +24,6 @@ public enum LabelMode
     Off
 }
 
-public enum RangeFilterMode
-{
-    All,
-    Within50Nm,
-    Within20Nm
-}
-
-public enum AltitudeFilterMode
-{
-    All,
-    PlusMinus5000Ft,
-    PlusMinus10000Ft
-}
-
 public enum CategoryFilterMode
 {
     All,

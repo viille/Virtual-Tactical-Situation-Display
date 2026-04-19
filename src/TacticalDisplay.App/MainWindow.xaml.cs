@@ -396,6 +396,11 @@ public partial class MainWindow : Window
     {
         if (e.Button == MouseButton.Left)
         {
+            if (_viewModel.TrySelectInterceptTarget(e.TargetId))
+            {
+                return;
+            }
+
             _viewModel.CycleTargetAffiliation(e.TargetId);
             return;
         }

@@ -32,8 +32,6 @@ public sealed class TacticalDisplaySettings
     public bool Declutter { get; set; }
     public bool TrailsEnabled { get; set; } = true;
     public LabelMode LabelMode { get; set; } = LabelMode.Minimal;
-    public RangeFilterMode RangeFilter { get; set; } = RangeFilterMode.All;
-    public AltitudeFilterMode AltitudeFilter { get; set; } = AltitudeFilterMode.All;
     public CategoryFilterMode CategoryFilter { get; set; } = CategoryFilterMode.All;
     public int TrailLengthSamples { get; set; } = 90;
     public double PollRateHz { get; set; } = 8;

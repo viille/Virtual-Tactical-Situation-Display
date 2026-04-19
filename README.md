@@ -49,9 +49,9 @@ The current orientation and range are shown in the upper-left corner of the disp
 
 The desktop app starts a lightweight web display on port `8787`. Open the `Web: http://...:8787/` address shown in the app footer from a tablet or another device on the same local network.
 
-The tablet display renders the Mapbox map and tactical canvas on the device and stays synchronized with the desktop app. It includes controls for range, orientation, map opacity, map, declutter, trails, bullseye, labels, map-label background opacity, LARA airspace, controlled airspace layers, pin, settings, and target symbol size. These controls update the same display state as the main window controls.
+The tablet display renders the Mapbox map and tactical canvas on the device and stays synchronized with the desktop app. It includes controls for range, orientation, map opacity, map, declutter, trails, bullseye, intercept target selection, labels, LARA airspace, controlled airspace layers, pin, settings, and target symbol size. These controls update the same display state as the main window controls.
 
-The tablet display can be turned on or off with the `WEB` frame button next to `SET`, or from the `Tablet Web` section in the settings panel.
+The tablet display can be turned on or off with the `WEB` frame button next to `SET`.
 
 If the tablet cannot connect, allow the app through Windows Firewall for private networks and check that both devices are connected to the same network.
 
@@ -65,12 +65,14 @@ Frame controls:
 - `BE`: show or hide bullseye
 - `LARA`: show or hide active V-LARA airspace boundaries
 - `AREA`: switch between the base map and the TMA/CTR/CTA map style
+- `INT`: select or clear one intercept target
 - `PIN`: pin or unpin the window on top
 - `LBL`: cycle label detail level
-- bottom up/down arrows: increase or decrease map-label background opacity
 - `SET`: show or hide the settings panel
 - `WEB`: turn tablet web server on or off
 - `TGT +` / `TGT -`: increase or decrease target symbol size
+
+The scope uses four range rings at 1/4, 1/2, 3/4, and full selected range. Heading is shown as an `HDG` readout at the top of the radar area, and the compass reference is drawn as a circular outer compass instead of radial lines through the display.
 
 Window controls:
 - the app uses its own borderless window controls
@@ -89,6 +91,13 @@ Keyboard shortcuts:
 
 ## Targets
 
+Intercept target mode:
+- click `INT`, then left click a target to mark it for intercept
+- with `INT` armed, left click either the target symbol or its label
+- the display draws a line to the selected target, highlights the target, and shows intercept heading and time to intercept in the top `INT` readout next to `HDG`
+- `NO INT` means the current speed and target motion do not produce an intercept solution
+- click `INT` again to clear the current intercept target
+
 Symbols:
 - friend = circle
 - package = diamond
@@ -97,6 +106,7 @@ Symbols:
 - unknown = dot
 
 Mouse actions:
+- click `INT`, then left click a target: select or clear the intercept target
 - left click a target: cycle affiliation
 - right click a target: rename
 - right click a label: rename that target

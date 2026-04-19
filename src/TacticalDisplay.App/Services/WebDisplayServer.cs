@@ -357,12 +357,13 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 _viewModel.TrafficText,
                 _viewModel.RefreshRateText,
                 settings.SelectedRangeNm,
+                settings.ShowRangeRings,
                 settings.OrientationMode.ToString(),
                 settings.LabelMode.ToString(),
                 settings.MapOpacity,
+                settings.MapLabelBackgroundOpacity,
                 MapboxDefaults.ResolveAccessToken(),
                 MapboxDefaults.ResolveDisplayStyleUrl(settings.ShowControlledAirspaceLayer),
-                string.Empty,
                 settings.Declutter,
                 settings.ShowMapLayer,
                 settings.ShowAirspaceBoundaries,
@@ -371,6 +372,9 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 settings.ShowBullseye,
                 settings.BullseyeLatitudeDeg,
                 settings.BullseyeLongitudeDeg,
+                _viewModel.InterceptModeActive,
+                _viewModel.InterceptSelectionArmed,
+                _viewModel.InterceptTargetId,
                 settings.TargetSymbolScale,
                 _viewModel.IsAlwaysOnTop,
                 _viewModel.ShowSettings,
@@ -386,12 +390,13 @@ public sealed class WebDisplayServer : IAsyncDisposable
             _viewModel.TrafficText,
             _viewModel.RefreshRateText,
             settings.SelectedRangeNm,
+            settings.ShowRangeRings,
             settings.OrientationMode.ToString(),
             settings.LabelMode.ToString(),
             settings.MapOpacity,
+            settings.MapLabelBackgroundOpacity,
             MapboxDefaults.ResolveAccessToken(),
             MapboxDefaults.ResolveDisplayStyleUrl(settings.ShowControlledAirspaceLayer),
-            string.Empty,
             settings.Declutter,
             settings.ShowMapLayer,
             settings.ShowAirspaceBoundaries,
@@ -400,6 +405,9 @@ public sealed class WebDisplayServer : IAsyncDisposable
             settings.ShowBullseye,
             settings.BullseyeLatitudeDeg,
             settings.BullseyeLongitudeDeg,
+            _viewModel.InterceptModeActive,
+            _viewModel.InterceptSelectionArmed,
+            _viewModel.InterceptTargetId,
             settings.TargetSymbolScale,
             _viewModel.IsAlwaysOnTop,
             _viewModel.ShowSettings,
@@ -487,12 +495,6 @@ public sealed class WebDisplayServer : IAsyncDisposable
             case "map-opacity-down":
                 _viewModel.DecreaseMapOpacityCommand.Execute(null);
                 break;
-            case "overlay-opacity-up":
-                _viewModel.IncreaseMapOverlayOpacityCommand.Execute(null);
-                break;
-            case "overlay-opacity-down":
-                _viewModel.DecreaseMapOverlayOpacityCommand.Execute(null);
-                break;
             case "map":
                 _viewModel.ToggleMapCommand.Execute(null);
                 break;
@@ -504,6 +506,9 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 break;
             case "bullseye":
                 _viewModel.ToggleBullseyeCommand.Execute(null);
+                break;
+            case "intercept":
+                _viewModel.ToggleInterceptCommand.Execute(null);
                 break;
             case "labels":
                 _viewModel.ToggleLabelsCommand.Execute(null);
@@ -528,6 +533,31 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 _viewModel.ToggleSettingsCommand.Execute(null);
                 break;
             default:
+                if (normalized.StartsWith("bullseye-set:", StringComparison.Ordinal))
+                {
+                    var parts = command["bullseye-set:".Length..].Split(',', 2, StringSplitOptions.TrimEntries);
+                    if (parts.Length == 2 && _viewModel.TryApplyBullseye(parts[0], parts[1]))
+                    {
+                        break;
+                    }
+
+                    return new CommandResult(false, "Invalid bullseye coordinates");
+                }
+
+                if (normalized.StartsWith("intercept-target:", StringComparison.Ordinal))
+                {
+                    var targetId = command["intercept-target:".Length..].Trim();
+                    if (!string.IsNullOrWhiteSpace(targetId))
+                    {
+                        if (!_viewModel.TrySelectInterceptTarget(targetId))
+                        {
+                            _viewModel.ToggleInterceptTarget(targetId);
+                        }
+
+                        break;
+                    }
+                }
+
                 return new CommandResult(false, $"Unknown command: {command}");
         }
 
@@ -571,12 +601,13 @@ public sealed class WebDisplayServer : IAsyncDisposable
         string Traffic,
         string RefreshRate,
         int RangeNm,
+        bool ShowRangeRings,
         string Orientation,
         string LabelMode,
         double MapOpacity,
+        double MapLabelBackgroundOpacity,
         string MapboxAccessToken,
         string MapboxStyleUrl,
-        string MapboxAreasStyleUrl,
         bool Declutter,
         bool ShowMapLayer,
         bool ShowAirspaceBoundaries,
@@ -585,6 +616,9 @@ public sealed class WebDisplayServer : IAsyncDisposable
         bool ShowBullseye,
         double? BullseyeLatitudeDeg,
         double? BullseyeLongitudeDeg,
+        bool InterceptModeActive,
+        bool InterceptSelectionArmed,
+        string? InterceptTargetId,
         double TargetSymbolScale,
         bool IsAlwaysOnTop,
         bool ShowSettings,
@@ -600,12 +634,13 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 "0 contacts",
                 "0.0 Hz",
                 40,
+                true,
                 ScopeOrientationMode.HeadingUp.ToString(),
                 global::TacticalDisplay.Core.Models.LabelMode.Minimal.ToString(),
                 0.65,
+                0.75,
                 string.Empty,
                 "mapbox://styles/mapbox/outdoors-v12",
-                MapboxDefaults.FallbackAreasStyleUrl,
                 false,
                 true,
                 false,
@@ -613,6 +648,9 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 true,
                 false,
                 null,
+                null,
+                false,
+                false,
                 null,
                 1,
                 false,
@@ -825,6 +863,11 @@ public sealed class WebDisplayServer : IAsyncDisposable
       background: #294f48;
       color: #e9fff8;
     }
+    button.selection-armed {
+      border-color: #ffd25a;
+      background: #4d4626;
+      color: #ffd25a;
+    }
     button:active {
       transform: translateY(1px);
       background: #34505b;
@@ -860,8 +903,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
       <button type="button" data-command="orientation" id="orientationBtn">N/HDG</button>
       <div class="tick"></div>
       <div class="arrow-stack">
-        <button type="button" data-command="map-opacity-up">↑</button>
-        <button type="button" data-command="map-opacity-down">↓</button>
+        <button type="button" data-command="map-opacity-up">&#x2191;</button>
+        <button type="button" data-command="map-opacity-down">&#x2193;</button>
       </div>
       <div class="tick"></div>
       <button type="button" data-command="map" id="mapBtn">MAP</button>
@@ -879,6 +922,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
       <button type="button" data-command="trails" id="trailsBtn">TRAIL</button>
       <div class="side-tick"></div>
       <button type="button" data-command="bullseye" id="bullseyeBtn">BE</button>
+      <div class="side-tick"></div>
+      <button type="button" data-command="intercept" id="interceptBtn">INT</button>
     </div>
     <div class="right-controls">
       <button type="button" data-command="pin" id="pinBtn">PIN</button>
@@ -900,11 +945,6 @@ public sealed class WebDisplayServer : IAsyncDisposable
     <div class="bottom">
       <div class="bottom-controls">
         <button type="button" data-command="labels" id="labelsBtn">LBL</button>
-        <div class="tick"></div>
-        <div class="arrow-stack">
-          <button type="button" data-command="overlay-opacity-up">↑</button>
-          <button type="button" data-command="overlay-opacity-down">↓</button>
-        </div>
         <div class="tick"></div>
         <button type="button" data-command="settings" id="settingsBtn">SET</button>
       </div>
@@ -928,10 +968,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
     let mapReady = false;
     let currentMapboxToken = '';
     let currentMapboxStyle = '';
-    let currentAreasStyle = '';
-    let areasOverlayPromise = null;
-    let areasLayerIds = [];
-    let areasSourceIds = [];
+    let labelHitBoxes = [];
     const fields = {
       range: document.getElementById('range'),
       source: document.getElementById('source'),
@@ -944,6 +981,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
       declutterBtn: document.getElementById('declutterBtn'),
       trailsBtn: document.getElementById('trailsBtn'),
       bullseyeBtn: document.getElementById('bullseyeBtn'),
+      interceptBtn: document.getElementById('interceptBtn'),
       labelsBtn: document.getElementById('labelsBtn'),
       laraBtn: document.getElementById('laraBtn'),
       areaBtn: document.getElementById('areaBtn'),
@@ -994,6 +1032,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
       setToggle(fields.declutterBtn, snapshot.declutter, 'DCLR');
       setToggle(fields.trailsBtn, snapshot.trailsEnabled, 'TRAIL');
       setToggle(fields.bullseyeBtn, snapshot.showBullseye, 'BE');
+      setToggle(fields.interceptBtn, snapshot.interceptModeActive, snapshot.interceptSelectionArmed ? 'INT SEL' : 'INT');
+      fields.interceptBtn.classList.toggle('selection-armed', !!snapshot.interceptSelectionArmed);
       setToggle(fields.labelsBtn, snapshot.labelMode !== 'Off', `LBL ${snapshot.labelMode || ''}`.trim());
       setToggle(fields.laraBtn, snapshot.showAirspaceBoundaries, 'LARA');
       setToggle(fields.areaBtn, snapshot.showControlledAirspaceLayer, 'AREA');
@@ -1057,6 +1097,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
       const center = { x: w / 2, y: h / 2 };
       const radius = Math.max(40, Math.min(w, h) * 0.44);
+      labelHitBoxes = [];
       drawRings(center, radius);
       drawOwnship(center, radius);
 
@@ -1065,36 +1106,121 @@ public sealed class WebDisplayServer : IAsyncDisposable
         return;
       }
 
+      drawHeadingReadout(center);
+      drawFrameCompass(center);
       if (snapshot.trailsEnabled) {
         for (const target of snapshot.targets) drawTrail(target, center, radius);
       }
+      drawIntercept(center, radius);
       for (const target of snapshot.targets) drawTarget(target, center, radius);
     }
 
     function drawRings(center, radius) {
+      if (!snapshot?.showRangeRings) return;
       ctx.save();
-      ctx.strokeStyle = 'rgba(140,255,220,0.78)';
-      ctx.lineWidth = 1.1;
-      ctx.font = '600 11px Consolas, monospace';
-      ctx.fillStyle = '#afffde';
       for (let i = 1; i <= 4; i++) {
         const ring = radius * i / 4;
+        ctx.strokeStyle = 'rgba(0,8,10,0.9)';
+        ctx.lineWidth = 3.6;
         ctx.beginPath();
         ctx.arc(center.x, center.y, ring, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.fillText(`${Math.round((snapshot?.rangeNm || 40) * i / 4)} NM`, center.x + 6, center.y - ring - 8);
-      }
-      const headings = [['360',0], ['045',45], ['090',90], ['135',135], ['180',180], ['225',225], ['270',270], ['315',315]];
-      for (const [label, bearing] of headings) {
-        const display = snapshot?.orientation === 'HeadingUp' && snapshot?.ownship
-          ? normalize(bearing - snapshot.ownship.headingDeg)
-          : bearing;
-        const rad = display * Math.PI / 180;
-        const x = center.x + (radius + 15) * Math.sin(rad);
-        const y = center.y - (radius + 15) * Math.cos(rad);
-        drawCenteredText(label, x, y, '#afffde', 13, '700');
+        ctx.strokeStyle = 'rgba(180,255,235,0.82)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, ring, 0, Math.PI * 2);
+        ctx.stroke();
+        drawCenteredText(`${Math.round((snapshot?.rangeNm || 40) * i / 4)} NM`, center.x, center.y - ring - 13, '#afffdc', 10, '600');
       }
       ctx.restore();
+    }
+
+    function drawHeadingReadout(center) {
+      const heading = Math.round(normalize(snapshot.ownship.headingDeg)).toString().padStart(3, '0');
+      drawTopReadout(`HDG ${heading}`, center.x, 10, '#afffe1');
+    }
+
+    function drawTopReadout(text, centerX, y, fillStyle) {
+      ctx.save();
+      ctx.font = '700 14px Consolas, monospace';
+      const metrics = ctx.measureText(text);
+      const width = metrics.width + 16;
+      const height = 24;
+      const x = Math.max(2, Math.min(centerX - width / 2, canvas.clientWidth - width - 2));
+      ctx.fillStyle = 'rgba(3,10,16,0.7)';
+      ctx.strokeStyle = 'rgba(110,180,170,0.45)';
+      ctx.lineWidth = 1;
+      ctx.fillRect(x, y, width, height);
+      ctx.strokeRect(x, y, width, height);
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,8,10,0.96)';
+      ctx.strokeText(text, x + 8, y + 16);
+      ctx.fillStyle = fillStyle;
+      ctx.fillText(text, x + 8, y + 16);
+      ctx.restore();
+    }
+
+    function drawFrameCompass(center) {
+      const offset = snapshot.orientation === 'HeadingUp' ? snapshot.ownship.headingDeg : 0;
+      const compassRadius = Math.max(12, Math.min(canvas.clientWidth, canvas.clientHeight) / 2 - 8);
+
+      ctx.save();
+      ctx.lineWidth = 3.2;
+      ctx.strokeStyle = 'rgba(0,7,10,0.7)';
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, compassRadius, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(170,205,210,0.55)';
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, compassRadius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      for (let bearing = 0; bearing < 360; bearing += 10) {
+        const display = normalize(bearing - offset);
+        const major = bearing % 30 === 0;
+        const length = major ? 12 : 7;
+        const edge = pointOnCircle(center, compassRadius, display);
+        const inner = pointOnCircle(center, compassRadius - length, display);
+        ctx.lineWidth = 3.4;
+        ctx.strokeStyle = 'rgba(0,7,10,0.86)';
+        ctx.beginPath();
+        ctx.moveTo(edge.x, edge.y);
+        ctx.lineTo(inner.x, inner.y);
+        ctx.stroke();
+        ctx.lineWidth = major ? 1.7 : 1.1;
+        ctx.strokeStyle = major ? 'rgba(215,245,240,0.82)' : 'rgba(170,205,210,0.62)';
+        ctx.beginPath();
+        ctx.moveTo(edge.x, edge.y);
+        ctx.lineTo(inner.x, inner.y);
+        ctx.stroke();
+      }
+
+      drawCompassCardinal('N', 0, offset, center, compassRadius);
+      drawCompassCardinal('E', 90, offset, center, compassRadius);
+      drawCompassCardinal('S', 180, offset, center, compassRadius);
+      drawCompassCardinal('W', 270, offset, center, compassRadius);
+      ctx.restore();
+    }
+
+    function drawCompassCardinal(label, bearing, offset, center, compassRadius) {
+      const p = pointOnCircle(center, compassRadius - 27, normalize(bearing - offset));
+      ctx.font = '700 18px Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.lineWidth = 3.2;
+      ctx.strokeStyle = 'rgba(0,7,10,0.96)';
+      ctx.strokeText(label, p.x, p.y);
+      ctx.fillStyle = '#ecfaf6';
+      ctx.fillText(label, p.x, p.y);
+    }
+
+    function pointOnCircle(center, radius, bearingDeg) {
+      const rad = bearingDeg * Math.PI / 180;
+      return {
+        x: center.x + radius * Math.sin(rad),
+        y: center.y - radius * Math.cos(rad)
+      };
     }
 
     function drawOwnship(center, radius) {
@@ -1102,23 +1228,23 @@ public sealed class WebDisplayServer : IAsyncDisposable
       ctx.save();
       ctx.translate(center.x, center.y);
       ctx.rotate(heading * Math.PI / 180);
-      ctx.strokeStyle = '#aaffdc';
-      ctx.fillStyle = '#aaffdc';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(0, -10);
-      ctx.lineTo(-8, 8);
-      ctx.lineTo(8, 8);
-      ctx.closePath();
-      ctx.fill();
-      ctx.strokeStyle = '#001014';
-      ctx.stroke();
-      ctx.strokeStyle = '#aaffdc';
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.lineTo(0, -radius);
-      ctx.stroke();
+      drawOwnshipCross('rgba(0,8,10,0.96)', 3.2);
+      drawOwnshipCross('#dcfcf6', 1.5);
       ctx.restore();
+    }
+
+    function drawOwnshipCross(strokeStyle, lineWidth) {
+      ctx.strokeStyle = strokeStyle;
+      ctx.lineWidth = lineWidth;
+      ctx.lineCap = 'square';
+      ctx.beginPath();
+      ctx.moveTo(0, -13);
+      ctx.lineTo(0, 13);
+      ctx.moveTo(-13, 0);
+      ctx.lineTo(13, 0);
+      ctx.moveTo(-4.5, 13);
+      ctx.lineTo(4.5, 13);
+      ctx.stroke();
     }
 
     function drawTrail(target, center, radius) {
@@ -1173,8 +1299,154 @@ public sealed class WebDisplayServer : IAsyncDisposable
       } else {
         circle(p.x, p.y, 2.5 * scale, true);
       }
+      if (snapshot.interceptTargetId && target.id.toLowerCase() === snapshot.interceptTargetId.toLowerCase()) {
+        ctx.strokeStyle = '#ffd25a';
+        ctx.lineWidth = 1.4;
+        ctx.strokeRect(p.x - 11 * scale, p.y - 11 * scale, 22 * scale, 22 * scale);
+      }
       if (snapshot.labelMode !== 'Off') drawLabel(target, p);
       ctx.restore();
+    }
+
+    function drawIntercept(center, radius) {
+      if (!snapshot?.ownship || !snapshot.interceptTargetId) return;
+      const target = snapshot.targets.find(item => item.id.toLowerCase() === snapshot.interceptTargetId.toLowerCase());
+      if (!target || target.rangeNm > snapshot.rangeNm) return;
+
+      const targetPoint = projectPolar(target.rangeNm, target.bearingDegTrue, center, radius);
+      ctx.save();
+      ctx.strokeStyle = '#ffd25a';
+      ctx.fillStyle = '#ffd25a';
+      ctx.lineWidth = 1.4;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath();
+      ctx.moveTo(center.x, center.y);
+      ctx.lineTo(targetPoint.x, targetPoint.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const solution = calculateIntercept(target);
+      if (solution.hasSolution) {
+        const interceptPoint = projectGeo(solution.latitudeDeg, solution.longitudeDeg, center, radius, false);
+        if (Number.isFinite(interceptPoint.x) && Number.isFinite(interceptPoint.y)) {
+          ctx.globalAlpha = 0.75;
+          ctx.beginPath();
+          ctx.moveTo(targetPoint.x, targetPoint.y);
+          ctx.lineTo(interceptPoint.x, interceptPoint.y);
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          circle(interceptPoint.x, interceptPoint.y, 7, false);
+          ctx.beginPath();
+          ctx.moveTo(interceptPoint.x - 10, interceptPoint.y);
+          ctx.lineTo(interceptPoint.x + 10, interceptPoint.y);
+          ctx.moveTo(interceptPoint.x, interceptPoint.y - 10);
+          ctx.lineTo(interceptPoint.x, interceptPoint.y + 10);
+          ctx.stroke();
+        }
+      }
+
+      drawInterceptReadout(target, solution, center);
+      ctx.restore();
+    }
+
+    function calculateIntercept(target) {
+      const ownSpeed = snapshot.ownship.speedKt || 0;
+      const targetSpeed = target.speedKt || 0;
+      const targetHeading = target.headingDeg || 0;
+      if (ownSpeed <= 1 || target.rangeNm <= 0) return { hasSolution: false };
+
+      const bearingRad = target.bearingDegTrue * Math.PI / 180;
+      const targetX = target.rangeNm * Math.sin(bearingRad);
+      const targetY = target.rangeNm * Math.cos(bearingRad);
+      const headingRad = targetHeading * Math.PI / 180;
+      const targetVx = targetSpeed * Math.sin(headingRad);
+      const targetVy = targetSpeed * Math.cos(headingRad);
+      const a = targetVx * targetVx + targetVy * targetVy - ownSpeed * ownSpeed;
+      const b = 2 * (targetX * targetVx + targetY * targetVy);
+      const c = targetX * targetX + targetY * targetY;
+      const t = solveInterceptTime(a, b, c);
+      if (t == null) return { hasSolution: false };
+
+      const interceptX = targetX + targetVx * t;
+      const interceptY = targetY + targetVy * t;
+      const interceptRange = Math.hypot(interceptX, interceptY);
+      if (interceptRange <= 0.001) return { hasSolution: false };
+
+      const headingDeg = normalize(Math.atan2(interceptX, interceptY) * 180 / Math.PI);
+      const destination = destinationPoint(snapshot.ownship.latitudeDeg, snapshot.ownship.longitudeDeg, headingDeg, interceptRange);
+      return {
+        hasSolution: true,
+        headingDeg,
+        timeSeconds: t * 3600,
+        latitudeDeg: destination.latitudeDeg,
+        longitudeDeg: destination.longitudeDeg
+      };
+    }
+
+    function solveInterceptTime(a, b, c) {
+      const epsilon = 1e-9;
+      if (Math.abs(a) < epsilon) {
+        if (Math.abs(b) < epsilon) return null;
+        const linear = -c / b;
+        return linear > 0 ? linear : null;
+      }
+      const disc = b * b - 4 * a * c;
+      if (disc < 0) return null;
+      const root = Math.sqrt(disc);
+      const candidates = [(-b - root) / (2 * a), (-b + root) / (2 * a)].filter(value => value > 0).sort((x, y) => x - y);
+      return candidates.length ? candidates[0] : null;
+    }
+
+    function destinationPoint(latDeg, lonDeg, bearingDeg, distanceNm) {
+      const earth = 3440.065;
+      const ad = distanceNm / earth;
+      const bearing = normalize(bearingDeg) * Math.PI / 180;
+      const lat = latDeg * Math.PI / 180;
+      const lon = lonDeg * Math.PI / 180;
+      const destLat = Math.asin(Math.sin(lat) * Math.cos(ad) + Math.cos(lat) * Math.sin(ad) * Math.cos(bearing));
+      const destLon = lon + Math.atan2(Math.sin(bearing) * Math.sin(ad) * Math.cos(lat), Math.cos(ad) - Math.sin(lat) * Math.sin(destLat));
+      return {
+        latitudeDeg: destLat * 180 / Math.PI,
+        longitudeDeg: (((destLon * 180 / Math.PI) + 540) % 360) - 180
+      };
+    }
+
+    function drawInterceptLabel(target, solution, x, y) {
+      const altitude = target.relativeAltitudeFt >= 0 ? `+${Math.round(target.relativeAltitudeFt)}` : `${Math.round(target.relativeAltitudeFt)}`;
+      const lines = [
+        `INT ${target.displayName}`,
+        `BRG ${Math.round(target.bearingDegTrue).toString().padStart(3, '0')} RNG ${target.rangeNm.toFixed(1)}`,
+        `ALT ${altitude} FT`,
+        solution.hasSolution
+          ? `HDG ${Math.round(solution.headingDeg).toString().padStart(3, '0')} TTI ${formatInterceptTime(solution.timeSeconds)}`
+          : 'NO INT'
+      ];
+      ctx.font = '12px Consolas, monospace';
+      const width = Math.max(...lines.map(line => ctx.measureText(line).width)) + 8;
+      const height = lines.length * 15 + 4;
+      x = Math.max(2, Math.min(x, canvas.clientWidth - width - 2));
+      y = Math.max(2, Math.min(y, canvas.clientHeight - height - 2));
+      ctx.fillStyle = 'rgba(3,10,16,0.76)';
+      ctx.strokeStyle = 'rgba(255,210,90,0.65)';
+      ctx.lineWidth = 1;
+      ctx.fillRect(x, y, width, height);
+      ctx.strokeRect(x, y, width, height);
+      lines.forEach((line, index) => {
+        ctx.fillStyle = index === 0 ? '#ffe178' : line === 'NO INT' ? '#ff9090' : '#fff3c2';
+        ctx.fillText(line, x + 4, y + 14 + index * 15);
+      });
+    }
+
+    function formatInterceptTime(seconds) {
+      const total = Math.max(0, Math.round(seconds));
+      return `${Math.floor(total / 60).toString().padStart(2, '0')}:${(total % 60).toString().padStart(2, '0')}`;
+    }
+
+    function drawInterceptReadout(target, solution, center) {
+      const text = solution.hasSolution
+        ? `INT ${target.displayName} HDG ${Math.round(solution.headingDeg).toString().padStart(3, '0')} TTI ${formatInterceptTime(solution.timeSeconds)}`
+        : `INT ${target.displayName} NO INT`;
+      drawTopReadout(text, center.x + 150, 10, solution.hasSolution ? '#ffe178' : '#ff9090');
     }
 
     function drawTargetHeading(target, p, scale) {
@@ -1207,13 +1479,17 @@ public sealed class WebDisplayServer : IAsyncDisposable
       if (y + height > canvas.clientHeight) y = canvas.clientHeight - height - 4;
       if (y < 4) y = 4;
       ctx.globalAlpha = 1;
-      ctx.fillStyle = 'rgba(3,10,16,0.72)';
-      ctx.strokeStyle = 'rgba(110,180,170,0.45)';
+      const labelBackgroundOpacity = Math.max(0, Math.min(snapshot.mapLabelBackgroundOpacity ?? 0.75, 1));
+      ctx.fillStyle = `rgba(3,10,16,${0.72 * labelBackgroundOpacity})`;
+      ctx.strokeStyle = `rgba(110,180,170,${0.45 * labelBackgroundOpacity})`;
       ctx.lineWidth = 1;
-      ctx.fillRect(x, y, width, height);
-      ctx.strokeRect(x, y, width, height);
+      if (labelBackgroundOpacity > 0.01) {
+        ctx.fillRect(x, y, width, height);
+        ctx.strokeRect(x, y, width, height);
+      }
       ctx.fillStyle = '#bfffea';
       lines.forEach((line, index) => ctx.fillText(line, x + 4, y + 15 + index * 16));
+      labelHitBoxes.push({ target, x, y, width, height });
       ctx.strokeStyle = 'rgba(120,210,200,0.45)';
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
@@ -1243,9 +1519,6 @@ public sealed class WebDisplayServer : IAsyncDisposable
           map.remove();
           map = null;
           mapReady = false;
-          currentAreasStyle = '';
-          areasLayerIds = [];
-          areasSourceIds = [];
         }
         fields.message.textContent = 'Map unavailable';
         mapElement.style.opacity = '0';
@@ -1260,9 +1533,6 @@ public sealed class WebDisplayServer : IAsyncDisposable
         map.remove();
         map = null;
         mapReady = false;
-        currentAreasStyle = '';
-        areasLayerIds = [];
-        areasSourceIds = [];
       }
 
       currentMapboxToken = token;
@@ -1288,107 +1558,12 @@ public sealed class WebDisplayServer : IAsyncDisposable
       map.on('load', () => {
         mapReady = true;
         fields.message.textContent = '';
-        updateAreasOverlay();
         updateMap();
         draw();
       });
       map.on('error', () => {
         fields.message.textContent = 'Map unavailable';
       });
-    }
-
-    function areasStyleApiUrl(styleUrl, token) {
-      const trimmed = (styleUrl || '').trim();
-      if (/^https?:\/\//i.test(trimmed)) {
-        const separator = trimmed.includes('?') ? '&' : '?';
-        return trimmed.includes('access_token=') ? trimmed : `${trimmed}${separator}access_token=${encodeURIComponent(token)}`;
-      }
-      const match = /^mapbox:\/\/styles\/([^/]+)\/([^/?#]+)/i.exec(trimmed);
-      if (!match) return '';
-      return `https://api.mapbox.com/styles/v1/${encodeURIComponent(match[1])}/${encodeURIComponent(match[2])}?access_token=${encodeURIComponent(token)}`;
-    }
-
-    function removeAreasOverlay() {
-      if (!map) return;
-      for (const id of [...areasLayerIds].reverse()) {
-        if (map.getLayer(id)) map.removeLayer(id);
-      }
-      for (const id of [...areasSourceIds].reverse()) {
-        if (map.getSource(id)) map.removeSource(id);
-      }
-      areasLayerIds = [];
-      areasSourceIds = [];
-      currentAreasStyle = '';
-    }
-
-    function setAreasVisibility(visible) {
-      if (!map) return;
-      const visibility = visible ? 'visible' : 'none';
-      for (const id of areasLayerIds) {
-        if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', visibility);
-      }
-    }
-
-    async function addAreasOverlay() {
-      if (!snapshot || !map || !map.isStyleLoaded()) return;
-      const styleUrl = (snapshot.mapboxAreasStyleUrl || '').trim();
-      const token = (snapshot.mapboxAccessToken || '').trim();
-      if (!styleUrl || !token) {
-        removeAreasOverlay();
-        return;
-      }
-
-      if (currentAreasStyle === styleUrl && areasLayerIds.length > 0) {
-        setAreasVisibility(!!snapshot.showControlledAirspaceLayer);
-        return;
-      }
-
-      const apiUrl = areasStyleApiUrl(styleUrl, token);
-      if (!apiUrl) {
-        removeAreasOverlay();
-        return;
-      }
-
-      removeAreasOverlay();
-      const response = await fetch(apiUrl, { cache: 'force-cache' });
-      if (!response.ok) throw new Error(`Areas style ${response.status}`);
-      const style = await response.json();
-      const sourceMap = new globalThis.Map();
-      for (const [sourceId, source] of Object.entries(style.sources || {})) {
-        const prefixedSourceId = `areas-${sourceId}`;
-        if (!map.getSource(prefixedSourceId)) {
-          map.addSource(prefixedSourceId, JSON.parse(JSON.stringify(source)));
-          areasSourceIds.push(prefixedSourceId);
-        }
-        sourceMap.set(sourceId, prefixedSourceId);
-      }
-
-      for (const layer of style.layers || []) {
-        if (!layer || layer.type === 'background') continue;
-        const copy = JSON.parse(JSON.stringify(layer));
-        copy.id = `areas-${copy.id}`;
-        if (copy.source && sourceMap.has(copy.source)) {
-          copy.source = sourceMap.get(copy.source);
-        } else if (copy.source) {
-          continue;
-        }
-        copy.layout = copy.layout || {};
-        copy.layout.visibility = snapshot.showControlledAirspaceLayer ? 'visible' : 'none';
-        if (!map.getLayer(copy.id)) {
-          map.addLayer(copy);
-          areasLayerIds.push(copy.id);
-        }
-      }
-
-      currentAreasStyle = styleUrl;
-    }
-
-    function updateAreasOverlay() {
-      if (!snapshot || !map || !map.isStyleLoaded()) return;
-      if (areasOverlayPromise) return;
-      areasOverlayPromise = addAreasOverlay()
-        .catch(() => { fields.message.textContent = 'Areas unavailable'; })
-        .finally(() => { areasOverlayPromise = null; });
     }
 
     function updateMap() {
@@ -1404,7 +1579,6 @@ public sealed class WebDisplayServer : IAsyncDisposable
         bearing: snapshot.orientation === 'HeadingUp' ? snapshot.ownship.headingDeg : 0,
         pitch: 0
       });
-      updateAreasOverlay();
     }
 
     function calculateZoom() {
@@ -1452,6 +1626,56 @@ public sealed class WebDisplayServer : IAsyncDisposable
       };
     }
 
+    function findTargetAtPoint(x, y) {
+      if (!snapshot?.targets?.length || !snapshot?.ownship) return null;
+      for (let i = labelHitBoxes.length - 1; i >= 0; i--) {
+        const box = labelHitBoxes[i];
+        if (x >= box.x && x <= box.x + box.width && y >= box.y && y <= box.y + box.height) {
+          return box.target;
+        }
+      }
+
+      const center = { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 };
+      const radius = Math.max(40, Math.min(canvas.clientWidth, canvas.clientHeight) * 0.44);
+      const scale = Math.min(Math.max(snapshot.targetSymbolScale || 1, 0.6), 1.8);
+      const hitRadius = 14 * scale;
+      let best = null;
+      for (const target of snapshot.targets) {
+        if (target.rangeNm > snapshot.rangeNm) continue;
+        const p = projectPolar(target.rangeNm, target.bearingDegTrue, center, radius);
+        const distance = Math.hypot(p.x - x, p.y - y);
+        if (distance <= hitRadius && (!best || distance < best.distance)) {
+          best = { target, distance };
+        }
+      }
+
+      return best?.target || null;
+    }
+
+    function handleCanvasClick(event) {
+      if (!snapshot?.interceptSelectionArmed) return;
+      const rect = canvas.getBoundingClientRect();
+      const target = findTargetAtPoint(event.clientX - rect.left, event.clientY - rect.top);
+      if (!target) return;
+      event.preventDefault();
+      sendCommand(`intercept-target:${target.id}`);
+    }
+
+    function handleButtonCommand(command) {
+      if (command === 'bullseye' && !snapshot?.showBullseye) {
+        const currentLat = snapshot?.bullseyeLatitudeDeg == null ? '' : snapshot.bullseyeLatitudeDeg.toFixed(6);
+        const currentLon = snapshot?.bullseyeLongitudeDeg == null ? '' : snapshot.bullseyeLongitudeDeg.toFixed(6);
+        const latitude = prompt('Bullseye latitude', currentLat || 'N60.3172');
+        if (latitude == null) return;
+        const longitude = prompt('Bullseye longitude', currentLon || 'E024.9633');
+        if (longitude == null) return;
+        sendCommand(`bullseye-set:${latitude},${longitude}`);
+        return;
+      }
+
+      sendCommand(command);
+    }
+
     function colorFor(category) {
       if (category === 'Friend') return '#78dcff';
       if (category === 'Enemy') return '#ff5f5f';
@@ -1481,10 +1705,11 @@ public sealed class WebDisplayServer : IAsyncDisposable
     }
 
     window.addEventListener('resize', resize);
+    canvas.addEventListener('click', handleCanvasClick);
     fullscreenBtn.addEventListener('click', toggleFullscreen);
     document.addEventListener('fullscreenchange', updateFullscreenButton);
     for (const button of document.querySelectorAll('[data-command]')) {
-      button.addEventListener('click', () => sendCommand(button.dataset.command));
+      button.addEventListener('click', () => handleButtonCommand(button.dataset.command));
     }
     setInterval(poll, 500);
     setInterval(() => {
