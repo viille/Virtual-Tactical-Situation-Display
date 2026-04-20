@@ -123,11 +123,11 @@ public sealed class TacticalScopeControl : FrameworkElement
         var center = new Point(RenderSize.Width / 2.0, RenderSize.Height / 2.0);
         var radius = System.Math.Min(RenderSize.Width, RenderSize.Height) * 0.45;
         var ownshipHeadingDeg = Picture.Ownship.HeadingDeg;
+        DrawOptionalOverlay(() => DrawAirspaces(dc, center, radius, ownshipHeadingDeg));
+        DrawOptionalOverlay(() => DrawBullseye(dc, center, radius, ownshipHeadingDeg));
         DrawRings(dc, center, radius);
         DrawFrameCompass(dc, center, ownshipHeadingDeg);
         DrawHeadingReadout(dc, center, ownshipHeadingDeg);
-        DrawOptionalOverlay(() => DrawAirspaces(dc, center, radius, ownshipHeadingDeg));
-        DrawOptionalOverlay(() => DrawBullseye(dc, center, radius, ownshipHeadingDeg));
         DrawOptionalOverlay(() => DrawIntercept(dc, center, radius, ownshipHeadingDeg));
         DrawOwnship(dc, center, ownshipHeadingDeg);
         DrawTargets(dc, center, radius, ownshipHeadingDeg);

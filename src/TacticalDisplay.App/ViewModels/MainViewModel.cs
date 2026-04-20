@@ -354,6 +354,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         private set => SetField(ref _showBullseyePopup, value);
     }
 
+    public bool BullseyeButtonActive =>
+        Settings.ShowBullseye &&
+        Settings.BullseyeLatitudeDeg.HasValue &&
+        Settings.BullseyeLongitudeDeg.HasValue;
+
     public string SettingsToggleText => ShowSettings ? "Hide Settings" : "Show Settings";
     public string TopMostToggleText => IsAlwaysOnTop ? "Unpin Window" : "Pin On Top";
     public string AppVersionText { get; set; } = "ver unknown";
@@ -600,6 +605,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
 
         ShowBullseyePopup = true;
+        Raise(nameof(BullseyeButtonActive));
     }
 
     private void ToggleIntercept()
@@ -647,6 +653,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         if (!Settings.BullseyeLatitudeDeg.HasValue || !Settings.BullseyeLongitudeDeg.HasValue)
         {
+            BullseyeLatitudeText = string.Empty;
+            BullseyeLongitudeText = string.Empty;
             UpdateBullseyeText();
             return;
         }
@@ -685,6 +693,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Settings.ShowBullseye = true;
         _configStore.SaveDisplaySettings(Settings);
         UpdateBullseyeText();
+        Raise(nameof(BullseyeButtonActive));
         Raise(nameof(Settings));
         return true;
     }
@@ -692,13 +701,10 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private void ClearBullseye()
     {
         Settings.ShowBullseye = false;
-        Settings.BullseyeLatitudeDeg = null;
-        Settings.BullseyeLongitudeDeg = null;
-        BullseyeLatitudeText = string.Empty;
-        BullseyeLongitudeText = string.Empty;
         ShowBullseyePopup = false;
         _configStore.SaveDisplaySettings(Settings);
-        UpdateBullseyeText();
+        InitializeBullseyeText();
+        Raise(nameof(BullseyeButtonActive));
         Raise(nameof(Settings));
     }
 
@@ -706,6 +712,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         ShowBullseyePopup = false;
         InitializeBullseyeText();
+        Raise(nameof(BullseyeButtonActive));
+        Raise(nameof(Settings));
     }
 
     private void UpdateBullseyeText()

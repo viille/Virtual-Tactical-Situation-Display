@@ -22,7 +22,6 @@ public partial class MainWindow : Window
     private readonly UpdateCheckService _updateCheckService = new();
     private WebDisplayServer? _webDisplayServer;
     private int _updateCheckStarted;
-    private double _cachedSettingsPanelWidth = 320;
     private bool _isClosing;
     private bool _shutdownCompleted;
     private bool _fullscreenWarningOpen;
@@ -40,7 +39,7 @@ public partial class MainWindow : Window
         ScopeControl.TargetClicked += OnScopeTargetClicked;
         ScopeControl.LabelMoved += OnScopeLabelMoved;
         Topmost = _viewModel.IsAlwaysOnTop;
-        ApplyLayoutState(resizeWindow: false);
+        ApplyLayoutState();
         Loaded += OnLoaded;
         Closing += OnClosingAsync;
         StateChanged += OnWindowStateChanged;
@@ -194,7 +193,7 @@ public partial class MainWindow : Window
         }
         else if (e.PropertyName == nameof(MainViewModel.ShowSettings))
         {
-            ApplyLayoutState(resizeWindow: true);
+            ApplyLayoutState();
         }
         else if (e.PropertyName == nameof(MainViewModel.Settings))
         {
@@ -206,33 +205,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private void ApplyLayoutState(bool resizeWindow)
+    private void ApplyLayoutState()
     {
         var showSettings = _viewModel.ShowSettings;
-        var measuredPanelWidth = SettingsBorder.ActualWidth;
-        if (measuredPanelWidth > 1)
-        {
-            _cachedSettingsPanelWidth = measuredPanelWidth;
-        }
-
-        if (resizeWindow && WindowState == WindowState.Normal)
-        {
-            var widthDelta = _cachedSettingsPanelWidth + ScopeSettingsGapWidth;
-            if (showSettings)
-            {
-                MinWidth = MinWidthWithSettings;
-                Width = System.Math.Max(Width + widthDelta, MinWidthWithSettings);
-            }
-            else
-            {
-                MinWidth = MinWidthWithoutSettings;
-                Width = System.Math.Max(Width - widthDelta, MinWidthWithoutSettings);
-            }
-        }
-        else
-        {
-            MinWidth = showSettings ? MinWidthWithSettings : MinWidthWithoutSettings;
-        }
+        MinWidth = showSettings ? MinWidthWithSettings : MinWidthWithoutSettings;
 
         SettingsColumn.Width = showSettings ? new GridLength(1.2, GridUnitType.Star) : new GridLength(0);
         ScopeColumn.Width = showSettings ? new GridLength(3, GridUnitType.Star) : new GridLength(1, GridUnitType.Star);

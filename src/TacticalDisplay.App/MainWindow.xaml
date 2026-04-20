@@ -316,7 +316,7 @@
                         <Border Style="{StaticResource MfdSideTickStyle}" />
                         <ToggleButton Content="TRAIL" Command="{Binding ToggleTrailsCommand}" IsChecked="{Binding Settings.TrailsEnabled, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
-                        <ToggleButton Content="BE" Command="{Binding ToggleBullseyeCommand}" IsChecked="{Binding Settings.ShowBullseye, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}" />
+                        <ToggleButton Content="BE" Command="{Binding ToggleBullseyeCommand}" IsChecked="{Binding BullseyeButtonActive, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
                         <ToggleButton Command="{Binding ToggleInterceptCommand}" IsChecked="{Binding InterceptModeActive, Mode=OneWay}" Style="{StaticResource MfdSideToggleButtonStyle}">
                             <TextBlock Text="{Binding InterceptToggleText}">
