@@ -5,6 +5,7 @@ using System.Windows.Media;
 using TacticalDisplay.Core.Formatting;
 using TacticalDisplay.Core.Math;
 using TacticalDisplay.Core.Models;
+using TacticalDisplay.Core.Services;
 using TacticalDisplay.App.Rendering;
 
 namespace TacticalDisplay.App.Controls;
@@ -705,7 +706,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         };
         dc.DrawLine(pen, center, targetPoint);
 
-        var solution = CalculateInterceptSolution(Picture.Ownship, target);
+        var solution = TacticalInterceptCalculator.Calculate(Picture.Ownship, target);
         if (solution.HasSolution)
         {
             var interceptPoint = ProjectGeographicPoint(
@@ -811,84 +812,6 @@ public sealed class TacticalScopeControl : FrameworkElement
     {
         var totalSeconds = Math.Max(0, (int)Math.Round(seconds));
         return $"{totalSeconds / 60:00}:{totalSeconds % 60:00}";
-    }
-
-    private static InterceptSolution CalculateInterceptSolution(OwnshipState ownship, ComputedTarget target)
-    {
-        var ownSpeedKt = ownship.SpeedKt ?? 0;
-        var targetSpeedKt = target.SpeedKt ?? 0;
-        var targetHeadingDeg = target.HeadingDeg ?? 0;
-        if (ownSpeedKt <= 1 || target.RangeNm <= 0)
-        {
-            return InterceptSolution.None;
-        }
-
-        var targetBearingRad = target.BearingDegTrue * Math.PI / 180.0;
-        var targetX = target.RangeNm * Math.Sin(targetBearingRad);
-        var targetY = target.RangeNm * Math.Cos(targetBearingRad);
-        var targetHeadingRad = targetHeadingDeg * Math.PI / 180.0;
-        var targetVelocityX = targetSpeedKt * Math.Sin(targetHeadingRad);
-        var targetVelocityY = targetSpeedKt * Math.Cos(targetHeadingRad);
-        var a = (targetVelocityX * targetVelocityX) + (targetVelocityY * targetVelocityY) - (ownSpeedKt * ownSpeedKt);
-        var b = 2 * ((targetX * targetVelocityX) + (targetY * targetVelocityY));
-        var c = (targetX * targetX) + (targetY * targetY);
-        var timeHours = SolvePositiveInterceptTimeHours(a, b, c);
-        if (!timeHours.HasValue)
-        {
-            return InterceptSolution.None;
-        }
-
-        var interceptX = targetX + (targetVelocityX * timeHours.Value);
-        var interceptY = targetY + (targetVelocityY * timeHours.Value);
-        var interceptRange = Math.Sqrt((interceptX * interceptX) + (interceptY * interceptY));
-        if (interceptRange <= 0.001)
-        {
-            return InterceptSolution.None;
-        }
-
-        var headingDeg = GeoMath.NormalizeDegrees(Math.Atan2(interceptX, interceptY) * 180.0 / Math.PI);
-        var destination = GeoMath.DestinationPoint(
-            ownship.LatitudeDeg,
-            ownship.LongitudeDeg,
-            headingDeg,
-            interceptRange);
-
-        return new InterceptSolution(
-            true,
-            headingDeg,
-            timeHours.Value * 3600.0,
-            destination.latitudeDeg,
-            destination.longitudeDeg);
-    }
-
-    private static double? SolvePositiveInterceptTimeHours(double a, double b, double c)
-    {
-        const double epsilon = 1e-9;
-        if (Math.Abs(a) < epsilon)
-        {
-            if (Math.Abs(b) < epsilon)
-            {
-                return null;
-            }
-
-            var linear = -c / b;
-            return linear > 0 ? linear : null;
-        }
-
-        var discriminant = (b * b) - (4 * a * c);
-        if (discriminant < 0)
-        {
-            return null;
-        }
-
-        var root = Math.Sqrt(discriminant);
-        var t1 = (-b - root) / (2 * a);
-        var t2 = (-b + root) / (2 * a);
-        return new[] { t1, t2 }
-            .Where(t => t > 0)
-            .OrderBy(t => t)
-            .Cast<double?>()
-            .FirstOrDefault();
     }
 
     private static void DrawTargetHeading(
@@ -1320,11 +1243,6 @@ public sealed class TacticalScopeControl : FrameworkElement
     private sealed record MeasuredLabelLine(LabelLine Line, FormattedText Formatted);
     private sealed record MeasuredLabel(Size Size, IReadOnlyList<MeasuredLabelLine> Lines);
     private sealed record LabelPlacement(Rect Bounds, IReadOnlyList<MeasuredLabelLine> Lines);
-    private sealed record InterceptSolution(bool HasSolution, double HeadingDeg, double TimeSeconds, double LatitudeDeg, double LongitudeDeg)
-    {
-        public static InterceptSolution None { get; } = new(false, 0, 0, 0, 0);
-    }
-
     private sealed record HitLabel(string TargetId, Point SymbolPoint, Point BaseTopLeft, Rect Bounds, Vector CurrentOffset);
     private sealed record DragState(string TargetId, Point StartPosition, Point BaseTopLeft, Vector StartOffset);
 }

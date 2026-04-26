@@ -4,6 +4,7 @@ using System.IO;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Windows.Threading;
@@ -25,6 +26,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
     private readonly MainViewModel _viewModel;
     private readonly Dispatcher _dispatcher;
     private readonly int _port;
+    private readonly string _commandToken = Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
     private readonly CancellationTokenSource _cts = new();
     private TcpListener? _listener;
     private Task? _serverTask;
@@ -142,7 +144,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
             if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) && path is "/" or "/index.html")
             {
-                await WriteResponseAsync(stream, 200, "OK", "text/html; charset=utf-8", IndexHtml, cancellationToken).ConfigureAwait(false);
+                await WriteResponseAsync(stream, 200, "OK", "text/html; charset=utf-8", BuildIndexHtml(), cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -162,14 +164,20 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
             if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) && path == "/api/command")
             {
-                var command = ParseCommand(body);
-                if (string.IsNullOrWhiteSpace(command))
+                var commandRequest = ParseCommand(body);
+                if (commandRequest is null || string.IsNullOrWhiteSpace(commandRequest.Command))
                 {
                     await WriteResponseAsync(stream, 400, "Bad Request", "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"Missing command\"}", cancellationToken).ConfigureAwait(false);
                     return;
                 }
 
-                var result = ExecuteCommand(command);
+                if (!IsValidCommandToken(commandRequest.Token))
+                {
+                    await WriteResponseAsync(stream, 403, "Forbidden", "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"Invalid command token\"}", cancellationToken).ConfigureAwait(false);
+                    return;
+                }
+
+                var result = ExecuteCommand(commandRequest.Command);
                 if (!result.Ok)
                 {
                     var error = JsonSerializer.Serialize(new CommandResponse(false, result.Error ?? "Command failed"), JsonOptions);
@@ -279,7 +287,17 @@ public sealed class WebDisplayServer : IAsyncDisposable
         return 0;
     }
 
-    private static string? ParseCommand(string body)
+    private string BuildIndexHtml() =>
+        IndexHtml.Replace("{{COMMAND_TOKEN}}", _commandToken, StringComparison.Ordinal);
+
+    private bool IsValidCommandToken(string? token) =>
+        !string.IsNullOrWhiteSpace(token) &&
+        token.Length == _commandToken.Length &&
+        CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(token),
+            Encoding.UTF8.GetBytes(_commandToken));
+
+    private static CommandRequest? ParseCommand(string body)
     {
         if (string.IsNullOrWhiteSpace(body))
         {
@@ -289,10 +307,18 @@ public sealed class WebDisplayServer : IAsyncDisposable
         try
         {
             using var document = JsonDocument.Parse(body);
-            return document.RootElement.TryGetProperty("command", out var commandElement) &&
-                commandElement.ValueKind == JsonValueKind.String
-                    ? commandElement.GetString()
+            if (!document.RootElement.TryGetProperty("command", out var commandElement) ||
+                commandElement.ValueKind != JsonValueKind.String)
+            {
+                return null;
+            }
+
+            var token = document.RootElement.TryGetProperty("token", out var tokenElement) &&
+                tokenElement.ValueKind == JsonValueKind.String
+                    ? tokenElement.GetString()
                     : null;
+
+            return new CommandRequest(commandElement.GetString(), token);
         }
         catch (JsonException)
         {
@@ -691,6 +717,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
     private sealed record CommandResult(bool Ok, string? Error);
 
+    private sealed record CommandRequest(string? Command, string? Token);
+
     private sealed record CommandResponse(bool Ok, string Error);
 
     private const string IndexHtml = """
@@ -1070,7 +1098,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
         const response = await fetch('/api/command', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ command })
+          body: JSON.stringify({ command, token: '{{COMMAND_TOKEN}}' })
         });
         if (!response.ok) {
           const text = await response.text();

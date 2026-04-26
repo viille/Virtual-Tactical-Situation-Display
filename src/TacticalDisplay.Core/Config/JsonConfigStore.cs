@@ -5,6 +5,8 @@ namespace TacticalDisplay.Core.Config;
 
 public sealed class JsonConfigStore
 {
+    private const string CorruptTimestampFormat = "yyyyMMddHHmmss";
+
     private readonly JsonSerializerOptions _jsonOptions = new()
     {
         WriteIndented = true,
@@ -39,6 +41,7 @@ public sealed class JsonConfigStore
         }
         catch (Exception)
         {
+            BackupCorruptFile(path);
             var defaults = new TacticalDisplaySettings();
             SaveDisplaySettings(defaults);
             return defaults;
@@ -48,7 +51,7 @@ public sealed class JsonConfigStore
     public void SaveDisplaySettings(TacticalDisplaySettings settings)
     {
         var path = Path.Combine(ConfigDirectory, "display.json");
-        File.WriteAllText(path, JsonSerializer.Serialize(settings, _jsonOptions));
+        WriteAllTextAtomic(path, JsonSerializer.Serialize(settings, _jsonOptions));
     }
 
     public ClassificationConfig LoadClassification()
@@ -77,7 +80,8 @@ public sealed class JsonConfigStore
         }
         catch (Exception)
         {
-            File.WriteAllText(path, "{}");
+            BackupCorruptFile(path);
+            WriteAllTextAtomic(path, "{}");
             return [];
         }
     }
@@ -85,7 +89,7 @@ public sealed class JsonConfigStore
     public void SaveManualTargetMetadata(Dictionary<string, ManualTargetMetadata> metadata)
     {
         var path = Path.Combine(ConfigDirectory, "manual-targets.json");
-        File.WriteAllText(path, JsonSerializer.Serialize(metadata, _jsonOptions));
+        WriteAllTextAtomic(path, JsonSerializer.Serialize(metadata, _jsonOptions));
     }
 
     private HashSet<string> LoadCallsignSet(string fileName)
@@ -104,7 +108,8 @@ public sealed class JsonConfigStore
         }
         catch (Exception)
         {
-            File.WriteAllText(path, "[]");
+            BackupCorruptFile(path);
+            WriteAllTextAtomic(path, "[]");
             list = [];
         }
 
@@ -174,4 +179,36 @@ public sealed class JsonConfigStore
     private static bool IsPositive(double value) => double.IsFinite(value) && value > 0;
 
     private static bool IsFiniteNonNegative(double value) => double.IsFinite(value) && value >= 0;
+
+    private static void BackupCorruptFile(string path)
+    {
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        var timestamp = DateTimeOffset.UtcNow.ToString(CorruptTimestampFormat, System.Globalization.CultureInfo.InvariantCulture);
+        var backupPath = $"{path}.corrupt-{timestamp}";
+        var attempt = 1;
+        while (File.Exists(backupPath))
+        {
+            backupPath = $"{path}.corrupt-{timestamp}-{attempt}";
+            attempt++;
+        }
+
+        File.Move(path, backupPath);
+    }
+
+    private static void WriteAllTextAtomic(string path, string contents)
+    {
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        File.WriteAllText(tempPath, contents);
+        File.Move(tempPath, path, overwrite: true);
+    }
 }

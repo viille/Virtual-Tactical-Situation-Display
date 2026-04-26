@@ -25,6 +25,7 @@ public sealed class JsonConfigStoreTests
         Assert.NotNull(reloaded);
         Assert.Equal("Demo", reloaded!.DataSourceMode);
         Assert.Equal(40, reloaded.SelectedRangeNm);
+        Assert.Single(Directory.GetFiles(directory, "display.json.corrupt-*"));
     }
 
     [Fact]
@@ -46,6 +47,7 @@ public sealed class JsonConfigStoreTests
 
         Assert.Equal(40, settings.SelectedRangeNm);
         Assert.Equal(24, settings.RenderRateFps);
+        Assert.Single(Directory.GetFiles(directory, "display.json.corrupt-*"));
     }
 
     [Fact]
@@ -61,6 +63,7 @@ public sealed class JsonConfigStoreTests
 
         Assert.Empty(metadata);
         Assert.Equal("{}", File.ReadAllText(path));
+        Assert.Single(Directory.GetFiles(directory, "manual-targets.json.corrupt-*"));
     }
 
     private static string CreateTempDirectory()

@@ -82,6 +82,16 @@ public sealed record TacticalPicture(
     IReadOnlyList<ComputedTarget> Targets,
     DateTimeOffset Timestamp);
 
+public sealed record InterceptSolution(
+    bool HasSolution,
+    double HeadingDeg,
+    double TimeSeconds,
+    double LatitudeDeg,
+    double LongitudeDeg)
+{
+    public static InterceptSolution None { get; } = new(false, 0, 0, 0, 0);
+}
+
 public sealed record AirspaceArea(
     string Name,
     string Type,
