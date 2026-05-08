@@ -9,21 +9,26 @@ public static class TrafficFeedFactory
     {
         settings.DataSourceMode = DataSourceModes.Normalize(settings.DataSourceMode);
 
+        ITrafficDataFeed feed;
         if (DataSourceModes.IsMsfs(settings.DataSourceMode))
         {
-            return new SimConnectTrafficFeed(settings);
+            feed = new SimConnectTrafficFeed(settings);
         }
-
-        if (DataSourceModes.IsXPlane12(settings.DataSourceMode))
+        else if (DataSourceModes.IsXPlane12(settings.DataSourceMode))
         {
-            return new XPlane12WebApiTrafficFeed(settings);
+            feed = new XPlane12WebApiTrafficFeed(settings);
         }
-
-        if (DataSourceModes.IsXPlaneLegacy(settings.DataSourceMode))
+        else if (DataSourceModes.IsXPlaneLegacy(settings.DataSourceMode))
         {
-            return new XPlaneTrafficFeed(settings);
+            feed = new XPlaneTrafficFeed(settings);
+        }
+        else
+        {
+            feed = new DemoTrafficFeed();
         }
 
-        return new DemoTrafficFeed();
+        return settings.EnableVatsimCallsignLookup && DataSourceModes.UsesSimulatorConnection(settings.DataSourceMode)
+            ? new VatsimCallsignTrafficFeed(feed, settings)
+            : feed;
     }
 }

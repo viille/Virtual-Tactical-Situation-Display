@@ -25,11 +25,30 @@ public sealed class AirspaceDataService : IDisposable
             : settings.AirspaceFirCode.Trim().ToLowerInvariant();
         var baseUrl = settings.AirspaceDataBaseUrl.TrimEnd('/');
         var url = $"{baseUrl}/{firCode}.geojson";
-        var activeAirspaces = await LoadActiveAirspacesAsync(settings, cancellationToken);
+        var activeAirspaces = await LoadActiveAirspacesBestEffortAsync(settings, cancellationToken);
 
         using var document = await LoadStaticAirspaceDocumentAsync(url, firCode, cancellationToken);
         var airspaces = ParseGeoJson(document.RootElement, activeAirspaces);
         return await AddLocalAdizAirspacesAsync(airspaces, cancellationToken);
+    }
+
+    private async Task<Dictionary<string, AirspaceActivation>> LoadActiveAirspacesBestEffortAsync(
+        TacticalDisplaySettings settings,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await LoadActiveAirspacesAsync(settings, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Warn("Airspace", $"Active reservation feed unavailable; loading static airspace only | error={ex.Message}");
+            return [];
+        }
     }
 
     private async Task<JsonDocument> LoadStaticAirspaceDocumentAsync(

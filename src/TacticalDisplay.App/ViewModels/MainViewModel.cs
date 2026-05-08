@@ -282,7 +282,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         get => _simConnected;
         private set => SetField(ref _simConnected, value);
     }
-    
+
     public string SelectedDataSource
     {
         get => _selectedDataSource;

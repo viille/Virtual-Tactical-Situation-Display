@@ -40,6 +40,8 @@ Virtual Tactical Situation Display is a Windows application for a clear 2D tacti
 
 SimConnect is bundled with the app. X-Plane 12 uses `http://localhost:8086/` by default; check that the X-Plane Web API is available and incoming traffic is not disabled. For legacy X-Plane support, install XPUIPC into `X-Plane\Resources\plugins`.
 
+When live simulator traffic does not include callsigns, the app can enrich matching nearby contacts from the official VATSIM public data feed. VATSIM data is used only for callsign metadata; position, speed, heading, and altitude still come from the selected simulator source.
+
 ## Display Controls
 
 The app opens directly into the tactical display. The settings panel is hidden by default and can be opened with `SET`.

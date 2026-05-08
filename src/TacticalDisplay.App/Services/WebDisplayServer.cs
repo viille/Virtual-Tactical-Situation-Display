@@ -49,11 +49,14 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
         try
         {
-            _listener = new TcpListener(IPAddress.Any, _port);
+            var bindAddress = _viewModel.Settings.EnableWebServerLanAccess
+                ? IPAddress.Any
+                : IPAddress.Loopback;
+            _listener = new TcpListener(bindAddress, _port);
             _listener.Start();
-            LocalUrls = ResolveLocalUrls(_port);
+            LocalUrls = ResolveLocalUrls(_port, _viewModel.Settings.EnableWebServerLanAccess);
             _serverTask = Task.Run(() => AcceptLoopAsync(_cts.Token));
-            DataSourceDebugLog.Info("Web", $"Tablet web display started | port={_port}");
+            DataSourceDebugLog.Info("Web", $"Tablet web display started | port={_port} lanAccess={_viewModel.Settings.EnableWebServerLanAccess}");
             return true;
         }
         catch (Exception ex)
@@ -590,9 +593,14 @@ public sealed class WebDisplayServer : IAsyncDisposable
         return new CommandResult(true, null);
     }
 
-    private static IReadOnlyList<string> ResolveLocalUrls(int port)
+    private static IReadOnlyList<string> ResolveLocalUrls(int port, bool includeLanUrls)
     {
         var urls = new List<string> { $"http://localhost:{port.ToString(CultureInfo.InvariantCulture)}/" };
+        if (!includeLanUrls)
+        {
+            return urls;
+        }
+
         try
         {
             var addresses = NetworkInterface.GetAllNetworkInterfaces()

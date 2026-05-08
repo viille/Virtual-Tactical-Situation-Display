@@ -28,5 +28,8 @@ jobs:
       - name: Build
         run: dotnet build tactical-situation-display.sln --configuration Release --no-restore
 
+      - name: Format
+        run: dotnet format tactical-situation-display.sln --verify-no-changes --no-restore --verbosity minimal
+
       - name: Test
         run: dotnet test tactical-situation-display.sln --configuration Release --no-build

@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text.Json;
 using System.Windows;
 
@@ -10,6 +11,7 @@ namespace TacticalDisplay.App.Services;
 public sealed class UpdateCheckService
 {
     private const string AppAssetName = "TacticalDisplay.App.exe";
+    private const string AppAssetSha256Name = "TacticalDisplay.App.exe.sha256";
     private const string EmbeddedUpdaterResourceName = "tacticaldisplay.updater.exe";
     private static readonly Uri LatestReleaseApiUri = new("https://api.github.com/repos/viille/Virtual-Tactical-Situation-Display/releases/latest");
     private static readonly Uri ReleasesPageUri = new("https://github.com/viille/Virtual-Tactical-Situation-Display/releases/latest");
@@ -26,7 +28,7 @@ public sealed class UpdateCheckService
         {
             Timeout = TimeSpan.FromSeconds(5)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display/0.12.1");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(BuildUserAgent(currentVersion));
         client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
 
         using var response = await client.GetAsync(LatestReleaseApiUri, cancellationToken);
@@ -52,6 +54,7 @@ public sealed class UpdateCheckService
             ? htmlUrlProperty.GetString()
             : null;
         var assetDownloadUrl = ResolveAppAssetDownloadUrl(root);
+        var assetSha256DownloadUrl = ResolveAssetDownloadUrl(root, AppAssetSha256Name);
         var releaseNotes = root.TryGetProperty("body", out var bodyProperty)
             ? bodyProperty.GetString()
             : null;
@@ -62,6 +65,7 @@ public sealed class UpdateCheckService
             tagName ?? latestVersion.ToString(),
             string.IsNullOrWhiteSpace(htmlUrl) ? ReleasesPageUri : new Uri(htmlUrl),
             assetDownloadUrl,
+            assetSha256DownloadUrl,
             releaseNotes);
     }
 
@@ -94,6 +98,21 @@ public sealed class UpdateCheckService
         var updaterExePath = Path.Combine(updateDirectory, "TacticalDisplay.Updater.exe");
 
         await DownloadFileAsync(result.AssetDownloadUri, newExePath, progress, cancellationToken);
+        if (result.AssetSha256DownloadUri is null)
+        {
+            progress?.Report(new UpdateProgress("Update checksum is missing.", null));
+            return false;
+        }
+
+        progress?.Report(new UpdateProgress("Verifying update...", null));
+        var expectedSha256 = await DownloadSha256Async(result.AssetSha256DownloadUri, cancellationToken);
+        if (string.IsNullOrWhiteSpace(expectedSha256) ||
+            !VerifySha256(newExePath, expectedSha256))
+        {
+            progress?.Report(new UpdateProgress("Update verification failed.", null));
+            return false;
+        }
+
         progress?.Report(new UpdateProgress("Preparing installer...", null));
         if (!TryExtractUpdater(updaterExePath))
         {
@@ -159,7 +178,10 @@ public sealed class UpdateCheckService
         return Version.TryParse(normalized, out var version) ? version : null;
     }
 
-    private static Uri? ResolveAppAssetDownloadUrl(JsonElement releaseRoot)
+    private static Uri? ResolveAppAssetDownloadUrl(JsonElement releaseRoot) =>
+        ResolveAssetDownloadUrl(releaseRoot, AppAssetName);
+
+    private static Uri? ResolveAssetDownloadUrl(JsonElement releaseRoot, string assetName)
     {
         if (!releaseRoot.TryGetProperty("assets", out var assets) ||
             assets.ValueKind != JsonValueKind.Array)
@@ -172,7 +194,7 @@ public sealed class UpdateCheckService
             var name = asset.TryGetProperty("name", out var nameProperty)
                 ? nameProperty.GetString()
                 : null;
-            if (!string.Equals(name, AppAssetName, StringComparison.OrdinalIgnoreCase))
+            if (!string.Equals(name, assetName, StringComparison.OrdinalIgnoreCase))
             {
                 continue;
             }
@@ -186,6 +208,9 @@ public sealed class UpdateCheckService
         return null;
     }
 
+    private static string BuildUserAgent(Version version) =>
+        $"Tactical-Situation-Display/{version}";
+
     private static async Task DownloadFileAsync(
         Uri uri,
         string targetPath,
@@ -196,7 +221,7 @@ public sealed class UpdateCheckService
         {
             Timeout = TimeSpan.FromMinutes(2)
         };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display/0.12.1");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(BuildUserAgent(GetCurrentVersion() ?? new Version(0, 0)));
         using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         response.EnsureSuccessStatusCode();
 
@@ -216,6 +241,38 @@ public sealed class UpdateCheckService
                 : (double?)null;
             progress?.Report(new UpdateProgress("Downloading update...", percent));
         }
+    }
+
+    private static async Task<string?> DownloadSha256Async(Uri uri, CancellationToken cancellationToken)
+    {
+        using var client = new HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(15)
+        };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd(BuildUserAgent(GetCurrentVersion() ?? new Version(0, 0)));
+        var text = await client.GetStringAsync(uri, cancellationToken);
+        return ParseSha256(text);
+    }
+
+    private static string? ParseSha256(string text)
+    {
+        foreach (var token in text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var trimmed = token.Trim();
+            if (trimmed.Length == 64 && trimmed.All(Uri.IsHexDigit))
+            {
+                return trimmed;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool VerifySha256(string path, string expectedSha256)
+    {
+        using var stream = File.OpenRead(path);
+        var actualSha256 = Convert.ToHexString(SHA256.HashData(stream));
+        return string.Equals(actualSha256, expectedSha256, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryExtractUpdater(string targetPath)
@@ -247,6 +304,7 @@ public sealed record UpdateCheckResult(
     string LatestTag,
     Uri ReleaseUri,
     Uri? AssetDownloadUri,
+    Uri? AssetSha256DownloadUri,
     string? ReleaseNotes);
 
 public sealed record UpdateProgress(string Message, double? Percent);

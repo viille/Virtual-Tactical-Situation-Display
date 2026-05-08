@@ -27,7 +27,7 @@
 
   <ItemGroup>
     <PackageReference Include="FSUIPCClientDLL" Version="3.3.16" />
-    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3856.49" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3912.50" />
   </ItemGroup>
 
   <ItemGroup>
@@ -61,7 +61,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>0.12.2</Version>
+    <Version>0.12.3</Version>
     <ApplicationIcon>Assets\VTSD.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
@@ -70,14 +70,10 @@
   </PropertyGroup>
 
   <Target Name="PublishEmbeddedUpdater" BeforeTargets="MarkupCompilePass1;CreateManifestResourceNames" Condition="'$(OS)' == 'Windows_NT'">
-    <MSBuild Projects="..\TacticalDisplay.Updater\TacticalDisplay.Updater.csproj"
-             Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(EmbeddedUpdaterPublishDir);PublishSingleFile=true" />
+    <MSBuild Projects="..\TacticalDisplay.Updater\TacticalDisplay.Updater.csproj" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(EmbeddedUpdaterPublishDir);PublishSingleFile=true" />
   </Target>
 
   <Target Name="PublishEmbeddedWatchdog" BeforeTargets="MarkupCompilePass1;CreateManifestResourceNames" Condition="'$(OS)' == 'Windows_NT'">
-    <MSBuild Projects="..\TacticalDisplay.Watchdog\TacticalDisplay.Watchdog.csproj"
-             Targets="Publish"
-             Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(EmbeddedWatchdogPublishDir);PublishSingleFile=true" />
+    <MSBuild Projects="..\TacticalDisplay.Watchdog\TacticalDisplay.Watchdog.csproj" Targets="Publish" Properties="Configuration=$(Configuration);RuntimeIdentifier=win-x64;SelfContained=true;PublishDir=$(EmbeddedWatchdogPublishDir);PublishSingleFile=true" />
   </Target>
 </Project>

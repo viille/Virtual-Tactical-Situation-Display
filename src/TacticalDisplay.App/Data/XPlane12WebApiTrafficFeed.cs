@@ -495,36 +495,36 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
 
         using (response)
         {
-        if (response.StatusCode == HttpStatusCode.NotFound)
-        {
-            DataSourceDebugLog.Info(LogSource, "Capabilities endpoint unavailable; falling back to X-Plane Web API v1");
-            return "v1";
-        }
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                DataSourceDebugLog.Info(LogSource, "Capabilities endpoint unavailable; falling back to X-Plane Web API v1");
+                return "v1";
+            }
 
-        if (response.StatusCode == HttpStatusCode.Forbidden)
-        {
-            throw new InvalidOperationException("X-Plane Web API rejected the connection. Check Network security policy and incoming traffic settings.");
-        }
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                throw new InvalidOperationException("X-Plane Web API rejected the connection. Check Network security policy and incoming traffic settings.");
+            }
 
-        response.EnsureSuccessStatusCode();
+            response.EnsureSuccessStatusCode();
 
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        if (!document.RootElement.TryGetProperty("api", out var apiElement) ||
-            !apiElement.TryGetProperty("versions", out var versionsElement) ||
-            versionsElement.ValueKind != JsonValueKind.Array)
-        {
-            return "v1";
-        }
+            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+            if (!document.RootElement.TryGetProperty("api", out var apiElement) ||
+                !apiElement.TryGetProperty("versions", out var versionsElement) ||
+                versionsElement.ValueKind != JsonValueKind.Array)
+            {
+                return "v1";
+            }
 
-        var versions = versionsElement
-            .EnumerateArray()
-            .Select(v => v.GetString())
-            .Where(v => !string.IsNullOrWhiteSpace(v))
-            .Select(v => v!)
-            .OrderByDescending(ParseApiVersionNumber)
-            .ToList();
+            var versions = versionsElement
+                .EnumerateArray()
+                .Select(v => v.GetString())
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Select(v => v!)
+                .OrderByDescending(ParseApiVersionNumber)
+                .ToList();
 
-        return versions.FirstOrDefault() ?? "v1";
+            return versions.FirstOrDefault() ?? "v1";
         }
     }
 

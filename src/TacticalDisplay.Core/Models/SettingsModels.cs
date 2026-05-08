@@ -7,6 +7,10 @@ public sealed class TacticalDisplaySettings
     public string? PreferredSimConnectDllPath { get; set; }
     public string XPlane12ApiBaseUrl { get; set; } = "http://localhost:8086/";
     public bool EnableWebServer { get; set; } = true;
+    public bool EnableWebServerLanAccess { get; set; } = true;
+    public bool EnableVatsimCallsignLookup { get; set; } = true;
+    public string VatsimDataFeedUrl { get; set; } = "https://data.vatsim.net/v3/vatsim-data.json";
+    public double VatsimCallsignRefreshSeconds { get; set; } = 15;
     public bool EnableDataSourceDebugLogging { get; set; }
     public double WindowWidth { get; set; } = 1280;
     public double WindowHeight { get; set; } = 840;

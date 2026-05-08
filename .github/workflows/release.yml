@@ -75,11 +75,19 @@ jobs:
             -p:DefaultMapboxStyleUrl="$env:MAPBOX_BASEMAP_STYLE_URL" `
             -p:DefaultMapboxAreasStyleUrl="$env:MAPBOX_AREAS_STYLE_URL"
 
+      - name: Generate Checksum
+        shell: pwsh
+        run: |
+          $hash = Get-FileHash out/app/TacticalDisplay.App.exe -Algorithm SHA256
+          "$($hash.Hash.ToLowerInvariant())  TacticalDisplay.App.exe" | Set-Content -NoNewline out/app/TacticalDisplay.App.exe.sha256
+
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: TacticalDisplay.App-${{ github.ref_name }}-win-x64-exe
-          path: out/app/TacticalDisplay.App.exe
+          path: |
+            out/app/TacticalDisplay.App.exe
+            out/app/TacticalDisplay.App.exe.sha256
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -88,4 +96,6 @@ jobs:
           name: ${{ github.ref_name }}
           target_commitish: ${{ github.sha }}
           generate_release_notes: true
-          files: out/app/TacticalDisplay.App.exe
+          files: |
+            out/app/TacticalDisplay.App.exe
+            out/app/TacticalDisplay.App.exe.sha256

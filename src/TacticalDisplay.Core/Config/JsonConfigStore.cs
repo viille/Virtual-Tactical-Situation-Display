@@ -127,6 +127,7 @@ public sealed class JsonConfigStore
         settings.TargetSymbolScale = System.Math.Clamp(settings.TargetSymbolScale, 0.6, 1.8);
         settings.WindowWidth = System.Math.Clamp(settings.WindowWidth, 640, 3840);
         settings.WindowHeight = System.Math.Clamp(settings.WindowHeight, 480, 2160);
+        settings.VatsimCallsignRefreshSeconds = System.Math.Clamp(settings.VatsimCallsignRefreshSeconds, 15, 300);
 
         if (settings.TrailLengthSamples == 15)
         {
@@ -163,12 +164,14 @@ public sealed class JsonConfigStore
             !IsPositive(settings.WindowWidth) ||
             !IsPositive(settings.WindowHeight) ||
             !IsPositive(settings.TargetSymbolScale) ||
+            !IsPositive(settings.VatsimCallsignRefreshSeconds) ||
             settings.TrailLengthSamples <= 0)
         {
             throw new InvalidDataException("Display settings contain invalid timing or filter values.");
         }
 
         if (string.IsNullOrWhiteSpace(settings.XPlane12ApiBaseUrl) ||
+            string.IsNullOrWhiteSpace(settings.VatsimDataFeedUrl) ||
             string.IsNullOrWhiteSpace(settings.AirspaceFirCode) ||
             string.IsNullOrWhiteSpace(settings.AirspaceDataBaseUrl))
         {
