@@ -5,10 +5,8 @@ namespace TacticalDisplay.Core.Services;
 
 public static class VatsimCallsignMatcher
 {
-    private const double MaxMatchDistanceNm = 1.5;
-    private const double MaxMatchAltitudeFt = 1000;
-    private const double MaxMatchHeadingDeg = 45;
-    private const double MaxMatchSpeedKt = 90;
+    private const double MaxMatchDistanceNm = 3.0;
+    private const double MaxMatchAltitudeFt = 1500;
 
     public static TrafficSnapshot EnrichSnapshot(
         TrafficSnapshot snapshot,
@@ -43,6 +41,24 @@ public static class VatsimCallsignMatcher
         return snapshot with { Contacts = contacts };
     }
 
+    public static VatsimMatchDiagnostics InspectBestMatch(
+        TrafficContactState contact,
+        IReadOnlyList<VatsimPilotCandidate> pilots)
+    {
+        VatsimMatchDiagnostics? best = null;
+        for (var i = 0; i < pilots.Count; i++)
+        {
+            var pilot = pilots[i];
+            var candidate = InspectCandidate(contact, pilot);
+            if (best is null || candidate.Score < best.Score)
+            {
+                best = candidate;
+            }
+        }
+
+        return best ?? VatsimMatchDiagnostics.None;
+    }
+
     private static (int Index, VatsimPilotCandidate Pilot)? FindBestMatch(
         TrafficContactState contact,
         IReadOnlyList<VatsimPilotCandidate> pilots,
@@ -73,37 +89,34 @@ public static class VatsimCallsignMatcher
 
     private static bool IsCandidate(TrafficContactState contact, VatsimPilotCandidate pilot, out double score)
     {
-        score = double.MaxValue;
+        var diagnostics = InspectCandidate(contact, pilot);
+        score = diagnostics.Score;
+        return diagnostics.IsMatch;
+    }
+
+    private static VatsimMatchDiagnostics InspectCandidate(TrafficContactState contact, VatsimPilotCandidate pilot)
+    {
         var distanceNm = GeoMath.DistanceNm(contact.LatitudeDeg, contact.LongitudeDeg, pilot.LatitudeDeg, pilot.LongitudeDeg);
-        if (distanceNm > MaxMatchDistanceNm)
-        {
-            return false;
-        }
-
         var altitudeDeltaFt = System.Math.Abs(contact.AltitudeFt - pilot.AltitudeFt);
-        if (altitudeDeltaFt > MaxMatchAltitudeFt)
-        {
-            return false;
-        }
-
-        var headingDeltaDeg = contact.HeadingDeg.HasValue
+        var headingPenalty = contact.HeadingDeg.HasValue
             ? System.Math.Abs(GeoMath.SignedRelativeBearingDeg(contact.HeadingDeg.Value, pilot.HeadingDeg))
             : 0;
-        if (headingDeltaDeg > MaxMatchHeadingDeg)
-        {
-            return false;
-        }
-
-        var speedDeltaKt = contact.SpeedKt.HasValue
+        var speedPenalty = contact.SpeedKt.HasValue
             ? System.Math.Abs(contact.SpeedKt.Value - pilot.GroundspeedKt)
             : 0;
-        if (speedDeltaKt > MaxMatchSpeedKt)
+        var score = distanceNm + altitudeDeltaFt / 1000.0 + headingPenalty / 180.0 + speedPenalty / 360.0;
+
+        if (distanceNm > MaxMatchDistanceNm)
         {
-            return false;
+            return new VatsimMatchDiagnostics(false, pilot.Callsign, distanceNm, altitudeDeltaFt, score, "distance");
         }
 
-        score = distanceNm + altitudeDeltaFt / 1000.0 + headingDeltaDeg / 90.0 + speedDeltaKt / 180.0;
-        return true;
+        if (altitudeDeltaFt > MaxMatchAltitudeFt)
+        {
+            return new VatsimMatchDiagnostics(false, pilot.Callsign, distanceNm, altitudeDeltaFt, score, "altitude");
+        }
+
+        return new VatsimMatchDiagnostics(true, pilot.Callsign, distanceNm, altitudeDeltaFt, score, null);
     }
 }
 
@@ -114,3 +127,14 @@ public sealed record VatsimPilotCandidate(
     int AltitudeFt,
     int GroundspeedKt,
     int HeadingDeg);
+
+public sealed record VatsimMatchDiagnostics(
+    bool IsMatch,
+    string? Callsign,
+    double DistanceNm,
+    double AltitudeDeltaFt,
+    double Score,
+    string? RejectReason)
+{
+    public static VatsimMatchDiagnostics None { get; } = new(false, null, 0, 0, double.MaxValue, "no-pilots");
+}

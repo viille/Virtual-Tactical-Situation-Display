@@ -65,4 +65,24 @@ public sealed class VatsimCallsignMatcherTests
 
         Assert.Null(enriched.Contacts.Single().Callsign);
     }
+
+    [Fact]
+    public void EnrichSnapshot_AllowsHeadingAndSpeedMismatchWhenPositionMatches()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, now),
+            [
+                new TrafficContactState("T1", null, 60.1, 24.1, 5000, 0, 0, now)
+            ],
+            now);
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshot(
+            snapshot,
+            [
+                new VatsimPilotCandidate("FIN123", 60.1001, 24.1001, 5050, 450, 180)
+            ]);
+
+        Assert.Equal("FIN123", enriched.Contacts.Single().Callsign);
+    }
 }

@@ -596,6 +596,10 @@
                             <TextBox Text="{Binding MinTrackedAltitudeFtText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      ToolTip="Targets below this altitude are hidden"
                                      Margin="4,4,4,0" />
+                            <CheckBox Content="Use VATSIM callsigns"
+                                      IsChecked="{Binding VatsimCallsignLookupEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      Foreground="#9AFAD7"
+                                      Margin="4,8,4,0" />
                         </StackPanel>
                     </GroupBox>
 

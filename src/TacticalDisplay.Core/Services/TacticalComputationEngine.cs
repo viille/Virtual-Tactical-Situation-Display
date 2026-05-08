@@ -32,7 +32,9 @@ public sealed class TacticalComputationEngine
             return null;
         }
 
-        var label = contact.Id;
+        var label = string.IsNullOrWhiteSpace(contact.Callsign)
+            ? contact.Id
+            : contact.Callsign.Trim().ToUpperInvariant();
         var history = settings.TrailsEnabled ? tracked.History : [];
         return new ComputedTarget(
             contact.Id,

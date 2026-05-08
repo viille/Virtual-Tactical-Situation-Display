@@ -26,7 +26,8 @@ public sealed class TrafficRepository
                 _contacts[contact.Id] = tracked;
             }
 
-            tracked.Update(contact, settings.TrailLengthSamples, Classify(contact, classification));
+            var enrichedContact = tracked.ResolveCallsign(contact);
+            tracked.Update(enrichedContact, settings.TrailLengthSamples, Classify(enrichedContact, classification));
         }
 
         var staleCutoff = snapshot.Timestamp - TimeSpan.FromSeconds(settings.StaleSeconds);
@@ -104,13 +105,19 @@ public sealed class TrafficRepository
     {
         public TrackedContact(TrafficContactState current, TargetCategory category)
         {
-            Current = current;
+            LastKnownCallsign = string.IsNullOrWhiteSpace(current.Callsign)
+                ? null
+                : current.Callsign.Trim().ToUpperInvariant();
+            Current = string.IsNullOrWhiteSpace(current.Callsign) || LastKnownCallsign is null
+                ? current
+                : current with { Callsign = LastKnownCallsign };
             Category = category;
             LastUpdate = current.Timestamp;
             History = [new PositionHistoryPoint(current.LatitudeDeg, current.LongitudeDeg, current.AltitudeFt, current.Timestamp)];
         }
 
         public TrafficContactState Current { get; private set; }
+        public string? LastKnownCallsign { get; private set; }
         public TargetCategory Category { get; private set; }
         public bool IsStale { get; set; }
         public DateTimeOffset LastUpdate { get; private set; }
@@ -127,6 +134,19 @@ public sealed class TrafficRepository
             {
                 History.RemoveAt(0);
             }
+        }
+
+        public TrafficContactState ResolveCallsign(TrafficContactState update)
+        {
+            if (!string.IsNullOrWhiteSpace(update.Callsign))
+            {
+                LastKnownCallsign = update.Callsign.Trim().ToUpperInvariant();
+                return update with { Callsign = LastKnownCallsign };
+            }
+
+            return string.IsNullOrWhiteSpace(LastKnownCallsign)
+                ? update
+                : update with { Callsign = LastKnownCallsign };
         }
 
         public double? EstimateClosureKt(OwnshipState? previousOwnship, OwnshipState ownship, double bearingFromOwnshipToTargetDeg)

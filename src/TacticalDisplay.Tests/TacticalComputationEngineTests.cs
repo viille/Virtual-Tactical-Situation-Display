@@ -39,4 +39,20 @@ public sealed class TacticalComputationEngineTests
         Assert.NotNull(computed!.ClosureKt);
         Assert.InRange(computed.ClosureKt!.Value, 549.9, 550.1);
     }
+
+    [Fact]
+    public void Compute_UsesCallsignAsDisplayNameWhenAvailable()
+    {
+        var engine = new TacticalComputationEngine();
+        var settings = new TacticalDisplaySettings();
+        var now = DateTimeOffset.UtcNow;
+        var ownship = new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, now);
+        var contact = new TrafficContactState("T1", "fin123", 60.1, 24.0, 5000, 180, 250, now);
+        var tracked = new TrafficRepository.TrackedContact(contact, TargetCategory.Unknown);
+
+        var computed = engine.Compute(null, ownship, tracked, settings);
+
+        Assert.NotNull(computed);
+        Assert.Equal("FIN123", computed!.DisplayName);
+    }
 }

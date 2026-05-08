@@ -1,5 +1,6 @@
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
+using TacticalDisplay.App.Services;
 
 namespace TacticalDisplay.App.Data;
 
@@ -27,8 +28,13 @@ public static class TrafficFeedFactory
             feed = new DemoTrafficFeed();
         }
 
-        return settings.EnableVatsimCallsignLookup && DataSourceModes.UsesSimulatorConnection(settings.DataSourceMode)
-            ? new VatsimCallsignTrafficFeed(feed, settings)
-            : feed;
+        if (settings.EnableVatsimCallsignLookup && DataSourceModes.UsesSimulatorConnection(settings.DataSourceMode))
+        {
+            DataSourceDebugLog.Info("VATSIM", $"Wrapping {settings.DataSourceMode} feed with VATSIM callsign lookup");
+            return new VatsimCallsignTrafficFeed(feed, settings);
+        }
+
+        DataSourceDebugLog.Info("VATSIM", $"VATSIM callsign lookup disabled or not applicable | source={settings.DataSourceMode} enabled={settings.EnableVatsimCallsignLookup}");
+        return feed;
     }
 }

@@ -33,6 +33,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display");
         _inner.SnapshotReceived += OnInnerSnapshotReceived;
         _inner.ConnectionChanged += OnInnerConnectionChanged;
+        DataSourceDebugLog.Info(LogSource, $"VATSIM callsign lookup enabled | feed={GetFeedUri()} refreshSeconds={Math.Clamp(_settings.VatsimCallsignRefreshSeconds, 15, 300):0}");
     }
 
     public event EventHandler<TrafficSnapshot>? SnapshotReceived;
@@ -73,7 +74,9 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         try
         {
             var pilots = await GetPilotsAsync(CancellationToken.None).ConfigureAwait(false);
-            SnapshotReceived?.Invoke(this, VatsimCallsignMatcher.EnrichSnapshot(snapshot, pilots));
+            var enriched = VatsimCallsignMatcher.EnrichSnapshot(snapshot, pilots);
+            LogEnrichmentSummary(snapshot, enriched, pilots);
+            SnapshotReceived?.Invoke(this, enriched);
         }
         catch (Exception ex)
         {
@@ -147,6 +150,38 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         }
 
         return new Uri("https://data.vatsim.net/v3/vatsim-data.json");
+    }
+
+    private static void LogEnrichmentSummary(
+        TrafficSnapshot original,
+        TrafficSnapshot enriched,
+        IReadOnlyList<VatsimPilotCandidate> pilots)
+    {
+        DataSourceDebugLog.ThrottledDebug(
+            LogSource,
+            "callsign-enrichment-summary",
+            TimeSpan.FromSeconds(10),
+            () =>
+            {
+                var added = original.Contacts
+                    .Zip(enriched.Contacts)
+                    .Count(pair =>
+                        string.IsNullOrWhiteSpace(pair.First.Callsign) &&
+                        !string.IsNullOrWhiteSpace(pair.Second.Callsign));
+                var missing = enriched.Contacts.Count(contact => string.IsNullOrWhiteSpace(contact.Callsign));
+                var nearest = original.Contacts.Count == 0
+                    ? VatsimMatchDiagnostics.None
+                    : original.Contacts
+                        .Select(contact => VatsimCallsignMatcher.InspectBestMatch(contact, pilots))
+                        .OrderBy(match => match.Score)
+                        .FirstOrDefault() ?? VatsimMatchDiagnostics.None;
+
+                return "Callsign enrichment summary | " +
+                    $"contacts={original.Contacts.Count} pilots={pilots.Count} added={added} missing={missing} " +
+                    $"nearest={nearest.Callsign ?? "n/a"} nearestDistanceNm={nearest.DistanceNm:0.00} " +
+                    $"nearestAltitudeDeltaFt={nearest.AltitudeDeltaFt:0} nearestMatch={nearest.IsMatch} " +
+                    $"reject={nearest.RejectReason ?? "none"}";
+            });
     }
 
     private sealed record VatsimDataFeed(IReadOnlyList<VatsimPilot>? Pilots);

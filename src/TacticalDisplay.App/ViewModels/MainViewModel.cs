@@ -328,6 +328,28 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    public bool VatsimCallsignLookupEnabled
+    {
+        get => Settings.EnableVatsimCallsignLookup;
+        set
+        {
+            if (Settings.EnableVatsimCallsignLookup == value)
+            {
+                return;
+            }
+
+            Settings.EnableVatsimCallsignLookup = value;
+            _configStore.SaveDisplaySettings(Settings);
+            DataSourceDebugLog.Info("VATSIM", $"VATSIM callsign lookup toggled | enabled={value}");
+            Raise();
+
+            if (DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode))
+            {
+                _ = SwitchDataSourceAsync(Settings.DataSourceMode, forceRestart: true);
+            }
+        }
+    }
+
     public bool ShowSettings
     {
         get => _showSettings;
@@ -1164,6 +1186,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(SimulatorFooterText));
         Raise(nameof(DataSourceDebugLoggingEnabled));
         Raise(nameof(WebServerEnabled));
+        Raise(nameof(VatsimCallsignLookupEnabled));
 
         if (!DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode))
         {
