@@ -396,6 +396,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 settings.Declutter,
                 settings.ShowMapLayer,
                 settings.ShowAirspaceBoundaries,
+                settings.AirspaceOpacity,
+                settings.ShowOnlyActiveAirspaceBoundaries,
                 settings.ShowControlledAirspaceLayer,
                 settings.TrailsEnabled,
                 settings.ShowBullseye,
@@ -407,6 +409,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 settings.TargetSymbolScale,
                 _viewModel.IsAlwaysOnTop,
                 _viewModel.ShowSettings,
+                [],
                 null,
                 []);
         }
@@ -429,6 +432,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
             settings.Declutter,
             settings.ShowMapLayer,
             settings.ShowAirspaceBoundaries,
+            settings.AirspaceOpacity,
+            settings.ShowOnlyActiveAirspaceBoundaries,
             settings.ShowControlledAirspaceLayer,
             settings.TrailsEnabled,
             settings.ShowBullseye,
@@ -440,6 +445,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
             settings.TargetSymbolScale,
             _viewModel.IsAlwaysOnTop,
             _viewModel.ShowSettings,
+            BuildWebAirspaces(settings),
             new WebOwnship(
                 picture.Ownship.Id,
                 picture.Ownship.LatitudeDeg,
@@ -470,6 +476,60 @@ public sealed class WebDisplayServer : IAsyncDisposable
                         point.Timestamp))
                     .ToArray()))
                 .ToArray());
+    }
+
+    private IReadOnlyList<WebAirspace> BuildWebAirspaces(TacticalDisplaySettings settings)
+    {
+        if (!settings.ShowAirspaceBoundaries)
+        {
+            return [];
+        }
+
+        return _viewModel.Airspaces
+            .Where(area => !settings.ShowOnlyActiveAirspaceBoundaries || area.IsActive || IsAdizAirspace(area))
+            .Select(static area =>
+            {
+                var isAdiz = IsAdizAirspace(area);
+                return new WebAirspace(
+                    area.Name,
+                    area.Type,
+                    area.IsActive,
+                    isAdiz,
+                    BuildAirspaceLabelText(area),
+                    area.Polygons
+                        .Select(static polygon => new WebAirspacePolygon(
+                            polygon.Exterior
+                                .Select(static coordinate => new WebAirspaceCoordinate(
+                                    coordinate.LatitudeDeg,
+                                    coordinate.LongitudeDeg))
+                                .ToArray()))
+                        .ToArray());
+            })
+            .ToArray();
+    }
+
+    private static bool IsAdizAirspace(AirspaceArea airspace) =>
+        airspace.Name.Contains("ADIZ", StringComparison.OrdinalIgnoreCase) ||
+        airspace.Name.Equals("EFR100", StringComparison.OrdinalIgnoreCase) ||
+        airspace.Name.Equals("EFD400", StringComparison.OrdinalIgnoreCase) ||
+        airspace.Type.Contains("ADIZ", StringComparison.OrdinalIgnoreCase);
+
+    private static string BuildAirspaceLabelText(AirspaceArea airspace)
+    {
+        if (airspace.IsActive &&
+            airspace.ActiveLowerAltitudeFt.HasValue &&
+            airspace.ActiveUpperAltitudeFt.HasValue)
+        {
+            return $"{airspace.Name} {airspace.ActiveLowerAltitudeFt.Value}-{airspace.ActiveUpperAltitudeFt.Value}";
+        }
+
+        var lower = airspace.LowerFlightLevel.HasValue
+            ? airspace.LowerFlightLevel.Value == 0 ? "SFC" : $"FL{airspace.LowerFlightLevel.Value:000}"
+            : string.Empty;
+        var upper = airspace.UpperFlightLevel.HasValue ? $"FL{airspace.UpperFlightLevel.Value:000}" : string.Empty;
+        return string.IsNullOrWhiteSpace(lower) || string.IsNullOrWhiteSpace(upper)
+            ? airspace.Name
+            : $"{airspace.Name} {lower}-{upper}";
     }
 
     private CommandResult ExecuteCommand(string command)
@@ -645,6 +705,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
         bool Declutter,
         bool ShowMapLayer,
         bool ShowAirspaceBoundaries,
+        double AirspaceOpacity,
+        bool ShowOnlyActiveAirspaceBoundaries,
         bool ShowControlledAirspaceLayer,
         bool TrailsEnabled,
         bool ShowBullseye,
@@ -656,6 +718,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
         double TargetSymbolScale,
         bool IsAlwaysOnTop,
         bool ShowSettings,
+        IReadOnlyList<WebAirspace> Airspaces,
         WebOwnship? Ownship,
         IReadOnlyList<WebTarget> Targets)
     {
@@ -678,6 +741,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 false,
                 true,
                 false,
+                1.0,
+                true,
                 true,
                 true,
                 false,
@@ -689,6 +754,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 1,
                 false,
                 false,
+                [],
                 null,
                 []);
     }
@@ -722,6 +788,21 @@ public sealed class WebDisplayServer : IAsyncDisposable
         double LongitudeDeg,
         double AltitudeFt,
         DateTimeOffset Timestamp);
+
+    private sealed record WebAirspace(
+        string Name,
+        string Type,
+        bool IsActive,
+        bool IsAdiz,
+        string Label,
+        IReadOnlyList<WebAirspacePolygon> Polygons);
+
+    private sealed record WebAirspacePolygon(
+        IReadOnlyList<WebAirspaceCoordinate> Exterior);
+
+    private sealed record WebAirspaceCoordinate(
+        double LatitudeDeg,
+        double LongitudeDeg);
 
     private sealed record CommandResult(bool Ok, string? Error);
 
@@ -1134,20 +1215,23 @@ public sealed class WebDisplayServer : IAsyncDisposable
       const center = { x: w / 2, y: h / 2 };
       const radius = Math.max(40, Math.min(w, h) * 0.44);
       labelHitBoxes = [];
-      drawRings(center, radius);
-      drawOwnship(center, radius);
 
       if (!snapshot || !snapshot.available || !snapshot.ownship) {
+        drawRings(center, radius);
+        drawOwnship(center, radius);
         drawCenteredText(snapshot?.status || 'Waiting for data', center.x, center.y + 38, '#f0c864', 15);
         return;
       }
 
+      drawAirspaces(center, radius);
+      drawRings(center, radius);
       drawHeadingReadout(center);
       drawFrameCompass(center);
       if (snapshot.trailsEnabled) {
         for (const target of snapshot.targets) drawTrail(target, center, radius);
       }
       drawIntercept(center, radius);
+      drawOwnship(center, radius);
       for (const target of snapshot.targets) drawTarget(target, center, radius);
     }
 
@@ -1301,6 +1385,120 @@ public sealed class WebDisplayServer : IAsyncDisposable
       }
       ctx.stroke();
       ctx.restore();
+    }
+
+    function drawAirspaces(center, radius) {
+      if (!snapshot?.showAirspaceBoundaries || !snapshot?.airspaces?.length) return;
+      const opacity = Math.max(0.1, Math.min(snapshot.airspaceOpacity ?? 1, 1));
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      ctx.clip();
+
+      for (const airspace of snapshot.airspaces) {
+        if (snapshot.showOnlyActiveAirspaceBoundaries && !airspace.isActive && !airspace.isAdiz) continue;
+        const style = airspace.isAdiz
+          ? {
+              stroke: `rgba(255,80,80,${0.86 * opacity})`,
+              fill: `rgba(255,80,80,${0.11 * opacity})`,
+              width: 1.4,
+              label: `rgba(255,120,120,${opacity})`
+            }
+          : airspace.isActive
+            ? {
+                stroke: `rgba(247,200,115,${0.82 * opacity})`,
+                fill: `rgba(247,200,115,${0.13 * opacity})`,
+                width: 1.2,
+                label: `rgba(247,200,115,${opacity})`
+              }
+            : {
+                stroke: `rgba(110,180,170,${0.27 * opacity})`,
+                fill: `rgba(110,180,170,${0.05 * opacity})`,
+                width: 0.8,
+                label: `rgba(110,180,170,${0.75 * opacity})`
+              };
+
+        for (const polygon of airspace.polygons || []) {
+          const points = projectAirspacePolygon(polygon, center, radius);
+          if (points.length < 2 || !intersectsViewport(points)) continue;
+          ctx.beginPath();
+          ctx.moveTo(points[0].x, points[0].y);
+          for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+          ctx.closePath();
+          ctx.fillStyle = style.fill;
+          ctx.strokeStyle = style.stroke;
+          ctx.lineWidth = style.width;
+          ctx.fill();
+          ctx.stroke();
+        }
+
+        if ((airspace.isActive || airspace.isAdiz) && airspace.label) {
+          drawAirspaceLabel(airspace, center, radius, style.label);
+        }
+      }
+
+      ctx.restore();
+    }
+
+    function projectAirspacePolygon(polygon, center, radius) {
+      const points = [];
+      for (const coordinate of polygon.exterior || []) {
+        const p = projectGeo(coordinate.latitudeDeg, coordinate.longitudeDeg, center, radius, false);
+        if (isDrawableOverlayPoint(p)) points.push(p);
+      }
+      return points;
+    }
+
+    function drawAirspaceLabel(airspace, center, radius, color) {
+      const coordinates = [];
+      for (const polygon of airspace.polygons || []) {
+        for (const coordinate of polygon.exterior || []) coordinates.push(coordinate);
+      }
+      if (!coordinates.length) return;
+
+      const latitude = coordinates.reduce((sum, coordinate) => sum + coordinate.latitudeDeg, 0) / coordinates.length;
+      const longitude = coordinates.reduce((sum, coordinate) => sum + coordinate.longitudeDeg, 0) / coordinates.length;
+      const point = projectGeo(latitude, longitude, center, radius, false);
+      if (!isDrawableOverlayPoint(point) || !pointInViewport(point)) return;
+
+      ctx.save();
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(0,8,10,0.92)';
+      ctx.font = '600 11px Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.strokeText(airspace.label, point.x, point.y);
+      ctx.fillStyle = color;
+      ctx.fillText(airspace.label, point.x, point.y);
+      ctx.restore();
+    }
+
+    function intersectsViewport(points) {
+      let minX = points[0].x;
+      let maxX = points[0].x;
+      let minY = points[0].y;
+      let maxY = points[0].y;
+      for (const point of points) {
+        if (pointInViewport(point)) return true;
+        minX = Math.min(minX, point.x);
+        maxX = Math.max(maxX, point.x);
+        minY = Math.min(minY, point.y);
+        maxY = Math.max(maxY, point.y);
+      }
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      return maxX >= 0 && minX <= w && maxY >= 0 && minY <= h;
+    }
+
+    function pointInViewport(point) {
+      return point.x >= 0 && point.x <= canvas.clientWidth && point.y >= 0 && point.y <= canvas.clientHeight;
+    }
+
+    function isDrawableOverlayPoint(point) {
+      return Number.isFinite(point.x) &&
+        Number.isFinite(point.y) &&
+        Math.abs(point.x) <= 100000 &&
+        Math.abs(point.y) <= 100000;
     }
 
     function drawTarget(target, center, radius) {
