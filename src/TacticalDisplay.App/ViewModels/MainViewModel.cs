@@ -116,6 +116,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     }
 
     public TacticalDisplaySettings Settings { get; }
+    public bool SuppressModalDialogs { get; set; }
+
     public TacticalPicture? Picture
     {
         get => _picture;
@@ -875,6 +877,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
         if (_showSimConnectDebugOnFailure)
         {
+            if (SuppressModalDialogs)
+            {
+                _showSimConnectDebugOnFailure = false;
+                return;
+            }
+
             _showSimConnectDebugOnFailure = false;
             if (!SimConnectTrafficFeed.CanUseDll(Settings.PreferredSimConnectDllPath))
             {

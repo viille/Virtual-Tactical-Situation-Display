@@ -156,7 +156,7 @@ public partial class MainWindow : Window
                     progressWindow.Show();
                     if (await _updateCheckService.DownloadAndStartUpdateAsync(result, progress, CancellationToken.None))
                     {
-                        Close();
+                        await ShutdownForUpdateAsync(progressWindow);
                     }
                     else
                     {
@@ -468,6 +468,68 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 DataSourceDebugLog.Info("App", $"Final window close failed | {ex}");
+            }
+        }
+    }
+
+    private async Task ShutdownForUpdateAsync(UpdateProgressWindow progressWindow)
+    {
+        _isClosing = true;
+        _viewModel.SuppressModalDialogs = true;
+        progressWindow.Update(new UpdateProgress("Closing current app...", null));
+        try
+        {
+            CloseOwnedWindowsExcept(progressWindow);
+            StoreWindowSize();
+            if (_webDisplayServer is not null)
+            {
+                await _webDisplayServer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));
+                _webDisplayServer = null;
+            }
+
+            await _viewModel.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
+            DataSourceDebugLog.MarkCleanShutdown();
+        }
+        catch (TimeoutException ex)
+        {
+            DataSourceDebugLog.Warn("App", $"Update shutdown timed out; exiting process | {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Warn("App", $"Update shutdown cleanup failed; exiting process | {ex}");
+        }
+        finally
+        {
+            _shutdownCompleted = true;
+            Closing -= OnClosingAsync;
+            try
+            {
+                progressWindow.Close();
+                Application.Current.Shutdown(0);
+            }
+            finally
+            {
+                Environment.Exit(0);
+            }
+        }
+    }
+
+    private void CloseOwnedWindowsExcept(Window keepOpen)
+    {
+        foreach (Window window in OwnedWindows.Cast<Window>().ToList())
+        {
+            if (ReferenceEquals(window, keepOpen))
+            {
+                continue;
+            }
+
+            try
+            {
+                window.Close();
+            }
+            catch (Exception ex)
+            {
+                DataSourceDebugLog.Warn("App", $"Failed to close owned window during update shutdown | {ex.Message}");
             }
         }
     }

@@ -4,6 +4,8 @@ using System.Windows.Forms;
 
 const int maxAttempts = 60;
 const int delayMs = 500;
+const int gracefulExitMs = 15_000;
+const int forcedExitMs = 5_000;
 Application.EnableVisualStyles();
 Application.SetCompatibleTextRenderingDefault(false);
 using var statusWindow = new UpdateStatusWindow();
@@ -32,7 +34,13 @@ try
         return 4;
     }
 
-    WaitForProcessExit(processId);
+    statusWindow.SetStatus("Waiting for app to close...");
+    if (!EnsureProcessExited(processId))
+    {
+        statusWindow.SetStatus("Could not close old app.");
+        Thread.Sleep(2500);
+        return 6;
+    }
 
     var backupExePath = Path.Combine(
         targetDirectory,
@@ -41,7 +49,6 @@ try
         targetDirectory,
         $"{Path.GetFileNameWithoutExtension(targetExePath)}.update{Path.GetExtension(targetExePath)}");
 
-    statusWindow.SetStatus("Waiting for app to close...");
     for (var attempt = 0; attempt < maxAttempts; attempt++)
     {
         try
@@ -88,19 +95,46 @@ catch
     return 1;
 }
 
-static void WaitForProcessExit(int processId)
+static bool EnsureProcessExited(int processId)
 {
     try
     {
         using var process = Process.GetProcessById(processId);
-        if (!process.HasExited)
+        if (process.HasExited)
         {
-            process.WaitForExit(30_000);
+            return true;
         }
+
+        try
+        {
+            if (process.MainWindowHandle != IntPtr.Zero)
+            {
+                process.CloseMainWindow();
+            }
+        }
+        catch
+        {
+        }
+
+        if (process.WaitForExit(gracefulExitMs))
+        {
+            return true;
+        }
+
+        try
+        {
+            process.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+        }
+
+        return process.WaitForExit(forcedExitMs);
     }
     catch
     {
         // The app process may already be gone.
+        return true;
     }
 }
 
