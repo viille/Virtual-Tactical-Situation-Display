@@ -1143,7 +1143,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
     function updateText() {
       if (!snapshot) return;
-      fields.range.textContent = `${snapshot.orientation === 'NorthUp' ? 'N-UP' : 'HDG-UP'} | ${snapshot.directionReferenceMode === 'Magnetic' ? 'MAG' : 'TRUE'} | RANGE ${snapshot.rangeNm} NM`;
+      fields.range.textContent = `RANGE ${snapshot.rangeNm} NM`;
       fields.source.textContent = snapshot.source || '';
       fields.connection.textContent = snapshot.connection || 'Disconnected';
       fields.traffic.textContent = snapshot.traffic || '0 contacts';

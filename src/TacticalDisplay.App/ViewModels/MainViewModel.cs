@@ -482,7 +482,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand OpenDebugLogFolderCommand { get; }
 
     public string HeaderText =>
-        $"{(Settings.OrientationMode == ScopeOrientationMode.NorthUp ? "N-UP" : "HDG-UP")}  |  {DirectionReferenceLabel}  |  RANGE {Settings.SelectedRangeNm} NM";
+        $"RANGE {Settings.SelectedRangeNm} NM";
 
     private string DirectionReferenceLabel => Settings.DirectionReferenceMode == DirectionReferenceMode.Magnetic ? "MAG" : "TRUE";
 
