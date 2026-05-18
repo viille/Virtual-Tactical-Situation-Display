@@ -146,6 +146,8 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             _dataRefIds[dataRefName] = await ResolveDataRefIdAsync(dataRefName, cancellationToken);
         }
 
+        await TryResolveOptionalDataRefAsync("sim/flightmodel/position/mag_psi", cancellationToken);
+
         foreach (var dataRefName in OptionalTrafficDataRefs)
         {
             try
@@ -391,18 +393,25 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         var longitudeTask = GetDoubleAsync(_dataRefIds["sim/flightmodel/position/longitude"], cancellationToken);
         var elevationTask = GetDoubleAsync(_dataRefIds["sim/flightmodel/position/elevation"], cancellationToken);
         var headingTask = GetDoubleAsync(_dataRefIds["sim/flightmodel/position/true_psi"], cancellationToken);
+        var magneticHeadingTask = GetOptionalDoubleAsync("sim/flightmodel/position/mag_psi", cancellationToken);
         var groundspeedTask = GetDoubleAsync(_dataRefIds["sim/flightmodel/position/groundspeed"], cancellationToken);
 
-        await Task.WhenAll(latitudeTask, longitudeTask, elevationTask, headingTask, groundspeedTask);
+        await Task.WhenAll(latitudeTask, longitudeTask, elevationTask, headingTask, magneticHeadingTask, groundspeedTask);
+
+        var trueHeading = GeoMath.NormalizeDegrees(headingTask.Result);
+        var magneticVariation = magneticHeadingTask.Result.HasValue
+            ? GeoMath.SignedRelativeBearingDeg(GeoMath.NormalizeDegrees(magneticHeadingTask.Result.Value), trueHeading)
+            : (double?)null;
 
         var ownship = new OwnshipState(
             "OWN",
             latitudeTask.Result,
             longitudeTask.Result,
             elevationTask.Result * FeetPerMeter,
-            GeoMath.NormalizeDegrees(headingTask.Result),
+            trueHeading,
             groundspeedTask.Result * KnotsPerMeterPerSecond,
-            timestamp);
+            timestamp,
+            magneticVariation);
 
         DataSourceDebugLog.ThrottledDebug(
             LogSource,

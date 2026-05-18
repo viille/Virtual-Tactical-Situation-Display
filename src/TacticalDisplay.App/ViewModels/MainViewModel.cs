@@ -427,6 +427,32 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         DataSourceModes.XPlane12,
         DataSourceModes.XPlaneLegacy
     ];
+    public ObservableCollection<string> AvailableDirectionReferences { get; } =
+    [
+        "TRUE",
+        "MAG"
+    ];
+
+    public string SelectedDirectionReference
+    {
+        get => DirectionReferenceLabel;
+        set
+        {
+            var mode = string.Equals(value, "MAG", StringComparison.OrdinalIgnoreCase)
+                ? DirectionReferenceMode.Magnetic
+                : DirectionReferenceMode.True;
+            if (Settings.DirectionReferenceMode == mode)
+            {
+                return;
+            }
+
+            Settings.DirectionReferenceMode = mode;
+            Raise();
+            Raise(nameof(HeaderText));
+            Raise(nameof(Settings));
+        }
+    }
+
     public RelayCommand ToggleOrientationCommand { get; }
     public RelayCommand IncreaseRangeCommand { get; }
     public RelayCommand DecreaseRangeCommand { get; }
@@ -454,7 +480,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand OpenDebugLogFolderCommand { get; }
 
     public string HeaderText =>
-        $"{(Settings.OrientationMode == ScopeOrientationMode.NorthUp ? "N-UP" : "HDG-UP")}  |  RANGE {Settings.SelectedRangeNm} NM";
+        $"{(Settings.OrientationMode == ScopeOrientationMode.NorthUp ? "N-UP" : "HDG-UP")}  |  {DirectionReferenceLabel}  |  RANGE {Settings.SelectedRangeNm} NM";
+
+    private string DirectionReferenceLabel => Settings.DirectionReferenceMode == DirectionReferenceMode.Magnetic ? "MAG" : "TRUE";
 
     public void RequestCommandRefresh(string reason, TimeSpan elapsed)
     {

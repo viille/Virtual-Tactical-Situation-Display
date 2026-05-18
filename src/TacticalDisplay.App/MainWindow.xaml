@@ -596,6 +596,12 @@
                             <TextBox Text="{Binding MinTrackedAltitudeFtText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                      ToolTip="Targets below this altitude are hidden"
                                      Margin="4,4,4,0" />
+                            <TextBlock Text="Direction reference"
+                                       Foreground="#7CB9A9"
+                                       Margin="4,8,4,0" />
+                            <ComboBox ItemsSource="{Binding AvailableDirectionReferences}"
+                                      SelectedItem="{Binding SelectedDirectionReference, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      Margin="4,4,4,0" />
                             <CheckBox Content="Use VATSIM callsigns"
                                       IsChecked="{Binding VatsimCallsignLookupEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                       Foreground="#9AFAD7"

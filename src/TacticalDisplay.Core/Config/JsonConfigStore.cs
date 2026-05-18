@@ -150,6 +150,7 @@ public sealed class JsonConfigStore
         }
 
         if (!Enum.IsDefined(settings.OrientationMode) ||
+            !Enum.IsDefined(settings.DirectionReferenceMode) ||
             !Enum.IsDefined(settings.LabelMode) ||
             !Enum.IsDefined(settings.CategoryFilter))
         {

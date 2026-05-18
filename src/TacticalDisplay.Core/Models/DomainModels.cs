@@ -17,6 +17,12 @@ public enum ScopeOrientationMode
     HeadingUp
 }
 
+public enum DirectionReferenceMode
+{
+    True,
+    Magnetic
+}
+
 public enum LabelMode
 {
     Full,
@@ -39,7 +45,8 @@ public sealed record OwnshipState(
     double AltitudeFt,
     double HeadingDeg,
     double? SpeedKt,
-    DateTimeOffset Timestamp);
+    DateTimeOffset Timestamp,
+    double? MagneticVariationDeg = null);
 
 public sealed record TrafficContactState(
     string Id,

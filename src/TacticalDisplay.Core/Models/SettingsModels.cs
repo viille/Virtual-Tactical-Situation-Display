@@ -18,6 +18,7 @@ public sealed class TacticalDisplaySettings
     public int[] RangeScaleOptionsNm { get; init; } = [10, 20, 40, 80, 120];
     public int SelectedRangeNm { get; set; } = 40;
     public ScopeOrientationMode OrientationMode { get; set; } = ScopeOrientationMode.HeadingUp;
+    public DirectionReferenceMode DirectionReferenceMode { get; set; } = DirectionReferenceMode.True;
     public bool ShowMapLayer { get; set; } = true;
     public double MapOpacity { get; set; } = 0.65;
     public double MapLabelBackgroundOpacity { get; set; } = 0.75;

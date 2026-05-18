@@ -193,6 +193,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             return;
         }
 
+        var directionVariationDeg = DisplayDirectionVariationDeg;
         var headingOffset = Settings.OrientationMode == ScopeOrientationMode.HeadingUp ? ownshipHeadingDeg : 0;
         var compassRadius = Math.Max(12, Math.Min(RenderSize.Width, RenderSize.Height) / 2.0 - 8);
         var haloPen = new Pen(new SolidColorBrush(Color.FromArgb(220, 0, 7, 10)), 3.4);
@@ -206,7 +207,8 @@ public sealed class TacticalScopeControl : FrameworkElement
 
         for (var bearing = 0; bearing < 360; bearing += 10)
         {
-            var displayBearing = GeoMath.NormalizeDegrees(bearing - headingOffset);
+            var trueBearing = GeoMath.NormalizeDegrees(bearing + directionVariationDeg);
+            var displayBearing = GeoMath.NormalizeDegrees(trueBearing - headingOffset);
             var edge = PointOnCircle(center, compassRadius, displayBearing);
             var length = bearing % 30 == 0 ? 12.0 : 7.0;
             var inner = PointOnCircle(center, compassRadius - length, displayBearing);
@@ -215,10 +217,10 @@ public sealed class TacticalScopeControl : FrameworkElement
             dc.DrawLine(pen, edge, inner);
         }
 
-        DrawCompassCardinal(dc, "N", 0, headingOffset, center, compassRadius);
-        DrawCompassCardinal(dc, "E", 90, headingOffset, center, compassRadius);
-        DrawCompassCardinal(dc, "S", 180, headingOffset, center, compassRadius);
-        DrawCompassCardinal(dc, "W", 270, headingOffset, center, compassRadius);
+        DrawCompassCardinal(dc, "N", GeoMath.NormalizeDegrees(0 + directionVariationDeg), headingOffset, center, compassRadius);
+        DrawCompassCardinal(dc, "E", GeoMath.NormalizeDegrees(90 + directionVariationDeg), headingOffset, center, compassRadius);
+        DrawCompassCardinal(dc, "S", GeoMath.NormalizeDegrees(180 + directionVariationDeg), headingOffset, center, compassRadius);
+        DrawCompassCardinal(dc, "W", GeoMath.NormalizeDegrees(270 + directionVariationDeg), headingOffset, center, compassRadius);
     }
 
     private void DrawCompassCardinal(
@@ -253,7 +255,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             return;
         }
 
-        DrawTopReadout(dc, $"HDG {GeoMath.NormalizeDegrees(ownHeadingDeg):000}", center.X, 10.0, Color.FromRgb(175, 255, 225));
+        DrawTopReadout(dc, $"HDG {FormatDirection(ownHeadingDeg)}", center.X, 10.0, Color.FromRgb(175, 255, 225));
     }
 
     private void DrawTopReadout(DrawingContext dc, string text, double centerX, double y, Color foreground)
@@ -544,7 +546,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         dc.DrawEllipse(null, pen, p, 8, 8);
         dc.DrawLine(pen, new Point(p.X - 12, p.Y), new Point(p.X + 12, p.Y));
         dc.DrawLine(pen, new Point(p.X, p.Y - 12), new Point(p.X, p.Y + 12));
-        DrawText(dc, $"BULL {bearing:000}/{range:0.0}", p.X + 12, p.Y + 8, Color.FromRgb(247, 200, 115), 11, FontWeights.SemiBold);
+        DrawText(dc, $"BULL {FormatDirection(bearing)}/{range:0.0}", p.X + 12, p.Y + 8, Color.FromRgb(247, 200, 115), 11, FontWeights.SemiBold);
     }
 
     private void DrawTargets(DrawingContext dc, Point center, double radius, double ownshipHeadingDeg)
@@ -777,7 +779,7 @@ public sealed class TacticalScopeControl : FrameworkElement
     private void DrawInterceptReadout(DrawingContext dc, ComputedTarget target, InterceptSolution solution, Point scopeCenter)
     {
         var text = solution.HasSolution
-            ? $"INT {target.DisplayName} HDG {solution.HeadingDeg:000} TTI {FormatInterceptTime(solution.TimeSeconds)}"
+            ? $"INT {target.DisplayName} HDG {FormatDirection(solution.HeadingDeg)} TTI {FormatInterceptTime(solution.TimeSeconds)}"
             : $"INT {target.DisplayName} NO INT";
         DrawTopReadout(dc, text, scopeCenter.X + 150, 10.0, solution.HasSolution ? Color.FromRgb(255, 225, 120) : Color.FromRgb(255, 125, 125));
     }
@@ -788,10 +790,10 @@ public sealed class TacticalScopeControl : FrameworkElement
             ? $"+{target.RelativeAltitudeFt:0}"
             : $"{target.RelativeAltitudeFt:0}";
         var line1 = $"INT {target.DisplayName}";
-        var line2 = $"BRG {target.BearingDegTrue:000} RNG {target.RangeNm:0.0}";
+        var line2 = $"BRG {FormatDirection(target.BearingDegTrue)} RNG {target.RangeNm:0.0}";
         var line3 = $"ALT {altitude} FT";
         var line4 = solution.HasSolution
-            ? $"HDG {solution.HeadingDeg:000} TTI {FormatInterceptTime(solution.TimeSeconds)}"
+            ? $"HDG {FormatDirection(solution.HeadingDeg)} TTI {FormatInterceptTime(solution.TimeSeconds)}"
             : "NO INT";
 
         var lines = new[]
@@ -957,7 +959,25 @@ public sealed class TacticalScopeControl : FrameworkElement
         dc.DrawText(halo, new Point(point.X, point.Y + 1));
     }
 
-    private static IReadOnlyList<LabelLine> BuildTargetLabelLines(ComputedTarget target, LabelMode mode)
+    private double DisplayDirectionVariationDeg =>
+        Settings?.DirectionReferenceMode == DirectionReferenceMode.Magnetic &&
+        Picture?.Ownship.MagneticVariationDeg.HasValue == true
+            ? Picture.Ownship.MagneticVariationDeg.Value
+            : 0;
+
+    private string DirectionSuffix =>
+        Settings?.DirectionReferenceMode == DirectionReferenceMode.Magnetic &&
+        Picture?.Ownship.MagneticVariationDeg.HasValue == true
+            ? "M"
+            : "T";
+
+    private string FormatDirection(double trueDirectionDeg)
+    {
+        var rounded = (int)Math.Round(GeoMath.NormalizeDegrees(trueDirectionDeg - DisplayDirectionVariationDeg)) % 360;
+        return $"{rounded:000}{DirectionSuffix}";
+    }
+
+    private IReadOnlyList<LabelLine> BuildTargetLabelLines(ComputedTarget target, LabelMode mode)
     {
         var altitude = AviationFormat.RelativeAltitudeHundreds(target.RelativeAltitudeFt);
         var min = $"{target.DisplayName} {target.RangeNm:0.0} {altitude}";
@@ -971,7 +991,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         var aspect = target.HeadingDeg.HasValue
             ? AviationFormat.TargetAspect(target.HeadingDeg.Value, target.BearingDegTrue)
             : "---";
-        var heading = target.HeadingDeg.HasValue ? $"{target.HeadingDeg.Value:000}" : "---";
+        var heading = target.HeadingDeg.HasValue ? FormatDirection(target.HeadingDeg.Value) : "---";
         var closure = target.ClosureKt.HasValue ? $"{target.ClosureKt.Value:0}" : "---";
         var full = $"{aspect,-5} {heading} {closure}";
         var secondary = new LabelLine(full, Colors.LightGray, 12, FontWeights.Normal);

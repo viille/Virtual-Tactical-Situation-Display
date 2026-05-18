@@ -388,6 +388,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 settings.SelectedRangeNm,
                 settings.ShowRangeRings,
                 settings.OrientationMode.ToString(),
+                settings.DirectionReferenceMode.ToString(),
                 settings.LabelMode.ToString(),
                 settings.MapOpacity,
                 settings.MapLabelBackgroundOpacity,
@@ -424,6 +425,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
             settings.SelectedRangeNm,
             settings.ShowRangeRings,
             settings.OrientationMode.ToString(),
+            settings.DirectionReferenceMode.ToString(),
             settings.LabelMode.ToString(),
             settings.MapOpacity,
             settings.MapLabelBackgroundOpacity,
@@ -452,6 +454,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 picture.Ownship.LongitudeDeg,
                 picture.Ownship.AltitudeFt,
                 picture.Ownship.HeadingDeg,
+                picture.Ownship.MagneticVariationDeg,
                 picture.Ownship.SpeedKt,
                 picture.Ownship.Timestamp),
             picture.Targets.Select(static target => new WebTarget(
@@ -697,6 +700,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
         int RangeNm,
         bool ShowRangeRings,
         string Orientation,
+        string DirectionReferenceMode,
         string LabelMode,
         double MapOpacity,
         double MapLabelBackgroundOpacity,
@@ -733,6 +737,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 40,
                 true,
                 ScopeOrientationMode.HeadingUp.ToString(),
+                global::TacticalDisplay.Core.Models.DirectionReferenceMode.True.ToString(),
                 global::TacticalDisplay.Core.Models.LabelMode.Minimal.ToString(),
                 0.65,
                 0.75,
@@ -765,6 +770,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
         double LongitudeDeg,
         double AltitudeFt,
         double HeadingDeg,
+        double? MagneticVariationDeg,
         double? SpeedKt,
         DateTimeOffset Timestamp);
 
@@ -1137,7 +1143,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
     function updateText() {
       if (!snapshot) return;
-      fields.range.textContent = `${snapshot.orientation === 'NorthUp' ? 'N-UP' : 'HDG-UP'} | RANGE ${snapshot.rangeNm} NM`;
+      fields.range.textContent = `${snapshot.orientation === 'NorthUp' ? 'N-UP' : 'HDG-UP'} | ${snapshot.directionReferenceMode === 'Magnetic' ? 'MAG' : 'TRUE'} | RANGE ${snapshot.rangeNm} NM`;
       fields.source.textContent = snapshot.source || '';
       fields.connection.textContent = snapshot.connection || 'Disconnected';
       fields.traffic.textContent = snapshot.traffic || '0 contacts';
@@ -1256,8 +1262,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
     }
 
     function drawHeadingReadout(center) {
-      const heading = Math.round(normalize(snapshot.ownship.headingDeg)).toString().padStart(3, '0');
-      drawTopReadout(`HDG ${heading}`, center.x, 10, '#afffe1');
+      drawTopReadout(`HDG ${formatDirection(snapshot.ownship.headingDeg)}`, center.x, 10, '#afffe1');
     }
 
     function drawTopReadout(text, centerX, y, fillStyle) {
@@ -1281,6 +1286,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
     }
 
     function drawFrameCompass(center) {
+      const variation = displayDirectionVariation();
       const offset = snapshot.orientation === 'HeadingUp' ? snapshot.ownship.headingDeg : 0;
       const compassRadius = Math.max(12, Math.min(canvas.clientWidth, canvas.clientHeight) / 2 - 8);
 
@@ -1297,7 +1303,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
       ctx.stroke();
 
       for (let bearing = 0; bearing < 360; bearing += 10) {
-        const display = normalize(bearing - offset);
+        const display = normalize(bearing + variation - offset);
         const major = bearing % 30 === 0;
         const length = major ? 12 : 7;
         const edge = pointOnCircle(center, compassRadius, display);
@@ -1316,10 +1322,10 @@ public sealed class WebDisplayServer : IAsyncDisposable
         ctx.stroke();
       }
 
-      drawCompassCardinal('N', 0, offset, center, compassRadius);
-      drawCompassCardinal('E', 90, offset, center, compassRadius);
-      drawCompassCardinal('S', 180, offset, center, compassRadius);
-      drawCompassCardinal('W', 270, offset, center, compassRadius);
+      drawCompassCardinal('N', normalize(0 + variation), offset, center, compassRadius);
+      drawCompassCardinal('E', normalize(90 + variation), offset, center, compassRadius);
+      drawCompassCardinal('S', normalize(180 + variation), offset, center, compassRadius);
+      drawCompassCardinal('W', normalize(270 + variation), offset, center, compassRadius);
       ctx.restore();
     }
 
@@ -1649,10 +1655,10 @@ public sealed class WebDisplayServer : IAsyncDisposable
       const altitude = target.relativeAltitudeFt >= 0 ? `+${Math.round(target.relativeAltitudeFt)}` : `${Math.round(target.relativeAltitudeFt)}`;
       const lines = [
         `INT ${target.displayName}`,
-        `BRG ${Math.round(target.bearingDegTrue).toString().padStart(3, '0')} RNG ${target.rangeNm.toFixed(1)}`,
+        `BRG ${formatDirection(target.bearingDegTrue)} RNG ${target.rangeNm.toFixed(1)}`,
         `ALT ${altitude} FT`,
         solution.hasSolution
-          ? `HDG ${Math.round(solution.headingDeg).toString().padStart(3, '0')} TTI ${formatInterceptTime(solution.timeSeconds)}`
+          ? `HDG ${formatDirection(solution.headingDeg)} TTI ${formatInterceptTime(solution.timeSeconds)}`
           : 'NO INT'
       ];
       ctx.font = '12px Consolas, monospace';
@@ -1678,7 +1684,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
     function drawInterceptReadout(target, solution, center) {
       const text = solution.hasSolution
-        ? `INT ${target.displayName} HDG ${Math.round(solution.headingDeg).toString().padStart(3, '0')} TTI ${formatInterceptTime(solution.timeSeconds)}`
+        ? `INT ${target.displayName} HDG ${formatDirection(solution.headingDeg)} TTI ${formatInterceptTime(solution.timeSeconds)}`
         : `INT ${target.displayName} NO INT`;
       drawTopReadout(text, center.x + 150, 10, solution.hasSolution ? '#ffe178' : '#ff9090');
     }
@@ -1700,7 +1706,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
       const primary = `${target.displayName} ${target.rangeNm.toFixed(1)} ${rel}${target.isStale ? ' STALE' : ''}`;
       const lines = [primary];
       if (snapshot.labelMode === 'Full' && !target.isStale) {
-        const heading = target.headingDeg == null ? '---' : `${Math.round(target.headingDeg).toString().padStart(3, '0')}`;
+        const heading = target.headingDeg == null ? '---' : formatDirection(target.headingDeg);
         const closure = target.closureKt == null ? '---' : `${Math.round(target.closureKt)}`;
         lines.push(`${heading} ${closure}`);
       }
@@ -1932,6 +1938,25 @@ public sealed class WebDisplayServer : IAsyncDisposable
       ctx.textBaseline = 'middle';
       ctx.fillText(text, x, y);
       ctx.restore();
+    }
+
+    function displayDirectionVariation() {
+      return snapshot?.directionReferenceMode === 'Magnetic' &&
+        Number.isFinite(snapshot?.ownship?.magneticVariationDeg)
+          ? snapshot.ownship.magneticVariationDeg
+          : 0;
+    }
+
+    function directionSuffix() {
+      return snapshot?.directionReferenceMode === 'Magnetic' &&
+        Number.isFinite(snapshot?.ownship?.magneticVariationDeg)
+          ? 'M'
+          : 'T';
+    }
+
+    function formatDirection(trueDirectionDeg) {
+      const rounded = Math.round(normalize(trueDirectionDeg - displayDirectionVariation())) % 360;
+      return `${rounded.toString().padStart(3, '0')}${directionSuffix()}`;
     }
 
     function normalize(deg) {

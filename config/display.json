@@ -11,6 +11,7 @@
   "RangeScaleOptionsNm": [10, 20, 40, 80, 120],
   "SelectedRangeNm": 40,
   "OrientationMode": 1,
+  "DirectionReferenceMode": 0,
   "ShowMapLayer": true,
   "MapOpacity": 0.65,
   "MapLabelBackgroundOpacity": 0.75,

@@ -1,6 +1,7 @@
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
@@ -10,6 +11,8 @@ namespace TacticalDisplay.App.Data;
 public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 {
     private const string LogSource = "VATSIM";
+    private const int RequiredStableCallsignMatches = 2;
+    private static readonly TimeSpan SnapshotHistoryRetention = TimeSpan.FromSeconds(20);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -17,6 +20,9 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     private readonly TacticalDisplaySettings _settings;
     private readonly HttpClient _httpClient;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
+    private readonly object _historyLock = new();
+    private readonly Queue<TrafficSnapshot> _snapshotHistory = new();
+    private readonly Dictionary<string, CallsignConfirmation> _callsignConfirmations = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<VatsimPilotCandidate> _cachedPilots = [];
     private DateTimeOffset _lastRefreshAt = DateTimeOffset.MinValue;
     private int _isEnriching;
@@ -60,6 +66,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 
     private void OnInnerSnapshotReceived(object? sender, TrafficSnapshot snapshot)
     {
+        RememberSnapshot(snapshot);
         if (Interlocked.Exchange(ref _isEnriching, 1) == 1)
         {
             SnapshotReceived?.Invoke(this, snapshot);
@@ -74,7 +81,9 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         try
         {
             var pilots = await GetPilotsAsync(CancellationToken.None).ConfigureAwait(false);
-            var enriched = VatsimCallsignMatcher.EnrichSnapshot(snapshot, pilots);
+            var history = GetSnapshotHistory();
+            var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, history, pilots);
+            enriched = ConfirmCallsignMatches(snapshot, enriched, pilots);
             LogEnrichmentSummary(snapshot, enriched, pilots);
             SnapshotReceived?.Invoke(this, enriched);
         }
@@ -117,13 +126,14 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             var feed = await JsonSerializer.DeserializeAsync<VatsimDataFeed>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
             _cachedPilots = feed?.Pilots?
                 .Where(static pilot => !string.IsNullOrWhiteSpace(pilot.Callsign))
-                .Select(static pilot => new VatsimPilotCandidate(
+                .Select(pilot => new VatsimPilotCandidate(
                     pilot.Callsign.Trim().ToUpperInvariant(),
                     pilot.Latitude,
                     pilot.Longitude,
                     pilot.Altitude,
                     pilot.Groundspeed,
-                    pilot.Heading))
+                    pilot.Heading,
+                    pilot.LastUpdated ?? feed.General?.UpdateTimestamp))
                 .ToList() ?? [];
             _lastRefreshAt = now;
 
@@ -139,6 +149,111 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         {
             _refreshLock.Release();
         }
+    }
+
+    private void RememberSnapshot(TrafficSnapshot snapshot)
+    {
+        lock (_historyLock)
+        {
+            _snapshotHistory.Enqueue(snapshot);
+            var cutoff = snapshot.Timestamp - SnapshotHistoryRetention;
+            while (_snapshotHistory.Count > 0 && _snapshotHistory.Peek().Timestamp < cutoff)
+            {
+                _snapshotHistory.Dequeue();
+            }
+        }
+    }
+
+    private IReadOnlyList<TrafficSnapshot> GetSnapshotHistory()
+    {
+        lock (_historyLock)
+        {
+            return _snapshotHistory.ToArray();
+        }
+    }
+
+    private TrafficSnapshot ConfirmCallsignMatches(
+        TrafficSnapshot original,
+        TrafficSnapshot enriched,
+        IReadOnlyList<VatsimPilotCandidate> pilots)
+    {
+        var activeContactIds = enriched.Contacts
+            .Select(static contact => contact.Id)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var contactId in _callsignConfirmations.Keys.Except(activeContactIds, StringComparer.OrdinalIgnoreCase).ToList())
+        {
+            _callsignConfirmations.Remove(contactId);
+        }
+
+        var pilotUpdatesByCallsign = pilots
+            .Where(static pilot => !string.IsNullOrWhiteSpace(pilot.Callsign))
+            .GroupBy(static pilot => pilot.Callsign.Trim().ToUpperInvariant(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                static group => group.Key,
+                static group => group
+                    .Select(static pilot => pilot.LastUpdated)
+                    .Where(static lastUpdated => lastUpdated.HasValue)
+                    .Max(),
+                StringComparer.OrdinalIgnoreCase);
+
+        var confirmedContacts = new List<TrafficContactState>(enriched.Contacts.Count);
+        foreach (var pair in original.Contacts.Zip(enriched.Contacts))
+        {
+            var originalContact = pair.First;
+            var enrichedContact = pair.Second;
+            if (!string.IsNullOrWhiteSpace(originalContact.Callsign) ||
+                string.IsNullOrWhiteSpace(enrichedContact.Callsign))
+            {
+                confirmedContacts.Add(enrichedContact);
+                continue;
+            }
+
+            var callsign = enrichedContact.Callsign.Trim().ToUpperInvariant();
+            pilotUpdatesByCallsign.TryGetValue(callsign, out var pilotUpdateTime);
+            var confirmation = UpdateCallsignConfirmation(
+                enrichedContact.Id,
+                callsign,
+                pilotUpdateTime);
+
+            if (confirmation.Confirmed)
+            {
+                confirmedContacts.Add(enrichedContact with { Callsign = callsign });
+                continue;
+            }
+
+            confirmedContacts.Add(enrichedContact with { Callsign = null });
+        }
+
+        return enriched with { Contacts = confirmedContacts };
+    }
+
+    private CallsignConfirmation UpdateCallsignConfirmation(
+        string contactId,
+        string callsign,
+        DateTimeOffset? pilotUpdateTime)
+    {
+        if (!_callsignConfirmations.TryGetValue(contactId, out var confirmation) ||
+            !string.Equals(confirmation.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
+        {
+            confirmation = new CallsignConfirmation(callsign, 0, null, false);
+        }
+
+        var count = confirmation.MatchCount;
+        if (!pilotUpdateTime.HasValue ||
+            confirmation.LastPilotUpdateTime is null ||
+            pilotUpdateTime.Value > confirmation.LastPilotUpdateTime.Value)
+        {
+            count++;
+        }
+
+        confirmation = confirmation with
+        {
+            MatchCount = count,
+            LastPilotUpdateTime = pilotUpdateTime ?? confirmation.LastPilotUpdateTime,
+            Confirmed = confirmation.Confirmed || count >= RequiredStableCallsignMatches
+        };
+        _callsignConfirmations[contactId] = confirmation;
+        return confirmation;
     }
 
     private Uri GetFeedUri()
@@ -184,7 +299,13 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             });
     }
 
-    private sealed record VatsimDataFeed(IReadOnlyList<VatsimPilot>? Pilots);
+    private sealed record VatsimDataFeed(
+        VatsimGeneral? General,
+        IReadOnlyList<VatsimPilot>? Pilots);
+
+    private sealed record VatsimGeneral(
+        [property: JsonPropertyName("update_timestamp")]
+        DateTimeOffset? UpdateTimestamp);
 
     private sealed record VatsimPilot(
         string Callsign,
@@ -192,5 +313,13 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         double Longitude,
         int Altitude,
         int Groundspeed,
-        int Heading);
+        int Heading,
+        [property: JsonPropertyName("last_updated")]
+        DateTimeOffset? LastUpdated);
+
+    private sealed record CallsignConfirmation(
+        string Callsign,
+        int MatchCount,
+        DateTimeOffset? LastPilotUpdateTime,
+        bool Confirmed);
 }
