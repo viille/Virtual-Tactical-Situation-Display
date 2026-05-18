@@ -199,7 +199,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "PLANE ALTITUDE", "feet", (uint)SimConnectDataType.Float64, 0, 3);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "GPS GROUND TRUE HEADING", "degrees", (uint)SimConnectDataType.Float64, 0, 4);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "GROUND VELOCITY", "knots", (uint)SimConnectDataType.Float64, 0, 5);
-        api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "GPS GROUND MAGNETIC HEADING", "degrees", (uint)SimConnectDataType.Float64, 0, 6);
+        api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "MAGVAR", "degrees", (uint)SimConnectDataType.Float64, 0, 6);
 
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE LATITUDE", "degrees", (uint)SimConnectDataType.Float64, 0, 11);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE LONGITUDE", "degrees", (uint)SimConnectDataType.Float64, 0, 12);
@@ -247,7 +247,6 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             lock (_stateLock)
             {
                 var trueHeading = GeoMath.NormalizeDegrees(ownshipRaw.HeadingDeg);
-                var magneticHeading = GeoMath.NormalizeDegrees(ownshipRaw.MagneticHeadingDeg);
                 _lastOwnshipSampleAt = now;
                 _latestOwnship = new OwnshipState(
                     "OWN",
@@ -257,7 +256,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     trueHeading,
                     ownshipRaw.SpeedKt,
                     now,
-                    GeoMath.SignedRelativeBearingDeg(magneticHeading, trueHeading));
+                    ownshipRaw.MagneticVariationDeg);
             }
 
             DataSourceDebugLog.ThrottledDebug(
@@ -789,7 +788,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         public double AltitudeFt;
         public double HeadingDeg;
         public double SpeedKt;
-        public double MagneticHeadingDeg;
+        public double MagneticVariationDeg;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
