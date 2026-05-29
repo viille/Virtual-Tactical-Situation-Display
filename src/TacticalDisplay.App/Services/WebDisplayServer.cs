@@ -165,6 +165,12 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 return;
             }
 
+            if (string.Equals(method, "GET", StringComparison.OrdinalIgnoreCase) && path == "/api/kneepad-image")
+            {
+                await WriteKneepadImageResponseAsync(stream, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
             if (string.Equals(method, "POST", StringComparison.OrdinalIgnoreCase) && path == "/api/command")
             {
                 var commandRequest = ParseCommand(body);
@@ -350,6 +356,37 @@ public sealed class WebDisplayServer : IAsyncDisposable
         await stream.WriteAsync(bodyBytes, cancellationToken).ConfigureAwait(false);
     }
 
+    private async Task WriteKneepadImageResponseAsync(NetworkStream stream, CancellationToken cancellationToken)
+    {
+        var pages = _viewModel.Settings.KneepadPages;
+        var pageIndex = pages.Count == 0 ? -1 : Math.Clamp(_viewModel.Settings.SelectedKneepadPageIndex, 0, pages.Count - 1);
+        var path = pageIndex >= 0 ? pages[pageIndex].ImagePath : _viewModel.Settings.KneepadImagePath;
+        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
+        {
+            await WriteResponseAsync(stream, 404, "Not Found", "text/plain; charset=utf-8", "Kneepad image not found.", cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var contentType = Path.GetExtension(path).ToLowerInvariant() switch
+        {
+            ".jpg" or ".jpeg" => "image/jpeg",
+            ".bmp" => "image/bmp",
+            ".gif" => "image/gif",
+            _ => "image/png"
+        };
+
+        var bodyBytes = await File.ReadAllBytesAsync(path, cancellationToken).ConfigureAwait(false);
+        var header =
+            "HTTP/1.1 200 OK\r\n" +
+            $"Content-Type: {contentType}\r\n" +
+            $"Content-Length: {bodyBytes.Length.ToString(CultureInfo.InvariantCulture)}\r\n" +
+            "Cache-Control: no-store\r\n" +
+            "Connection: close\r\n" +
+            "\r\n";
+        await stream.WriteAsync(Encoding.ASCII.GetBytes(header), cancellationToken).ConfigureAwait(false);
+        await stream.WriteAsync(bodyBytes, cancellationToken).ConfigureAwait(false);
+    }
+
     private WebSnapshot CaptureSnapshot()
     {
         if (_dispatcher.HasShutdownStarted || _dispatcher.HasShutdownFinished)
@@ -410,6 +447,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 settings.TargetSymbolScale,
                 _viewModel.IsAlwaysOnTop,
                 _viewModel.ShowSettings,
+                BuildWebKneepad(settings),
                 [],
                 null,
                 []);
@@ -447,6 +485,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
             settings.TargetSymbolScale,
             _viewModel.IsAlwaysOnTop,
             _viewModel.ShowSettings,
+            BuildWebKneepad(settings),
             BuildWebAirspaces(settings),
             new WebOwnship(
                 picture.Ownship.Id,
@@ -479,6 +518,40 @@ public sealed class WebDisplayServer : IAsyncDisposable
                         point.Timestamp))
                     .ToArray()))
                 .ToArray());
+    }
+
+    private WebKneepad BuildWebKneepad(TacticalDisplaySettings settings)
+    {
+        var pages = settings.KneepadPages.Count == 0 ? [new KneepadPage()] : settings.KneepadPages;
+        var pageIndex = Math.Clamp(settings.SelectedKneepadPageIndex, 0, pages.Count - 1);
+        var page = pages[pageIndex];
+        var mode = string.Equals(page.ContentMode, "Image", StringComparison.OrdinalIgnoreCase) ? "Image" :
+            string.Equals(page.ContentMode, "Url", StringComparison.OrdinalIgnoreCase) ? "Url" :
+            string.Equals(page.ContentMode, "Mission", StringComparison.OrdinalIgnoreCase) ? "Mission" :
+            "Empty";
+        var url = NormalizeKneepadUrl(page.Url);
+        return new WebKneepad(
+            _viewModel.ShowKneepad,
+            pageIndex + 1,
+            pages.Count,
+            mode,
+            page.MissionInformation,
+            mode == "Image" && !string.IsNullOrWhiteSpace(page.ImagePath) && File.Exists(page.ImagePath),
+            mode == "Url" && Uri.TryCreate(url, UriKind.Absolute, out _) ? url : string.Empty);
+    }
+
+    private static string NormalizeKneepadUrl(string? value)
+    {
+        var trimmed = value?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return string.Empty;
+        }
+
+        return trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                ? trimmed
+                : $"https://{trimmed}";
     }
 
     private IReadOnlyList<WebAirspace> BuildWebAirspaces(TacticalDisplaySettings settings)
@@ -587,6 +660,14 @@ public sealed class WebDisplayServer : IAsyncDisposable
             case "map-opacity-down":
                 _viewModel.DecreaseMapOpacityCommand.Execute(null);
                 break;
+            case "map-overlay-opacity-up":
+            case "label-opacity-up":
+                _viewModel.IncreaseMapOverlayOpacityCommand.Execute(null);
+                break;
+            case "map-overlay-opacity-down":
+            case "label-opacity-down":
+                _viewModel.DecreaseMapOverlayOpacityCommand.Execute(null);
+                break;
             case "map":
                 _viewModel.ToggleMapCommand.Execute(null);
                 break;
@@ -623,6 +704,30 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 break;
             case "settings":
                 _viewModel.ToggleSettingsCommand.Execute(null);
+                break;
+            case "kneepad":
+                _viewModel.ToggleKneepadCommand.Execute(null);
+                break;
+            case "kneepad-prev":
+                _viewModel.PreviousKneepadPageCommand.Execute(null);
+                break;
+            case "kneepad-next":
+                _viewModel.NextKneepadPageCommand.Execute(null);
+                break;
+            case "kneepad-new":
+                _viewModel.AddKneepadPageCommand.Execute(null);
+                break;
+            case "kneepad-delete":
+                _viewModel.DeleteKneepadPageCommand.Execute(null);
+                break;
+            case "kneepad-mission":
+                _viewModel.SetKneepadMissionPageCommand.Execute(null);
+                break;
+            case "kneepad-image":
+                _viewModel.SetKneepadImagePageCommand.Execute(null);
+                break;
+            case "kneepad-url":
+                _viewModel.SetKneepadUrlPageCommand.Execute(null);
                 break;
             default:
                 if (normalized.StartsWith("bullseye-set:", StringComparison.Ordinal))
@@ -722,6 +827,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
         double TargetSymbolScale,
         bool IsAlwaysOnTop,
         bool ShowSettings,
+        WebKneepad Kneepad,
         IReadOnlyList<WebAirspace> Airspaces,
         WebOwnship? Ownship,
         IReadOnlyList<WebTarget> Targets)
@@ -759,10 +865,20 @@ public sealed class WebDisplayServer : IAsyncDisposable
                 1,
                 false,
                 false,
+                new WebKneepad(false, 1, 1, "Empty", string.Empty, false, string.Empty),
                 [],
                 null,
                 []);
     }
+
+    private sealed record WebKneepad(
+        bool Show,
+        int PageNumber,
+        int PageCount,
+        string Mode,
+        string MissionInformation,
+        bool HasImage,
+        string Url);
 
     private sealed record WebOwnship(
         string Id,
@@ -922,6 +1038,71 @@ public sealed class WebDisplayServer : IAsyncDisposable
       touch-action: none;
       background: transparent;
     }
+    .kneepad {
+      position: absolute;
+      inset: 0;
+      z-index: 5;
+      display: none;
+      grid-template-rows: auto minmax(0, 1fr);
+      padding: 14px;
+      border: 1px solid #9afad7;
+      background: rgba(7,16,21,0.94);
+    }
+    .kneepad.visible { display: grid; }
+    .kneepad-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+      color: #9afad7;
+      font-size: 18px;
+      font-weight: 700;
+    }
+    .kneepad-close {
+      height: 30px;
+      min-height: 30px;
+      min-width: 62px;
+      margin: 0;
+      padding: 0 8px;
+      font-size: 11px;
+    }
+    .kneepad-body {
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      color: #d9f2ec;
+    }
+    .kneepad-text {
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      padding: 8px;
+      border: 1px solid #355a56;
+      background: rgba(7,16,21,0.38);
+      font-size: 14px;
+    }
+    .kneepad-image {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .kneepad-frame {
+      width: 100%;
+      height: 100%;
+      border: 0;
+      background: #071015;
+    }
+    .kneepad-placeholder {
+      height: 100%;
+      display: grid;
+      place-items: center;
+      color: #8ea5ad;
+      font-size: 14px;
+    }
     button {
       height: 42px;
       min-height: 42px;
@@ -1064,10 +1245,30 @@ public sealed class WebDisplayServer : IAsyncDisposable
     <div class="display-surface">
       <div id="map"></div>
       <canvas id="scope"></canvas>
+      <div id="kneepad" class="kneepad">
+        <div class="kneepad-header">
+          <span id="kneepadPageLabel">Page 1/1</span>
+          <div>
+            <button type="button" class="kneepad-close" data-command="kneepad-prev">&lt;</button>
+            <button type="button" class="kneepad-close" data-command="kneepad-next">&gt;</button>
+            <button type="button" class="kneepad-close" data-command="kneepad-new">New</button>
+            <button type="button" class="kneepad-close" data-command="kneepad-delete">Del</button>
+          </div>
+          <button type="button" class="kneepad-close" data-command="kneepad">Close</button>
+        </div>
+        <div id="kneepadBody" class="kneepad-body"></div>
+      </div>
     </div>
     <div class="bottom">
       <div class="bottom-controls">
         <button type="button" data-command="labels" id="labelsBtn">LBL</button>
+        <div class="tick"></div>
+        <button type="button" data-command="kneepad" id="kneepadBtn">KNEE</button>
+        <div class="tick"></div>
+        <div class="arrow-stack">
+          <button type="button" data-command="map-overlay-opacity-up">&#x2191;</button>
+          <button type="button" data-command="map-overlay-opacity-down">&#x2193;</button>
+        </div>
         <div class="tick"></div>
         <button type="button" data-command="settings" id="settingsBtn">SET</button>
       </div>
@@ -1092,6 +1293,8 @@ public sealed class WebDisplayServer : IAsyncDisposable
     let currentMapboxToken = '';
     let currentMapboxStyle = '';
     let labelHitBoxes = [];
+    const maxCachedKneepadFrames = 6;
+    const kneepadFrameCache = new Map();
     const fields = {
       range: document.getElementById('range'),
       source: document.getElementById('source'),
@@ -1109,7 +1312,11 @@ public sealed class WebDisplayServer : IAsyncDisposable
       laraBtn: document.getElementById('laraBtn'),
       areaBtn: document.getElementById('areaBtn'),
       pinBtn: document.getElementById('pinBtn'),
-      settingsBtn: document.getElementById('settingsBtn')
+      settingsBtn: document.getElementById('settingsBtn'),
+      kneepadBtn: document.getElementById('kneepadBtn'),
+      kneepad: document.getElementById('kneepad'),
+      kneepadBody: document.getElementById('kneepadBody'),
+      kneepadPageLabel: document.getElementById('kneepadPageLabel')
     };
     const fullscreenBtn = document.getElementById('fullscreenBtn');
     let snapshot = null;
@@ -1162,12 +1369,113 @@ public sealed class WebDisplayServer : IAsyncDisposable
       setToggle(fields.areaBtn, snapshot.showControlledAirspaceLayer, 'AREA');
       setToggle(fields.pinBtn, snapshot.isAlwaysOnTop, 'PIN');
       setToggle(fields.settingsBtn, snapshot.showSettings, 'SET');
+      setToggle(fields.kneepadBtn, snapshot.kneepad?.show, 'KNEE');
+      updateKneepad();
       updateMap();
     }
 
     function setToggle(button, isActive, text) {
       button.classList.toggle('active', !!isActive);
       button.textContent = text;
+    }
+
+    function updateKneepad() {
+      const kneepad = snapshot?.kneepad;
+      fields.kneepad.classList.toggle('visible', !!kneepad?.show);
+      fields.kneepadPageLabel.textContent = `Page ${kneepad?.pageNumber || 1}/${kneepad?.pageCount || 1}`;
+      if (!kneepad?.show) {
+        clearKneepadBodyPreservingFrames();
+        return;
+      }
+
+      const signature = JSON.stringify(kneepad);
+      if (fields.kneepadBody.dataset.signature === signature && kneepad.mode !== 'Url') return;
+      fields.kneepadBody.dataset.signature = signature;
+      clearKneepadBodyPreservingFrames();
+
+      if (kneepad.mode === 'Mission' && kneepad.missionInformation?.trim()) {
+        const text = document.createElement('div');
+        text.className = 'kneepad-text';
+        text.textContent = kneepad.missionInformation;
+        fields.kneepadBody.appendChild(text);
+        return;
+      }
+
+      if (kneepad.mode === 'Empty') {
+        const chooser = document.createElement('div');
+        chooser.className = 'kneepad-placeholder';
+        const inner = document.createElement('div');
+        inner.textContent = 'Select kneepad page content';
+        inner.style.marginBottom = '12px';
+        chooser.appendChild(inner);
+        for (const item of [
+          ['Mission', 'kneepad-mission'],
+          ['Image', 'kneepad-image'],
+          ['URL', 'kneepad-url']
+        ]) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = item[0];
+          button.addEventListener('click', () => handleButtonCommand(item[1]));
+          chooser.appendChild(button);
+        }
+        fields.kneepadBody.appendChild(chooser);
+        return;
+      }
+
+      if (kneepad.mode === 'Image' && kneepad.hasImage) {
+        const image = document.createElement('img');
+        image.className = 'kneepad-image';
+        image.alt = 'Kneepad image';
+        image.src = `/api/kneepad-image?t=${Date.now()}`;
+        fields.kneepadBody.appendChild(image);
+        return;
+      }
+
+      if (kneepad.mode === 'Url' && kneepad.url) {
+        const key = `${kneepad.pageNumber || 1}`;
+        let frame = kneepadFrameCache.get(key);
+        if (!frame) {
+          frame = document.createElement('iframe');
+          frame.className = 'kneepad-frame';
+          kneepadFrameCache.set(key, frame);
+        }
+        trimKneepadFrameCache(key);
+        if (frame.src !== kneepad.url) frame.src = kneepad.url;
+        if (frame.parentElement !== fields.kneepadBody) fields.kneepadBody.appendChild(frame);
+        frame.style.display = 'block';
+        return;
+      }
+
+      const placeholder = document.createElement('div');
+      placeholder.className = 'kneepad-placeholder';
+      placeholder.textContent = kneepad.mode === 'Image'
+        ? 'No kneepad image selected'
+        : kneepad.mode === 'Url'
+          ? 'No valid kneepad URL'
+          : 'No mission information';
+      fields.kneepadBody.appendChild(placeholder);
+    }
+
+    function clearKneepadBodyPreservingFrames() {
+      for (const child of Array.from(fields.kneepadBody.children)) {
+        if (child.classList.contains('kneepad-frame')) {
+          child.style.display = 'none';
+        } else {
+          child.remove();
+        }
+      }
+    }
+
+    function trimKneepadFrameCache(activeKey) {
+      if (kneepadFrameCache.size <= maxCachedKneepadFrames) return;
+      for (const key of Array.from(kneepadFrameCache.keys())) {
+        if (key === activeKey) continue;
+        const frame = kneepadFrameCache.get(key);
+        if (frame?.parentElement) frame.remove();
+        kneepadFrameCache.delete(key);
+        if (kneepadFrameCache.size <= maxCachedKneepadFrames) break;
+      }
     }
 
     async function toggleFullscreen() {
@@ -1916,6 +2224,22 @@ public sealed class WebDisplayServer : IAsyncDisposable
       sendCommand(command);
     }
 
+    function handleKeyboard(event) {
+      if (!event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) return;
+      const key = event.key.toLowerCase();
+      const command = key === 'h' ? 'settings' :
+        key === 'd' ? 'declutter' :
+        key === 't' ? 'pin' :
+        key === 'k' ? 'kneepad' :
+        key === 'pagedown' ? 'kneepad-next' :
+        key === 'pageup' ? 'kneepad-prev' :
+        null;
+      if (!command) return;
+
+      event.preventDefault();
+      handleButtonCommand(command);
+    }
+
     function colorFor(category) {
       if (category === 'Friend') return '#78dcff';
       if (category === 'Enemy') return '#ff5f5f';
@@ -1964,6 +2288,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
     }
 
     window.addEventListener('resize', resize);
+    window.addEventListener('keydown', handleKeyboard);
     canvas.addEventListener('click', handleCanvasClick);
     fullscreenBtn.addEventListener('click', toggleFullscreen);
     document.addEventListener('fullscreenchange', updateFullscreenButton);

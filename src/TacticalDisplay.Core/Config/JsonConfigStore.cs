@@ -138,6 +138,35 @@ public sealed class JsonConfigStore
         {
             settings.AirspaceActivationUrl = "https://lara-backend.lusep.fi/data/reservations/efin.json";
         }
+
+        settings.KneepadContentMode = NormalizeKneepadContentMode(settings.KneepadContentMode);
+        settings.KneepadMissionInformation ??= string.Empty;
+        settings.KneepadImagePath ??= string.Empty;
+        settings.KneepadUrl ??= string.Empty;
+        if (settings.KneepadPages.Count == 0)
+        {
+            settings.KneepadPages.Add(new KneepadPage
+            {
+                ContentMode = string.IsNullOrWhiteSpace(settings.KneepadMissionInformation) &&
+                    string.IsNullOrWhiteSpace(settings.KneepadImagePath) &&
+                    string.IsNullOrWhiteSpace(settings.KneepadUrl)
+                        ? "Empty"
+                        : settings.KneepadContentMode,
+                MissionInformation = settings.KneepadMissionInformation,
+                ImagePath = settings.KneepadImagePath,
+                Url = settings.KneepadUrl
+            });
+        }
+
+        foreach (var page in settings.KneepadPages)
+        {
+            page.ContentMode = NormalizeKneepadContentMode(page.ContentMode);
+            page.MissionInformation ??= string.Empty;
+            page.ImagePath ??= string.Empty;
+            page.Url ??= string.Empty;
+        }
+
+        settings.SelectedKneepadPageIndex = System.Math.Clamp(settings.SelectedKneepadPageIndex, 0, settings.KneepadPages.Count - 1);
     }
 
     private static void ValidateDisplaySettings(TacticalDisplaySettings settings)
@@ -174,7 +203,8 @@ public sealed class JsonConfigStore
         if (string.IsNullOrWhiteSpace(settings.XPlane12ApiBaseUrl) ||
             string.IsNullOrWhiteSpace(settings.VatsimDataFeedUrl) ||
             string.IsNullOrWhiteSpace(settings.AirspaceFirCode) ||
-            string.IsNullOrWhiteSpace(settings.AirspaceDataBaseUrl))
+            string.IsNullOrWhiteSpace(settings.AirspaceDataBaseUrl) ||
+            !settings.KneepadPages.All(static page => IsValidKneepadContentMode(page.ContentMode)))
         {
             throw new InvalidDataException("Display settings contain invalid URL or FIR values.");
         }
@@ -183,6 +213,19 @@ public sealed class JsonConfigStore
     private static bool IsPositive(double value) => double.IsFinite(value) && value > 0;
 
     private static bool IsFiniteNonNegative(double value) => double.IsFinite(value) && value >= 0;
+
+    private static bool IsValidKneepadContentMode(string mode) =>
+        string.Equals(mode, "Empty", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(mode, "Mission", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(mode, "Image", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(mode, "Url", StringComparison.OrdinalIgnoreCase);
+
+    private static string NormalizeKneepadContentMode(string? mode) =>
+        string.Equals(mode, "Image", StringComparison.OrdinalIgnoreCase) ? "Image" :
+        string.Equals(mode, "Url", StringComparison.OrdinalIgnoreCase) ? "Url" :
+        string.Equals(mode, "Mission", StringComparison.OrdinalIgnoreCase) ? "Mission" :
+        string.Equals(mode, "Empty", StringComparison.OrdinalIgnoreCase) ? "Empty" :
+        "Mission";
 
     private static void BackupCorruptFile(string path)
     {

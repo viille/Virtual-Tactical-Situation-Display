@@ -34,6 +34,12 @@ public sealed class TacticalDisplaySettings
     public bool ShowBullseye { get; set; }
     public double? BullseyeLatitudeDeg { get; set; }
     public double? BullseyeLongitudeDeg { get; set; }
+    public string KneepadContentMode { get; set; } = "Mission";
+    public string KneepadMissionInformation { get; set; } = string.Empty;
+    public string KneepadImagePath { get; set; } = string.Empty;
+    public string KneepadUrl { get; set; } = string.Empty;
+    public List<KneepadPage> KneepadPages { get; set; } = [];
+    public int SelectedKneepadPageIndex { get; set; }
     public bool Declutter { get; set; }
     public bool TrailsEnabled { get; set; } = true;
     public LabelMode LabelMode { get; set; } = LabelMode.Minimal;
@@ -43,6 +49,14 @@ public sealed class TacticalDisplaySettings
     public double RenderRateFps { get; set; } = 24;
     public double StaleSeconds { get; set; } = 4;
     public double RemoveAfterSeconds { get; set; } = 12;
+}
+
+public sealed class KneepadPage
+{
+    public string ContentMode { get; set; } = "Empty";
+    public string MissionInformation { get; set; } = string.Empty;
+    public string ImagePath { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
 }
 
 public sealed class ClassificationConfig

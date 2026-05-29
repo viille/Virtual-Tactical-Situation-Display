@@ -148,6 +148,27 @@ public sealed class VatsimCallsignMatcherTests
     }
 
     [Fact]
+    public void EnrichSnapshot_RejectsPilotWhenMultipleContactsArePlausible()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, now),
+            [
+                new TrafficContactState("T1", null, 60.1000, 24.1000, 5000, 90, 250, now),
+                new TrafficContactState("T2", null, 60.1002, 24.1002, 5050, 91, 248, now)
+            ],
+            now);
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshot(
+            snapshot,
+            [
+                new VatsimPilotCandidate("VIPER2", 60.1001, 24.1001, 5025, 249, 90)
+            ]);
+
+        Assert.All(enriched.Contacts, contact => Assert.Null(contact.Callsign));
+    }
+
+    [Fact]
     public void EnrichSnapshotFromHistory_MatchesAgainstVatsimTimestamp()
     {
         var now = DateTimeOffset.UtcNow;
@@ -179,17 +200,17 @@ public sealed class VatsimCallsignMatcherTests
     public void EnrichSnapshotFromHistory_RejectsWhenTimestampIsOutsideHistoryWindow()
     {
         var now = DateTimeOffset.UtcNow;
-        var vatsimTime = now.AddSeconds(-30);
+        var vatsimTime = now.AddSeconds(-4);
         var historical = new TrafficSnapshot(
             new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, now.AddSeconds(-8)),
             [
                 new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now.AddSeconds(-8))
             ],
-            now.AddSeconds(-4));
+            now.AddSeconds(-8));
         var current = new TrafficSnapshot(
             new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, now),
             [
-                new TrafficContactState("T1", null, 60.5, 24.5, 5000, 90, 250, now)
+                new TrafficContactState("T1", null, 60.1001, 24.1001, 5050, 92, 245, now)
             ],
             now);
 
@@ -201,5 +222,26 @@ public sealed class VatsimCallsignMatcherTests
             ]);
 
         Assert.Null(enriched.Contacts.Single().Callsign);
+    }
+
+    [Fact]
+    public void EnrichSnapshotFromHistory_UsesCurrentSnapshotOnlyWhenVatsimTimestampIsUnavailable()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var current = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, now),
+            [
+                new TrafficContactState("T1", null, 60.1001, 24.1001, 5050, 92, 245, now)
+            ],
+            now);
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(
+            current,
+            [current],
+            [
+                new VatsimPilotCandidate("FIN123", 60.1001, 24.1001, 5050, 245, 92, null)
+            ]);
+
+        Assert.Equal("FIN123", enriched.Contacts.Single().Callsign);
     }
 }

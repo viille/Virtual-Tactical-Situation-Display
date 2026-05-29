@@ -6,9 +6,12 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.Wpf;
 using TacticalDisplay.App.Controls;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.App.ViewModels;
+using TacticalDisplay.Core.Models;
 
 namespace TacticalDisplay.App;
 
@@ -17,6 +20,7 @@ public partial class MainWindow : Window
     private const double MinWidthWithSettings = 980;
     private const double MinWidthWithoutSettings = 640;
     private const double ScopeSettingsGapWidth = 10;
+    private const int MaxCachedKneepadWebViews = 6;
 
     private readonly MainViewModel _viewModel = new();
     private readonly UpdateCheckService _updateCheckService = new();
@@ -25,6 +29,9 @@ public partial class MainWindow : Window
     private bool _isClosing;
     private bool _shutdownCompleted;
     private bool _fullscreenWarningOpen;
+    private bool _kneepadWebViewsInitializing;
+    private CoreWebView2Environment? _kneepadWebViewEnvironment;
+    private readonly Dictionary<KneepadPage, WebView2> _kneepadWebViews = new();
 
     public MainWindow()
     {
@@ -107,6 +114,8 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        await InitializeKneepadWebViewsAsync();
+
         if (Interlocked.Exchange(ref _updateCheckStarted, 1) != 0)
         {
             return;
@@ -203,6 +212,162 @@ public partial class MainWindow : Window
         {
             ApplyWebDisplayServerState();
         }
+        else if (e.PropertyName is nameof(MainViewModel.KneepadUrl) or
+                 nameof(MainViewModel.ShowKneepadUrl) or
+                 nameof(MainViewModel.SelectedKneepadContentMode))
+        {
+            _ = UpdateKneepadWebViewsAsync();
+        }
+    }
+
+    private async Task InitializeKneepadWebViewsAsync()
+    {
+        if (_kneepadWebViewEnvironment is not null || _kneepadWebViewsInitializing)
+        {
+            await UpdateKneepadWebViewsAsync();
+            return;
+        }
+
+        _kneepadWebViewsInitializing = true;
+        try
+        {
+            _kneepadWebViewEnvironment = await CoreWebView2Environment.CreateAsync(
+                userDataFolder: AppDataPaths.WebViewUserDataDirectory);
+            await UpdateKneepadWebViewsAsync();
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Warn("App", $"Kneepad WebView2 initialization failed | {ex}");
+        }
+        finally
+        {
+            _kneepadWebViewsInitializing = false;
+        }
+    }
+
+    private async Task UpdateKneepadWebViewsAsync()
+    {
+        var environment = _kneepadWebViewEnvironment;
+        if (environment is null)
+        {
+            return;
+        }
+
+        var pages = _viewModel.Settings.KneepadPages;
+        var livePages = pages.ToHashSet();
+        foreach (var stale in _kneepadWebViews.Keys.Where(page => !livePages.Contains(page)).ToList())
+        {
+            var webView = _kneepadWebViews[stale];
+            KneepadWebViewHost.Children.Remove(webView);
+            DisposeKneepadWebView(webView);
+            _kneepadWebViews.Remove(stale);
+        }
+
+        var selectedIndex = pages.Count == 0 ? -1 : System.Math.Clamp(_viewModel.Settings.SelectedKneepadPageIndex, 0, pages.Count - 1);
+        var selectedPage = selectedIndex >= 0 ? pages[selectedIndex] : null;
+        foreach (var page in pages)
+        {
+            if (!string.Equals(page.ContentMode, "Url", StringComparison.OrdinalIgnoreCase) ||
+                !TryBuildKneepadUri(page.Url, out var pageUri))
+            {
+                if (_kneepadWebViews.TryGetValue(page, out var oldWebView))
+                {
+                    oldWebView.Visibility = Visibility.Collapsed;
+                }
+
+                continue;
+            }
+
+            var webView = await EnsureKneepadPageWebViewAsync(page, environment);
+            webView.Visibility = ReferenceEquals(page, selectedPage) && _viewModel.ShowKneepadUrl
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+
+            if (webView.Source is null ||
+                !string.Equals(webView.Source.AbsoluteUri, pageUri!.AbsoluteUri, StringComparison.OrdinalIgnoreCase))
+            {
+                webView.Source = pageUri;
+            }
+        }
+
+        TrimKneepadWebViewCache(selectedPage);
+    }
+
+    private async Task<WebView2> EnsureKneepadPageWebViewAsync(KneepadPage page, CoreWebView2Environment environment)
+    {
+        if (_kneepadWebViews.TryGetValue(page, out var webView))
+        {
+            return webView;
+        }
+
+        webView = new WebView2
+        {
+            Visibility = Visibility.Collapsed
+        };
+        _kneepadWebViews[page] = webView;
+        KneepadWebViewHost.Children.Add(webView);
+        await webView.EnsureCoreWebView2Async(environment);
+        return webView;
+    }
+
+    private void TrimKneepadWebViewCache(KneepadPage? selectedPage)
+    {
+        if (_kneepadWebViews.Count <= MaxCachedKneepadWebViews)
+        {
+            return;
+        }
+
+        foreach (var page in _kneepadWebViews.Keys
+                     .Where(page => !ReferenceEquals(page, selectedPage))
+                     .Take(_kneepadWebViews.Count - MaxCachedKneepadWebViews)
+                     .ToList())
+        {
+            var webView = _kneepadWebViews[page];
+            KneepadWebViewHost.Children.Remove(webView);
+            DisposeKneepadWebView(webView);
+            _kneepadWebViews.Remove(page);
+        }
+    }
+
+    private void DisposeAllKneepadWebViews()
+    {
+        foreach (var webView in _kneepadWebViews.Values.ToList())
+        {
+            KneepadWebViewHost.Children.Remove(webView);
+            DisposeKneepadWebView(webView);
+        }
+
+        _kneepadWebViews.Clear();
+    }
+
+    private static void DisposeKneepadWebView(WebView2 webView)
+    {
+        try
+        {
+            webView.Dispose();
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Warn("App", $"Kneepad WebView2 dispose failed | {ex.Message}");
+        }
+    }
+
+    private static bool TryBuildKneepadUri(string? value, out Uri? uri)
+    {
+        uri = null;
+        var trimmed = value?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return false;
+        }
+
+        if (!trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) &&
+            !trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            trimmed = $"https://{trimmed}";
+        }
+
+        return Uri.TryCreate(trimmed, UriKind.Absolute, out uri);
     }
 
     private void ApplyLayoutState()
@@ -444,6 +609,7 @@ public partial class MainWindow : Window
         try
         {
             StoreWindowSize();
+            DisposeAllKneepadWebViews();
             if (_webDisplayServer is not null)
             {
                 await _webDisplayServer.DisposeAsync();
@@ -481,6 +647,7 @@ public partial class MainWindow : Window
         {
             CloseOwnedWindowsExcept(progressWindow);
             StoreWindowSize();
+            DisposeAllKneepadWebViews();
             if (_webDisplayServer is not null)
             {
                 await _webDisplayServer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));

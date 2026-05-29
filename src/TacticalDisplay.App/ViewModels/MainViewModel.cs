@@ -46,6 +46,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private string _selectedDataSource = DataSourceModes.Demo;
     private bool _showSettings;
     private bool _isAlwaysOnTop;
+    private bool _showKneepad;
     private bool _showBullseyePopup;
     private bool _interceptSelectionArmed;
     private string? _interceptTargetId;
@@ -94,7 +95,18 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ApplyDataSourceCommand = CreateUiCommand(nameof(ApplyDataSourceCommand), ApplyDataSource);
         ToggleSettingsCommand = CreateUiCommand(nameof(ToggleSettingsCommand), ToggleSettingsPanel);
         ToggleAlwaysOnTopCommand = CreateUiCommand(nameof(ToggleAlwaysOnTopCommand), ToggleAlwaysOnTop);
+        ToggleKneepadCommand = CreateUiCommand(nameof(ToggleKneepadCommand), ToggleKneepad);
+        PreviousKneepadPageCommand = CreateUiCommand(nameof(PreviousKneepadPageCommand), PreviousKneepadPage);
+        NextKneepadPageCommand = CreateUiCommand(nameof(NextKneepadPageCommand), NextKneepadPage);
+        AddKneepadPageCommand = CreateUiCommand(nameof(AddKneepadPageCommand), AddKneepadPage);
+        DeleteKneepadPageCommand = CreateUiCommand(nameof(DeleteKneepadPageCommand), DeleteKneepadPage);
+        SetKneepadMissionPageCommand = CreateUiCommand(nameof(SetKneepadMissionPageCommand), SetKneepadMissionPage);
+        SetKneepadImagePageCommand = CreateUiCommand(nameof(SetKneepadImagePageCommand), SetKneepadImagePage);
+        SetKneepadUrlPageCommand = CreateUiCommand(nameof(SetKneepadUrlPageCommand), SetKneepadUrlPage);
+        ImportKneepadImageCommand = CreateUiCommand(nameof(ImportKneepadImageCommand), ImportKneepadImage);
+        ClearKneepadImageCommand = CreateUiCommand(nameof(ClearKneepadImageCommand), ClearKneepadImage);
         OpenDebugLogFolderCommand = CreateUiCommand(nameof(OpenDebugLogFolderCommand), OpenDebugLogFolder);
+        ClearWebViewCookiesCommand = CreateUiCommand(nameof(ClearWebViewCookiesCommand), ClearWebViewCookies);
 
         _renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000.0 / Settings.RenderRateFps) };
         _renderTimer.Tick += (_, _) =>
@@ -378,6 +390,17 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         private set => SetField(ref _showBullseyePopup, value);
     }
 
+    public bool ShowKneepad
+    {
+        get => _showKneepad;
+        private set
+        {
+            SetField(ref _showKneepad, value);
+            Raise(nameof(KneepadToggleText));
+            RaiseKneepadState();
+        }
+    }
+
     public bool BullseyeButtonActive =>
         Settings.ShowBullseye &&
         Settings.BullseyeLatitudeDeg.HasValue &&
@@ -385,6 +408,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     public string SettingsToggleText => ShowSettings ? "Hide Settings" : "Show Settings";
     public string TopMostToggleText => IsAlwaysOnTop ? "Unpin Window" : "Pin On Top";
+    public string KneepadToggleText => ShowKneepad ? "KNEE ON" : "KNEE";
     public string AppVersionText { get; set; } = "ver unknown";
     public bool InterceptSelectionArmed
     {
@@ -434,6 +458,109 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         "TRUE",
         "MAG"
     ];
+    public ObservableCollection<string> AvailableKneepadContentModes { get; } =
+    [
+        "Mission",
+        "Image",
+        "Url"
+    ];
+
+    public string SelectedKneepadContentMode
+    {
+        get => CurrentKneepadPage.ContentMode;
+        set
+        {
+            var mode = NormalizeKneepadContentMode(value);
+            if (string.Equals(CurrentKneepadPage.ContentMode, mode, StringComparison.Ordinal))
+            {
+                return;
+            }
+
+            CurrentKneepadPage.ContentMode = mode;
+            SyncLegacyKneepadSettings();
+            Raise();
+            RaiseKneepadState();
+        }
+    }
+
+    public string KneepadMissionInformationText
+    {
+        get => CurrentKneepadPage.MissionInformation;
+        set
+        {
+            if (CurrentKneepadPage.MissionInformation == value)
+            {
+                return;
+            }
+
+            CurrentKneepadPage.MissionInformation = value;
+            SyncLegacyKneepadSettings();
+            Raise();
+            RaiseKneepadState();
+        }
+    }
+
+    public string KneepadUrlText
+    {
+        get => CurrentKneepadPage.Url;
+        set
+        {
+            if (CurrentKneepadPage.Url == value)
+            {
+                return;
+            }
+
+            CurrentKneepadPage.Url = value.Trim();
+            SyncLegacyKneepadSettings();
+            Raise();
+            RaiseKneepadState();
+        }
+    }
+
+    public string KneepadImagePathText => string.IsNullOrWhiteSpace(CurrentKneepadPage.ImagePath)
+        ? "No image selected"
+        : CurrentKneepadPage.ImagePath;
+
+    public Uri? KneepadUrl
+    {
+        get
+        {
+            var url = NormalizeKneepadUrl(CurrentKneepadPage.Url);
+            return Uri.TryCreate(url, UriKind.Absolute, out var uri) ? uri : null;
+        }
+    }
+
+    public bool ShowKneepadMission => ShowKneepad &&
+        string.Equals(SelectedKneepadContentMode, "Mission", StringComparison.Ordinal);
+
+    public bool ShowKneepadImage => ShowKneepad &&
+        string.Equals(SelectedKneepadContentMode, "Image", StringComparison.Ordinal) &&
+        !string.IsNullOrWhiteSpace(CurrentKneepadPage.ImagePath) &&
+        File.Exists(CurrentKneepadPage.ImagePath);
+
+    public bool ShowKneepadUrl => ShowKneepad &&
+        string.Equals(SelectedKneepadContentMode, "Url", StringComparison.Ordinal) &&
+        KneepadUrl is not null;
+
+    public bool ShowKneepadPageChooser => ShowKneepad &&
+        string.Equals(SelectedKneepadContentMode, "Empty", StringComparison.Ordinal);
+
+    public bool ShowKneepadPlaceholder => ShowKneepad &&
+        !ShowKneepadPageChooser &&
+        !ShowKneepadMission &&
+        !string.Equals(SelectedKneepadContentMode, "Image", StringComparison.Ordinal) &&
+        !string.Equals(SelectedKneepadContentMode, "Url", StringComparison.Ordinal);
+
+    public string KneepadPlaceholderText =>
+        SelectedKneepadContentMode switch
+        {
+            "Image" => "No kneepad image selected",
+            "Url" => "No valid kneepad URL",
+            _ => "No mission information"
+        };
+
+    public string KneepadPageText => $"Page {Settings.SelectedKneepadPageIndex + 1}/{Settings.KneepadPages.Count}";
+    public string KneepadImagePath => CurrentKneepadPage.ImagePath;
 
     public string SelectedDirectionReference
     {
@@ -479,7 +606,18 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ApplyDataSourceCommand { get; }
     public RelayCommand ToggleSettingsCommand { get; }
     public RelayCommand ToggleAlwaysOnTopCommand { get; }
+    public RelayCommand ToggleKneepadCommand { get; }
+    public RelayCommand PreviousKneepadPageCommand { get; }
+    public RelayCommand NextKneepadPageCommand { get; }
+    public RelayCommand AddKneepadPageCommand { get; }
+    public RelayCommand DeleteKneepadPageCommand { get; }
+    public RelayCommand SetKneepadMissionPageCommand { get; }
+    public RelayCommand SetKneepadImagePageCommand { get; }
+    public RelayCommand SetKneepadUrlPageCommand { get; }
+    public RelayCommand ImportKneepadImageCommand { get; }
+    public RelayCommand ClearKneepadImageCommand { get; }
     public RelayCommand OpenDebugLogFolderCommand { get; }
+    public RelayCommand ClearWebViewCookiesCommand { get; }
 
     public string HeaderText =>
         $"RANGE {Settings.SelectedRangeNm} NM";
@@ -616,6 +754,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(SimulatorFooterText));
         Raise(nameof(SettingsToggleText));
         Raise(nameof(TopMostToggleText));
+        RaiseKneepadState();
     }
 
     private void ToggleControlledAirspace()
@@ -675,6 +814,184 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private void ToggleSettingsPanel() => ShowSettings = !ShowSettings;
 
     private void ToggleAlwaysOnTop() => IsAlwaysOnTop = !IsAlwaysOnTop;
+
+    private void ToggleKneepad() => ShowKneepad = !ShowKneepad;
+
+    private void PreviousKneepadPage()
+    {
+        EnsureKneepadPage();
+        if (Settings.KneepadPages.Count <= 1)
+        {
+            return;
+        }
+
+        Settings.SelectedKneepadPageIndex = Settings.SelectedKneepadPageIndex <= 0
+            ? Settings.KneepadPages.Count - 1
+            : Settings.SelectedKneepadPageIndex - 1;
+        SyncLegacyKneepadSettings();
+        RaiseKneepadState();
+    }
+
+    private void NextKneepadPage()
+    {
+        EnsureKneepadPage();
+        if (Settings.KneepadPages.Count <= 1)
+        {
+            return;
+        }
+
+        Settings.SelectedKneepadPageIndex = (Settings.SelectedKneepadPageIndex + 1) % Settings.KneepadPages.Count;
+        SyncLegacyKneepadSettings();
+        RaiseKneepadState();
+    }
+
+    private void AddKneepadPage()
+    {
+        Settings.KneepadPages.Add(new KneepadPage());
+        Settings.SelectedKneepadPageIndex = Settings.KneepadPages.Count - 1;
+        SyncLegacyKneepadSettings();
+        RaiseKneepadState();
+    }
+
+    private void DeleteKneepadPage()
+    {
+        EnsureKneepadPage();
+        if (Settings.KneepadPages.Count == 1)
+        {
+            Settings.KneepadPages[0] = new KneepadPage();
+            Settings.SelectedKneepadPageIndex = 0;
+        }
+        else
+        {
+            Settings.KneepadPages.RemoveAt(Settings.SelectedKneepadPageIndex);
+            Settings.SelectedKneepadPageIndex = Math.Clamp(Settings.SelectedKneepadPageIndex, 0, Settings.KneepadPages.Count - 1);
+        }
+
+        SyncLegacyKneepadSettings();
+        RaiseKneepadState();
+    }
+
+    private void SetKneepadMissionPage()
+    {
+        CurrentKneepadPage.ContentMode = "Mission";
+        SyncLegacyKneepadSettings();
+        Raise(nameof(SelectedKneepadContentMode));
+        RaiseKneepadState();
+    }
+
+    private void SetKneepadImagePage()
+    {
+        CurrentKneepadPage.ContentMode = "Image";
+        SyncLegacyKneepadSettings();
+        Raise(nameof(SelectedKneepadContentMode));
+        RaiseKneepadState();
+    }
+
+    private void SetKneepadUrlPage()
+    {
+        CurrentKneepadPage.ContentMode = "Url";
+        SyncLegacyKneepadSettings();
+        Raise(nameof(SelectedKneepadContentMode));
+        RaiseKneepadState();
+    }
+
+    private void ImportKneepadImage()
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "Select kneepad image",
+            Filter = "Image files|*.png;*.jpg;*.jpeg;*.bmp;*.gif|All files|*.*",
+            CheckFileExists = true,
+            Multiselect = false
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        CurrentKneepadPage.ImagePath = dialog.FileName;
+        CurrentKneepadPage.ContentMode = "Image";
+        SyncLegacyKneepadSettings();
+        _configStore.SaveDisplaySettings(Settings);
+        Raise(nameof(SelectedKneepadContentMode));
+        Raise(nameof(KneepadImagePathText));
+        RaiseKneepadState();
+    }
+
+    private void ClearKneepadImage()
+    {
+        CurrentKneepadPage.ImagePath = string.Empty;
+        SyncLegacyKneepadSettings();
+        _configStore.SaveDisplaySettings(Settings);
+        Raise(nameof(KneepadImagePathText));
+        RaiseKneepadState();
+    }
+
+    private void RaiseKneepadState()
+    {
+        Raise(nameof(KneepadUrl));
+        Raise(nameof(KneepadPageText));
+        Raise(nameof(KneepadImagePath));
+        Raise(nameof(SelectedKneepadContentMode));
+        Raise(nameof(KneepadMissionInformationText));
+        Raise(nameof(KneepadUrlText));
+        Raise(nameof(KneepadImagePathText));
+        Raise(nameof(ShowKneepadMission));
+        Raise(nameof(ShowKneepadImage));
+        Raise(nameof(ShowKneepadUrl));
+        Raise(nameof(ShowKneepadPageChooser));
+        Raise(nameof(ShowKneepadPlaceholder));
+        Raise(nameof(KneepadPlaceholderText));
+    }
+
+    private static string NormalizeKneepadContentMode(string? mode) =>
+        string.Equals(mode, "Image", StringComparison.OrdinalIgnoreCase) ? "Image" :
+        string.Equals(mode, "Url", StringComparison.OrdinalIgnoreCase) ? "Url" :
+        string.Equals(mode, "Empty", StringComparison.OrdinalIgnoreCase) ? "Empty" :
+        "Mission";
+
+    private KneepadPage CurrentKneepadPage
+    {
+        get
+        {
+            EnsureKneepadPage();
+            Settings.SelectedKneepadPageIndex = Math.Clamp(Settings.SelectedKneepadPageIndex, 0, Settings.KneepadPages.Count - 1);
+            return Settings.KneepadPages[Settings.SelectedKneepadPageIndex];
+        }
+    }
+
+    private void EnsureKneepadPage()
+    {
+        if (Settings.KneepadPages.Count == 0)
+        {
+            Settings.KneepadPages.Add(new KneepadPage());
+            Settings.SelectedKneepadPageIndex = 0;
+        }
+    }
+
+    private void SyncLegacyKneepadSettings()
+    {
+        var page = CurrentKneepadPage;
+        Settings.KneepadContentMode = page.ContentMode;
+        Settings.KneepadMissionInformation = page.MissionInformation;
+        Settings.KneepadImagePath = page.ImagePath;
+        Settings.KneepadUrl = page.Url;
+    }
+
+    private static string NormalizeKneepadUrl(string? value)
+    {
+        var trimmed = value?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return string.Empty;
+        }
+
+        return trimmed.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                ? trimmed
+                : $"https://{trimmed}";
+    }
 
     private void ApplyDataSource()
     {
@@ -841,6 +1158,44 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             MessageBox.Show(
                 $"Could not open debug log folder.\n\n{ex.Message}",
                 "Open Debug Log Folder",
+                MessageBoxButton.OK,
+            MessageBoxImage.Error);
+        }
+    }
+
+    private void ClearWebViewCookies()
+    {
+        try
+        {
+            var cookiePath = Path.Combine(AppDataPaths.WebViewUserDataDirectory, "Default", "Network", "Cookies");
+            var cookieJournalPath = $"{cookiePath}-journal";
+            var deleted = false;
+
+            if (File.Exists(cookiePath))
+            {
+                File.Delete(cookiePath);
+                deleted = true;
+            }
+
+            if (File.Exists(cookieJournalPath))
+            {
+                File.Delete(cookieJournalPath);
+                deleted = true;
+            }
+
+            MessageBox.Show(
+                deleted
+                    ? "WebView cookies cleared. Restart the app if a page still shows an existing session."
+                    : "No WebView cookies were found.",
+                "Clear WebView Cookies",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show(
+                $"Could not clear WebView cookies.\n\nClose any active WebView page and try again.\n\n{ex.Message}",
+                "Clear WebView Cookies",
                 MessageBoxButton.OK,
                 MessageBoxImage.Error);
         }

@@ -4,6 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:controls="clr-namespace:TacticalDisplay.App.Controls"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
         Title="Tactical Situation Display"
         Icon="Assets/VTSD.png"
@@ -164,6 +165,15 @@
         <KeyBinding Modifiers="Control"
                     Key="T"
                     Command="{Binding ToggleAlwaysOnTopCommand}" />
+        <KeyBinding Modifiers="Control"
+                    Key="K"
+                    Command="{Binding ToggleKneepadCommand}" />
+        <KeyBinding Modifiers="Control"
+                    Key="PageDown"
+                    Command="{Binding NextKneepadPageCommand}" />
+        <KeyBinding Modifiers="Control"
+                    Key="PageUp"
+                    Command="{Binding PreviousKneepadPageCommand}" />
     </Window.InputBindings>
     <Grid Margin="4">
         <Grid.ColumnDefinitions>
@@ -251,6 +261,8 @@
                                     HorizontalAlignment="Center"
                                     VerticalAlignment="Top">
                             <ToggleButton Content="WEB" IsChecked="{Binding WebServerEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource MfdToggleButtonStyle}" />
+                            <Border Style="{StaticResource MfdTickStyle}" />
+                            <ToggleButton Content="KNEE" Command="{Binding ToggleKneepadCommand}" IsChecked="{Binding ShowKneepad, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
                             <Border Style="{StaticResource MfdTickStyle}" />
                             <StackPanel VerticalAlignment="Center" Margin="10,0">
                                 <Button Content="&#x2191;" Command="{Binding IncreaseMapOverlayOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
@@ -420,6 +432,8 @@
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="PIN : Toggle always-on-top" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="SET : Show or hide settings panel" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="WEB : Turn tablet web server on or off" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="KNEE / Ctrl+K : Show or hide kneepad" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Ctrl+PageUp / Ctrl+PageDown : Previous or next kneepad page" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TGT + / TGT - : Increase or decrease target symbol size" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Top arrows : Increase or decrease map opacity" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Bottom arrows : Increase or decrease label background opacity" Margin="0,0,0,4" />
@@ -447,6 +461,225 @@
                                                Foreground="#8EA5AD"
                                                Margin="0,8,0,0"
                                                HorizontalAlignment="Center" />
+                                </Grid>
+                            </Border>
+                            <Border Background="#F0071015"
+                                    BorderBrush="#9AFAD7"
+                                    BorderThickness="1"
+                                    CornerRadius="0"
+                                    Margin="0">
+                                <Border.Style>
+                                    <Style TargetType="Border">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding ShowKneepad}" Value="True">
+                                                <Setter Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Border.Style>
+                                <Grid Margin="14">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+                                    <DockPanel Grid.Row="0" Margin="0,0,0,10">
+                                        <Button DockPanel.Dock="Right"
+                                                Content="Close"
+                                                Command="{Binding ToggleKneepadCommand}"
+                                                MinWidth="64"
+                                                Padding="8,2"
+                                                Margin="8,0,0,0" />
+                                        <StackPanel DockPanel.Dock="Right"
+                                                    Orientation="Horizontal"
+                                                    Margin="0,0,8,0">
+                                            <Button Content="New"
+                                                    Command="{Binding AddKneepadPageCommand}"
+                                                    MinWidth="52"
+                                                    Padding="8,2"
+                                                    Margin="0,0,6,0" />
+                                            <Button Content="Del"
+                                                    Command="{Binding DeleteKneepadPageCommand}"
+                                                    MinWidth="46"
+                                                    Padding="8,2" />
+                                        </StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="&lt;"
+                                                    Command="{Binding PreviousKneepadPageCommand}"
+                                                    Width="30"
+                                                    Padding="0"
+                                                    Margin="0,0,6,0" />
+                                            <TextBlock Text="{Binding KneepadPageText}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="18"
+                                                       FontWeight="Bold"
+                                                       Foreground="#9AFAD7"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,6,0" />
+                                            <Button Content="&gt;"
+                                                    Command="{Binding NextKneepadPageCommand}"
+                                                    Width="30"
+                                                    Padding="0"
+                                                    Margin="0,0,14,0" />
+                                            <TextBlock Text="Kneepad"
+                                                       FontFamily="Consolas"
+                                                       FontSize="18"
+                                                       FontWeight="Bold"
+                                                       Foreground="#9AFAD7"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <Grid Grid.Row="1">
+                                        <Border BorderBrush="#355A56"
+                                                BorderThickness="1"
+                                                Background="#60071015"
+                                                Padding="18">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ShowKneepadPageChooser}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <TextBlock Text="Select kneepad page content"
+                                                           FontFamily="Consolas"
+                                                           FontSize="16"
+                                                           FontWeight="Bold"
+                                                           Foreground="#9AFAD7"
+                                                           HorizontalAlignment="Center"
+                                                           Margin="0,0,0,12" />
+                                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                                                    <Button Content="Mission"
+                                                            Command="{Binding SetKneepadMissionPageCommand}"
+                                                            MinWidth="90"
+                                                            Margin="0,0,8,0" />
+                                                    <Button Content="Image"
+                                                            Command="{Binding SetKneepadImagePageCommand}"
+                                                            MinWidth="90"
+                                                            Margin="0,0,8,0" />
+                                                    <Button Content="URL"
+                                                            Command="{Binding SetKneepadUrlPageCommand}"
+                                                            MinWidth="90" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Border>
+                                        <TextBox Text="{Binding KneepadMissionInformationText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                 AcceptsReturn="True"
+                                                 AcceptsTab="True"
+                                                 TextWrapping="Wrap"
+                                                 VerticalScrollBarVisibility="Auto"
+                                                 HorizontalScrollBarVisibility="Disabled"
+                                                 FontFamily="Consolas"
+                                                 FontSize="14"
+                                                 Foreground="#D9F2EC"
+                                                 Background="#60071015"
+                                                 BorderBrush="#355A56"
+                                                 BorderThickness="1"
+                                                 Padding="8">
+                                            <TextBox.Style>
+                                                <Style TargetType="TextBox">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ShowKneepadMission}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBox.Style>
+                                        </TextBox>
+                                        <Grid>
+                                            <Grid.Style>
+                                                <Style TargetType="Grid">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedKneepadContentMode}" Value="Image">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Grid.Style>
+                                            <Image Source="{Binding KneepadImagePath}"
+                                               Stretch="Uniform"
+                                               HorizontalAlignment="Stretch"
+                                               VerticalAlignment="Stretch"
+                                               RenderOptions.BitmapScalingMode="HighQuality">
+                                                <Image.Style>
+                                                    <Style TargetType="Image">
+                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ShowKneepadImage}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Image.Style>
+                                            </Image>
+                                            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                                <StackPanel.Style>
+                                                    <Style TargetType="StackPanel">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding ShowKneepadImage}" Value="True">
+                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </StackPanel.Style>
+                                                <TextBlock Text="{Binding KneepadImagePathText}"
+                                                           FontFamily="Consolas"
+                                                           FontSize="13"
+                                                           Foreground="#8EA5AD"
+                                                           TextWrapping="Wrap"
+                                                           TextAlignment="Center"
+                                                           Margin="0,0,0,10" />
+                                                <Button Content="Import Image"
+                                                        Command="{Binding ImportKneepadImageCommand}"
+                                                        MinWidth="110" />
+                                            </StackPanel>
+                                        </Grid>
+                                        <Grid>
+                                            <Grid.Style>
+                                                <Style TargetType="Grid">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SelectedKneepadContentMode}" Value="Url">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Grid.Style>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto" />
+                                                <RowDefinition Height="*" />
+                                            </Grid.RowDefinitions>
+                                            <TextBox Grid.Row="0"
+                                                     Text="{Binding KneepadUrlText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                     ToolTip="Example: https://briefing.example"
+                                                     Margin="0,0,0,8" />
+                                            <Grid x:Name="KneepadWebViewHost" Grid.Row="1" />
+                                        </Grid>
+                                        <TextBlock Text="{Binding KneepadPlaceholderText}"
+                                                   FontFamily="Consolas"
+                                                   FontSize="14"
+                                                   Foreground="#8EA5AD"
+                                                   HorizontalAlignment="Center"
+                                                   VerticalAlignment="Center">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ShowKneepadPlaceholder}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
                                 </Grid>
                             </Border>
                             <Border Background="#D8071015"
@@ -696,6 +929,9 @@
                                       Foreground="#9AFAD7" />
                             <Button Content="Open Debug Log Folder"
                                     Command="{Binding OpenDebugLogFolderCommand}"
+                                    Margin="0,8,0,0" />
+                            <Button Content="Clear WebView Cookies"
+                                    Command="{Binding ClearWebViewCookiesCommand}"
                                     Margin="0,8,0,0" />
                             <TextBlock Text="Writes flight, data source, VATSIM callsign, airspace, web display, and app diagnostics to %APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log"
                                        Foreground="#7CB9A9"
