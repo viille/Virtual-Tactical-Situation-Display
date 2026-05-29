@@ -17,6 +17,7 @@ Virtual Tactical Situation Display is a Windows application for a clear 2D tacti
 - virtual MFD-style frame with on-screen controls
 - active V-LARA reserved airspace boundaries
 - user-defined bullseye reference point
+- multi-page kneepad for mission text, imported images, and URL pages
 
 ## Screenshot
 
@@ -51,7 +52,7 @@ The current orientation and range are shown in the upper-left corner of the disp
 
 The desktop app starts a lightweight web display on port `8787`. Open the `Web: http://...:8787/` address shown in the app footer from a tablet or another device on the same local network.
 
-The tablet display renders the Mapbox map and tactical canvas on the device and stays synchronized with the desktop app. It includes controls for range, orientation, map opacity, map, declutter, trails, bullseye, intercept target selection, labels, LARA airspace, controlled airspace layers, pin, settings, and target symbol size. These controls update the same display state as the main window controls.
+The tablet display renders the Mapbox map and tactical canvas on the device and stays synchronized with the desktop app. It includes controls for range, orientation, map opacity, label background opacity, map, declutter, trails, bullseye, intercept target selection, labels, LARA airspace, controlled airspace layers, kneepad, pin, settings, and target symbol size. These controls update the same display state as the main window controls.
 
 The tablet display can be turned on or off with the `WEB` frame button next to `SET`.
 
@@ -61,6 +62,7 @@ Frame controls:
 - `RNG +` / `RNG -`: change visible range
 - `N/HDG`: switch north-up / heading-up
 - top up/down arrows: increase or decrease map opacity
+- bottom up/down arrows: increase or decrease label background opacity
 - `MAP`: show or hide the map layer
 - `DCLR`: reduce display clutter
 - `TRAIL`: show or hide target trails
@@ -70,6 +72,7 @@ Frame controls:
 - `INT`: select or clear one intercept target
 - `PIN`: pin or unpin the window on top
 - `LBL`: cycle label detail level
+- `KNEE`: show or hide the kneepad
 - `SET`: show or hide the settings panel
 - `WEB`: turn tablet web server on or off
 - `TGT +` / `TGT -`: increase or decrease target symbol size
@@ -90,6 +93,29 @@ Keyboard shortcuts:
 - `Ctrl+H`: show or hide the settings panel
 - `Ctrl+D`: toggle declutter
 - `Ctrl+T`: pin or unpin the window on top
+- `Ctrl+K`: show or hide the kneepad
+- `Ctrl+PageUp` / `Ctrl+PageDown`: previous or next kneepad page
+
+## Kneepad
+
+The kneepad opens inside the TSD display area with `KNEE` or `Ctrl+K`.
+
+Kneepad pages:
+- use `<` / `>` or `Ctrl+PageUp` / `Ctrl+PageDown` to change pages
+- use `New` to add a page
+- use `Del` to delete the current page
+- empty pages let you choose `Mission`, `Image`, or `URL` directly from the kneepad
+
+Page types:
+- `Mission`: editable mission information text
+- `Image`: an imported kneepad image scaled to the display area
+- `URL`: an embedded WebView2 browser page
+
+URL pages stay loaded in the background while switching kneepad pages. The cache is bounded so old background pages are released instead of growing memory use without limit.
+
+WebView2 profile data is stored under `%APPDATA%\VirtualTacticalSituationDisplay\WebView2`, so URL page login cookies can persist between app launches. Use `Settings` > `Debug` > `Clear WebView Cookies` to remove saved WebView cookies.
+
+The tablet display mirrors kneepad state, page navigation, and selected page content. Tablet URL pages use the tablet browser's own cookie and session handling.
 
 ## Targets
 
