@@ -151,7 +151,7 @@ public sealed class VatsimCallsignMatcherTests
     public void EnrichSnapshotFromHistory_MatchesAgainstVatsimTimestamp()
     {
         var now = DateTimeOffset.UtcNow;
-        var vatsimTime = now.AddSeconds(-8);
+        var vatsimTime = now.AddSeconds(-4);
         var historical = new TrafficSnapshot(
             new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, vatsimTime),
             [
@@ -185,7 +185,7 @@ public sealed class VatsimCallsignMatcherTests
             [
                 new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now.AddSeconds(-8))
             ],
-            now.AddSeconds(-8));
+            now.AddSeconds(-4));
         var current = new TrafficSnapshot(
             new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, now),
             [

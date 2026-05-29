@@ -145,4 +145,4 @@ If live data does not appear, check:
 
 If the map layer says `Map unavailable`, check that Microsoft Edge WebView2 Runtime is installed and online map access is available. A `0x8000FFFF` startup error usually means WebView2 failed before the map page or online tiles loaded.
 
-Data source logs are written to `%APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log` when debug logging is enabled in the app.
+Debug logs are written to `%APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log` when Debug is enabled in the app. The log includes flight-time data source, VATSIM callsign, airspace, web display, and app diagnostics.

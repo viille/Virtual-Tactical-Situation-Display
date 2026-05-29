@@ -691,13 +691,13 @@
 
                     <Expander Header="Debug" Foreground="#7CB9A9" Margin="0,0,0,4">
                         <StackPanel Margin="0,8,0,0">
-                            <CheckBox Content="Enable datasource debug log"
+                            <CheckBox Content="Debug"
                                       IsChecked="{Binding DataSourceDebugLoggingEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                       Foreground="#9AFAD7" />
                             <Button Content="Open Debug Log Folder"
                                     Command="{Binding OpenDebugLogFolderCommand}"
                                     Margin="0,8,0,0" />
-                            <TextBlock Text="Writes MSFS/XPlane feed diagnostics to %APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log"
+                            <TextBlock Text="Writes flight, data source, VATSIM callsign, airspace, web display, and app diagnostics to %APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log"
                                        Foreground="#7CB9A9"
                                        TextWrapping="Wrap"
                                        Margin="0,4,0,0" />

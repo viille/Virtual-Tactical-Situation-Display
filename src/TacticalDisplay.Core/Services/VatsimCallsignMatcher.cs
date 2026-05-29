@@ -5,13 +5,13 @@ namespace TacticalDisplay.Core.Services;
 
 public static class VatsimCallsignMatcher
 {
-    private const double MaxMatchDistanceNm = 3.0;
-    private const double MaxMatchAltitudeFt = 1500;
-    private const double MaxMatchHeadingDeltaDeg = 60;
-    private const double MaxMatchSpeedDeltaKt = 160;
+    private const double MaxMatchDistanceNm = 1.5;
+    private const double MaxMatchAltitudeFt = 800;
+    private const double MaxMatchHeadingDeltaDeg = 45;
+    private const double MaxMatchSpeedDeltaKt = 100;
     private const double MinAirborneSpeedForMotionCheckKt = 40;
     private const double MinBestScoreMargin = 0.75;
-    private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(5);
 
     public static TrafficSnapshot EnrichSnapshot(
         TrafficSnapshot snapshot,

@@ -82,6 +82,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         {
             var pilots = await GetPilotsAsync(CancellationToken.None).ConfigureAwait(false);
             var history = GetSnapshotHistory();
+            LogCallsignMatchDiagnostics(snapshot, pilots);
             var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, history, pilots);
             enriched = ConfirmCallsignMatches(snapshot, enriched, pilots);
             LogEnrichmentSummary(snapshot, enriched, pilots);
@@ -214,6 +215,14 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                 enrichedContact.Id,
                 callsign,
                 pilotUpdateTime);
+            DataSourceDebugLog.ThrottledDebug(
+                LogSource,
+                $"callsign-confirmation-{enrichedContact.Id}",
+                TimeSpan.FromSeconds(5),
+                () =>
+                    "Callsign confirmation | " +
+                    $"contact={enrichedContact.Id} callsign={callsign} count={confirmation.MatchCount} " +
+                    $"confirmed={confirmation.Confirmed} pilotUpdated={pilotUpdateTime?.ToString("O") ?? "n/a"}");
 
             if (confirmation.Confirmed)
             {
@@ -296,6 +305,40 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                     $"nearest={nearest.Callsign ?? "n/a"} nearestDistanceNm={nearest.DistanceNm:0.00} " +
                     $"nearestAltitudeDeltaFt={nearest.AltitudeDeltaFt:0} nearestMatch={nearest.IsMatch} " +
                     $"reject={nearest.RejectReason ?? "none"}";
+            });
+    }
+
+    private static void LogCallsignMatchDiagnostics(
+        TrafficSnapshot snapshot,
+        IReadOnlyList<VatsimPilotCandidate> pilots)
+    {
+        DataSourceDebugLog.ThrottledDebug(
+            LogSource,
+            "callsign-match-diagnostics",
+            TimeSpan.FromSeconds(5),
+            () =>
+            {
+                var unresolved = snapshot.Contacts
+                    .Where(static contact => string.IsNullOrWhiteSpace(contact.Callsign))
+                    .Take(8)
+                    .Select(contact =>
+                    {
+                        var nearest = VatsimCallsignMatcher.InspectBestMatch(contact, pilots);
+                        return
+                            $"contact={contact.Id} currentNearest={nearest.Callsign ?? "n/a"} " +
+                            $"match={nearest.IsMatch} reject={nearest.RejectReason ?? "none"} " +
+                            $"distanceNm={nearest.DistanceNm:0.00} altitudeDeltaFt={nearest.AltitudeDeltaFt:0} " +
+                            $"score={nearest.Score:0.00}";
+                    })
+                    .ToList();
+
+                if (unresolved.Count == 0)
+                {
+                    return $"Callsign current-snapshot diagnostics | unresolved=0 pilots={pilots.Count}";
+                }
+
+                return $"Callsign current-snapshot diagnostics | unresolvedShown={unresolved.Count} pilots={pilots.Count} | " +
+                    string.Join(" | ", unresolved);
             });
     }
 

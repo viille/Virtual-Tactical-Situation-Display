@@ -62,7 +62,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _configStore = new JsonConfigStore(configPath);
         Settings = _configStore.LoadDisplaySettings();
         DataSourceDebugLog.SetEnabled(Settings.EnableDataSourceDebugLogging);
-        DataSourceDebugLog.Info("App", $"Data source debug logging enabled={Settings.EnableDataSourceDebugLogging}");
+        DataSourceDebugLog.Info("App", $"Debug logging enabled={Settings.EnableDataSourceDebugLogging}");
         _classification = _configStore.LoadClassification();
         _manualTargetMetadata = _configStore.LoadManualTargetMetadata();
         Settings.DataSourceMode = DataSourceModes.Normalize(Settings.DataSourceMode);
@@ -309,7 +309,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
             Settings.EnableDataSourceDebugLogging = value;
             DataSourceDebugLog.SetEnabled(value);
-            DataSourceDebugLog.Info("App", $"Data source debug logging toggled | enabled={value}");
+            DataSourceDebugLog.Info("App", $"Debug logging toggled | enabled={value}");
             Raise();
         }
     }
