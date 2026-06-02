@@ -83,6 +83,7 @@ public sealed class UpdateCheckService
         var currentExePath = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
         if (string.IsNullOrWhiteSpace(currentExePath) || !File.Exists(currentExePath))
         {
+            DataSourceDebugLog.Warn("Update", "Update failed before download; current executable path could not be resolved");
             return false;
         }
 
@@ -96,11 +97,15 @@ public sealed class UpdateCheckService
 
         var newExePath = Path.Combine(updateDirectory, AppAssetName);
         var updaterExePath = Path.Combine(updateDirectory, "TacticalDisplay.Updater.exe");
+        DataSourceDebugLog.Info(
+            "Update",
+            $"Starting automatic update | currentExe={currentExePath} stagingExe={newExePath} updater={updaterExePath}");
 
         await DownloadFileAsync(result.AssetDownloadUri, newExePath, progress, cancellationToken);
         if (result.AssetSha256DownloadUri is null)
         {
             progress?.Report(new UpdateProgress("Update checksum is missing.", null));
+            DataSourceDebugLog.Warn("Update", $"Automatic update failed; checksum asset missing | release={result.LatestTag}");
             return false;
         }
 
@@ -110,16 +115,19 @@ public sealed class UpdateCheckService
             !VerifySha256(newExePath, expectedSha256))
         {
             progress?.Report(new UpdateProgress("Update verification failed.", null));
+            DataSourceDebugLog.Warn("Update", $"Automatic update failed; checksum verification failed | release={result.LatestTag} downloadedExe={newExePath}");
             return false;
         }
 
         progress?.Report(new UpdateProgress("Preparing installer...", null));
         if (!TryExtractUpdater(updaterExePath))
         {
+            DataSourceDebugLog.Warn("Update", $"Automatic update failed; embedded updater extraction failed | updater={updaterExePath}");
             return false;
         }
 
         progress?.Report(new UpdateProgress("Installing update and restarting...", null));
+        DataSourceDebugLog.Info("Update", $"Launching updater | updater={updaterExePath} sourceExe={newExePath} targetExe={currentExePath}");
         Process.Start(new ProcessStartInfo
         {
             FileName = updaterExePath,

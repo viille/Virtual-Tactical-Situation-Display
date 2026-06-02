@@ -151,7 +151,8 @@ public partial class MainWindow : Window
             {
                 if (result.AssetDownloadUri is null)
                 {
-                    UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
+                    DataSourceDebugLog.Warn("Update", $"Automatic update unavailable; release asset missing | release={result.LatestTag}");
+                    OfferManualReleasePage(result.ReleaseUri, "The automatic updater could not find the release executable asset.");
                     return;
                 }
 
@@ -170,10 +171,10 @@ public partial class MainWindow : Window
                     else
                     {
                         progressWindow.Close();
-                        UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
+                        OfferManualReleasePage(result.ReleaseUri, "The automatic updater could not install the update.");
                     }
                 }
-                catch
+                catch (Exception ex)
                 {
                     foreach (Window window in OwnedWindows)
                     {
@@ -184,7 +185,8 @@ public partial class MainWindow : Window
                         }
                     }
 
-                    UpdateCheckService.OpenReleasesPage(result.ReleaseUri);
+                    DataSourceDebugLog.Warn("Update", $"Automatic update failed with exception | release={result.LatestTag} error={ex}");
+                    OfferManualReleasePage(result.ReleaseUri, "The automatic updater failed.");
                 }
             }
         }
@@ -217,6 +219,19 @@ public partial class MainWindow : Window
                  nameof(MainViewModel.SelectedKneepadContentMode))
         {
             _ = UpdateKneepadWebViewsAsync();
+        }
+    }
+
+    private void OfferManualReleasePage(Uri releaseUri, string reason)
+    {
+        if (MessageBox.Show(
+                this,
+                $"{reason}\n\nOpen the GitHub release page for manual download?",
+                "Automatic Update Failed",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning) == MessageBoxResult.Yes)
+        {
+            UpdateCheckService.OpenReleasesPage(releaseUri);
         }
     }
 
