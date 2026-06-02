@@ -148,7 +148,35 @@ public sealed class VatsimCallsignMatcherTests
     }
 
     [Fact]
-    public void EnrichSnapshot_RejectsPilotWhenMultipleContactsArePlausible()
+    public void EnrichSnapshot_AssignsUniquePilotsWhenFormationContactsAreClose()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, now),
+            [
+                new TrafficContactState("T1", null, 60.1000, 24.1000, 5000, 90, 250, now),
+                new TrafficContactState("T2", null, 60.1002, 24.1002, 5050, 91, 248, now),
+                new TrafficContactState("T3", null, 60.1004, 24.1004, 5100, 92, 246, now)
+            ],
+            now);
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshot(
+            snapshot,
+            [
+                new VatsimPilotCandidate("ORANGE1", 60.1000, 24.1000, 5000, 250, 90),
+                new VatsimPilotCandidate("ORANGE2", 60.1002, 24.1002, 5050, 248, 91),
+                new VatsimPilotCandidate("ORANGE3", 60.1004, 24.1004, 5100, 246, 92)
+            ]);
+
+        Assert.Collection(
+            enriched.Contacts,
+            contact => Assert.Equal("ORANGE1", contact.Callsign),
+            contact => Assert.Equal("ORANGE2", contact.Callsign),
+            contact => Assert.Equal("ORANGE3", contact.Callsign));
+    }
+
+    [Fact]
+    public void EnrichSnapshot_AssignsSinglePilotOnlyOnce()
     {
         var now = DateTimeOffset.UtcNow;
         var snapshot = new TrafficSnapshot(
@@ -165,7 +193,7 @@ public sealed class VatsimCallsignMatcherTests
                 new VatsimPilotCandidate("VIPER2", 60.1001, 24.1001, 5025, 249, 90)
             ]);
 
-        Assert.All(enriched.Contacts, contact => Assert.Null(contact.Callsign));
+        Assert.Single(enriched.Contacts, static contact => contact.Callsign == "VIPER2");
     }
 
     [Fact]

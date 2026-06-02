@@ -11,7 +11,6 @@ public static class VatsimCallsignMatcher
     private const double MaxMatchSpeedDeltaKt = 100;
     private const double MinAirborneSpeedForMotionCheckKt = 40;
     private const double MinBestScoreMargin = 0.75;
-    private const double MinPilotBestScoreMargin = 0.75;
     private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(20);
 
     public static TrafficSnapshot EnrichSnapshot(
@@ -23,32 +22,8 @@ public static class VatsimCallsignMatcher
             return snapshot;
         }
 
-        var unresolvedContacts = snapshot.Contacts
-            .Where(static contact => string.IsNullOrWhiteSpace(contact.Callsign))
-            .ToList();
-        var ambiguousPilotIndexes = FindAmbiguousPilotIndexes(unresolvedContacts, pilots);
-        var usedPilotIndexes = new HashSet<int>();
-        var contacts = new List<TrafficContactState>(snapshot.Contacts.Count);
-        foreach (var contact in snapshot.Contacts)
-        {
-            if (!string.IsNullOrWhiteSpace(contact.Callsign))
-            {
-                contacts.Add(contact);
-                continue;
-            }
-
-            var match = FindBestMatch(contact, pilots, usedPilotIndexes, ambiguousPilotIndexes);
-            if (match is null)
-            {
-                contacts.Add(contact);
-                continue;
-            }
-
-            usedPilotIndexes.Add(match.Value.Index);
-            contacts.Add(contact with { Callsign = match.Value.Pilot.Callsign.Trim().ToUpperInvariant() });
-        }
-
-        return snapshot with { Contacts = contacts };
+        var assignedCallsigns = AssignCurrentMatches(snapshot.Contacts, pilots);
+        return EnrichAssignedSnapshot(snapshot, assignedCallsigns);
     }
 
     public static TrafficSnapshot EnrichSnapshotFromHistory(
@@ -61,38 +36,120 @@ public static class VatsimCallsignMatcher
             return snapshot;
         }
 
+        var assignedCallsigns = AssignHistoricalMatches(snapshot.Contacts, history, pilots);
         var unresolvedContacts = snapshot.Contacts
-            .Where(static contact => string.IsNullOrWhiteSpace(contact.Callsign))
+            .Where(contact =>
+                string.IsNullOrWhiteSpace(contact.Callsign) &&
+                !assignedCallsigns.ContainsKey(contact.Id))
             .ToList();
-        var ambiguousCurrentPilotIndexes = FindAmbiguousPilotIndexes(unresolvedContacts, pilots);
-        var ambiguousHistoricalPilotIndexes = FindAmbiguousHistoricalPilotIndexes(unresolvedContacts, history, pilots);
-        var ambiguousPilotIndexes = ambiguousCurrentPilotIndexes
-            .Concat(ambiguousHistoricalPilotIndexes)
-            .ToHashSet();
         var timestampedPilotIndexes = FindTimestampedPilotIndexes(pilots);
-        var usedPilotIndexes = new HashSet<int>();
+        var assignedPilotIndexes = assignedCallsigns.Values
+            .Select(callsign => FindPilotIndexByCallsign(pilots, callsign))
+            .Where(static index => index >= 0)
+            .ToHashSet();
+        foreach (var pair in AssignCurrentMatches(unresolvedContacts, pilots, timestampedPilotIndexes, assignedPilotIndexes))
+        {
+            assignedCallsigns[pair.Key] = pair.Value;
+        }
+
+        return EnrichAssignedSnapshot(snapshot, assignedCallsigns);
+    }
+
+    private static TrafficSnapshot EnrichAssignedSnapshot(
+        TrafficSnapshot snapshot,
+        IReadOnlyDictionary<string, string> assignedCallsigns)
+    {
         var contacts = new List<TrafficContactState>(snapshot.Contacts.Count);
         foreach (var contact in snapshot.Contacts)
         {
-            if (!string.IsNullOrWhiteSpace(contact.Callsign))
-            {
-                contacts.Add(contact);
-                continue;
-            }
-
-            var match = FindBestHistoricalMatch(contact, history, pilots, usedPilotIndexes, ambiguousPilotIndexes) ??
-                FindBestMatch(contact, pilots, usedPilotIndexes, ambiguousPilotIndexes, timestampedPilotIndexes);
-            if (match is null)
-            {
-                contacts.Add(contact);
-                continue;
-            }
-
-            usedPilotIndexes.Add(match.Value.Index);
-            contacts.Add(contact with { Callsign = match.Value.Pilot.Callsign.Trim().ToUpperInvariant() });
+            contacts.Add(string.IsNullOrWhiteSpace(contact.Callsign) &&
+                assignedCallsigns.TryGetValue(contact.Id, out var callsign)
+                    ? contact with { Callsign = callsign }
+                    : contact);
         }
 
         return snapshot with { Contacts = contacts };
+    }
+
+    private static Dictionary<string, string> AssignCurrentMatches(
+        IReadOnlyList<TrafficContactState> contacts,
+        IReadOnlyList<VatsimPilotCandidate> pilots,
+        IReadOnlySet<int>? blockedPilotIndexes = null,
+        IReadOnlySet<int>? usedPilotIndexes = null)
+    {
+        var candidates = new List<MatchCandidate>();
+        for (var contactIndex = 0; contactIndex < contacts.Count; contactIndex++)
+        {
+            var contact = contacts[contactIndex];
+            if (!string.IsNullOrWhiteSpace(contact.Callsign))
+            {
+                continue;
+            }
+
+            for (var pilotIndex = 0; pilotIndex < pilots.Count; pilotIndex++)
+            {
+                if (blockedPilotIndexes?.Contains(pilotIndex) == true ||
+                    usedPilotIndexes?.Contains(pilotIndex) == true)
+                {
+                    continue;
+                }
+
+                if (IsCandidate(contact, pilots[pilotIndex], out var score))
+                {
+                    candidates.Add(new MatchCandidate(contactIndex, pilotIndex, score));
+                }
+            }
+        }
+
+        return BuildAssignedCallsigns(contacts, pilots, candidates);
+    }
+
+    private static Dictionary<string, string> AssignHistoricalMatches(
+        IReadOnlyList<TrafficContactState> contacts,
+        IReadOnlyList<TrafficSnapshot> history,
+        IReadOnlyList<VatsimPilotCandidate> pilots)
+    {
+        var candidates = new List<MatchCandidate>();
+        for (var contactIndex = 0; contactIndex < contacts.Count; contactIndex++)
+        {
+            var contact = contacts[contactIndex];
+            if (!string.IsNullOrWhiteSpace(contact.Callsign))
+            {
+                continue;
+            }
+
+            for (var pilotIndex = 0; pilotIndex < pilots.Count; pilotIndex++)
+            {
+                var pilot = pilots[pilotIndex];
+                if (pilot.LastUpdated is not DateTimeOffset lastUpdated)
+                {
+                    continue;
+                }
+
+                var historicalContact = FindHistoricalContact(contact.Id, history, lastUpdated);
+                if (historicalContact is not null && IsCandidate(historicalContact, pilot, out var score))
+                {
+                    candidates.Add(new MatchCandidate(contactIndex, pilotIndex, score));
+                }
+            }
+        }
+
+        return BuildAssignedCallsigns(contacts, pilots, candidates);
+    }
+
+    private static Dictionary<string, string> BuildAssignedCallsigns(
+        IReadOnlyList<TrafficContactState> contacts,
+        IReadOnlyList<VatsimPilotCandidate> pilots,
+        IReadOnlyList<MatchCandidate> candidates)
+    {
+        var best = FindBestAssignment(candidates);
+        var assignments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var candidate in best)
+        {
+            assignments[contacts[candidate.ContactIndex].Id] = pilots[candidate.PilotIndex].Callsign.Trim().ToUpperInvariant();
+        }
+
+        return assignments;
     }
 
     public static VatsimMatchDiagnostics InspectBestMatch(
@@ -143,122 +200,84 @@ public static class VatsimCallsignMatcher
         return best ?? VatsimMatchDiagnostics.None;
     }
 
-    private static (int Index, VatsimPilotCandidate Pilot)? FindBestMatch(
-        TrafficContactState contact,
-        IReadOnlyList<VatsimPilotCandidate> pilots,
-        IReadOnlySet<int> usedPilotIndexes,
-        IReadOnlySet<int> ambiguousPilotIndexes,
-        IReadOnlySet<int>? blockedPilotIndexes = null)
+    private static IReadOnlyList<MatchCandidate> FindBestAssignment(IReadOnlyList<MatchCandidate> candidates)
     {
-        (int Index, VatsimPilotCandidate Pilot, double Score)? best = null;
-        (int Index, VatsimPilotCandidate Pilot, double Score)? secondBest = null;
-        for (var i = 0; i < pilots.Count; i++)
+        if (candidates.Count == 0)
         {
-            if (usedPilotIndexes.Contains(i) ||
-                ambiguousPilotIndexes.Contains(i) ||
-                blockedPilotIndexes?.Contains(i) == true)
-            {
-                continue;
-            }
-
-            var pilot = pilots[i];
-            if (!IsCandidate(contact, pilot, out var score))
-            {
-                continue;
-            }
-
-            if (best is null || score < best.Value.Score)
-            {
-                secondBest = best;
-                best = (i, pilot, score);
-                continue;
-            }
-
-            if (secondBest is null || score < secondBest.Value.Score)
-            {
-                secondBest = (i, pilot, score);
-            }
+            return [];
         }
 
-        if (best is null)
+        var candidatesByContact = candidates
+            .GroupBy(static candidate => candidate.ContactIndex)
+            .OrderBy(static group => group.Key)
+            .Select(static group => group.OrderBy(static candidate => candidate.Score).ToList())
+            .ToList();
+        if (candidatesByContact.Count == 1 &&
+            candidatesByContact[0].Count > 1 &&
+            candidatesByContact[0][1].Score - candidatesByContact[0][0].Score < MinBestScoreMargin)
         {
-            return null;
+            return [];
         }
 
-        if (secondBest is not null && secondBest.Value.Score - best.Value.Score < MinBestScoreMargin)
-        {
-            return null;
-        }
+        var current = new List<MatchCandidate>();
+        var usedPilots = new HashSet<int>();
+        List<MatchCandidate> best = [];
+        var bestScore = double.MaxValue;
 
-        return (best.Value.Index, best.Value.Pilot);
+        Search(0, 0);
+        return best;
+
+        void Search(int groupIndex, double score)
+        {
+            if (groupIndex >= candidatesByContact.Count)
+            {
+                if (current.Count > best.Count ||
+                    (current.Count == best.Count && score < bestScore))
+                {
+                    best = [.. current];
+                    bestScore = score;
+                }
+
+                return;
+            }
+
+            var remaining = candidatesByContact.Count - groupIndex;
+            if (current.Count + remaining < best.Count)
+            {
+                return;
+            }
+
+            foreach (var candidate in candidatesByContact[groupIndex])
+            {
+                if (!usedPilots.Add(candidate.PilotIndex))
+                {
+                    continue;
+                }
+
+                current.Add(candidate);
+                Search(groupIndex + 1, score + candidate.Score);
+                current.RemoveAt(current.Count - 1);
+                usedPilots.Remove(candidate.PilotIndex);
+            }
+
+            Search(groupIndex + 1, score);
+        }
     }
 
-    private static (int Index, VatsimPilotCandidate Pilot)? FindBestHistoricalMatch(
-        TrafficContactState currentContact,
-        IReadOnlyList<TrafficSnapshot> history,
-        IReadOnlyList<VatsimPilotCandidate> pilots,
-        IReadOnlySet<int> usedPilotIndexes,
-        IReadOnlySet<int> ambiguousPilotIndexes)
+    private static int FindPilotIndexByCallsign(IReadOnlyList<VatsimPilotCandidate> pilots, string callsign)
     {
-        (int Index, VatsimPilotCandidate Pilot, double Score)? best = null;
-        (int Index, VatsimPilotCandidate Pilot, double Score)? secondBest = null;
         for (var i = 0; i < pilots.Count; i++)
         {
-            var pilot = pilots[i];
-            if (usedPilotIndexes.Contains(i) ||
-                ambiguousPilotIndexes.Contains(i) ||
-                pilot.LastUpdated is not DateTimeOffset lastUpdated)
+            if (string.Equals(pilots[i].Callsign, callsign, StringComparison.OrdinalIgnoreCase))
             {
-                continue;
-            }
-
-            var historicalContact = FindHistoricalContact(currentContact.Id, history, lastUpdated);
-            if (historicalContact is null || !IsCandidate(historicalContact, pilot, out var score))
-            {
-                continue;
-            }
-
-            if (best is null || score < best.Value.Score)
-            {
-                secondBest = best;
-                best = (i, pilot, score);
-                continue;
-            }
-
-            if (secondBest is null || score < secondBest.Value.Score)
-            {
-                secondBest = (i, pilot, score);
+                return i;
             }
         }
 
-        if (best is null)
-        {
-            return null;
-        }
-
-        if (secondBest is not null && secondBest.Value.Score - best.Value.Score < MinBestScoreMargin)
-        {
-            return null;
-        }
-
-        return (best.Value.Index, best.Value.Pilot);
+        return -1;
     }
 
-    private static HashSet<int> FindAmbiguousPilotIndexes(
-        IReadOnlyList<TrafficContactState> contacts,
-        IReadOnlyList<VatsimPilotCandidate> pilots)
-    {
-        var ambiguousPilotIndexes = new HashSet<int>();
-        for (var i = 0; i < pilots.Count; i++)
-        {
-            if (HasAmbiguousContactCandidates(contacts, pilots[i]))
-            {
-                ambiguousPilotIndexes.Add(i);
-            }
-        }
-
-        return ambiguousPilotIndexes;
-    }
+    private sealed record MatchCandidate(int ContactIndex, int PilotIndex, double Score);
 
     private static HashSet<int> FindTimestampedPilotIndexes(IReadOnlyList<VatsimPilotCandidate> pilots)
     {
@@ -272,66 +291,6 @@ public static class VatsimCallsignMatcher
         }
 
         return timestampedPilotIndexes;
-    }
-
-    private static HashSet<int> FindAmbiguousHistoricalPilotIndexes(
-        IReadOnlyList<TrafficContactState> currentContacts,
-        IReadOnlyList<TrafficSnapshot> history,
-        IReadOnlyList<VatsimPilotCandidate> pilots)
-    {
-        var ambiguousPilotIndexes = new HashSet<int>();
-        for (var i = 0; i < pilots.Count; i++)
-        {
-            var pilot = pilots[i];
-            if (pilot.LastUpdated is not DateTimeOffset lastUpdated)
-            {
-                continue;
-            }
-
-            var historicalContacts = currentContacts
-                .Select(contact => FindHistoricalContact(contact.Id, history, lastUpdated))
-                .Where(static contact => contact is not null)
-                .Cast<TrafficContactState>()
-                .ToList();
-
-            if (HasAmbiguousContactCandidates(historicalContacts, pilot))
-            {
-                ambiguousPilotIndexes.Add(i);
-            }
-        }
-
-        return ambiguousPilotIndexes;
-    }
-
-    private static bool HasAmbiguousContactCandidates(
-        IReadOnlyList<TrafficContactState> contacts,
-        VatsimPilotCandidate pilot)
-    {
-        double? bestScore = null;
-        double? secondBestScore = null;
-        foreach (var contact in contacts)
-        {
-            if (!IsCandidate(contact, pilot, out var score))
-            {
-                continue;
-            }
-
-            if (bestScore is null || score < bestScore.Value)
-            {
-                secondBestScore = bestScore;
-                bestScore = score;
-                continue;
-            }
-
-            if (secondBestScore is null || score < secondBestScore.Value)
-            {
-                secondBestScore = score;
-            }
-        }
-
-        return bestScore is not null &&
-            secondBestScore is not null &&
-            secondBestScore.Value - bestScore.Value < MinPilotBestScoreMargin;
     }
 
     private static TrafficContactState? FindHistoricalContact(

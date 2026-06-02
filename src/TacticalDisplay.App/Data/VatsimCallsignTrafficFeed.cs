@@ -244,7 +244,8 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         if (!_callsignConfirmations.TryGetValue(contactId, out var confirmation) ||
             !string.Equals(confirmation.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
         {
-            confirmation = new CallsignConfirmation(callsign, 0, null, false);
+            var initialCount = confirmation?.Confirmed == true ? RequiredStableCallsignMatches - 1 : 0;
+            confirmation = new CallsignConfirmation(callsign, initialCount, null, false);
         }
 
         var count = confirmation.MatchCount;
