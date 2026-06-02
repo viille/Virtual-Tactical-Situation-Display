@@ -12,7 +12,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 {
     private const string LogSource = "VATSIM";
     private const int RequiredStableCallsignMatches = 2;
-    private static readonly TimeSpan SnapshotHistoryRetention = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan SnapshotHistoryRetention = TimeSpan.FromSeconds(60);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -82,7 +82,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         {
             var pilots = await GetPilotsAsync(CancellationToken.None).ConfigureAwait(false);
             var history = GetSnapshotHistory();
-            LogCallsignMatchDiagnostics(snapshot, pilots);
+            LogCallsignMatchDiagnostics(snapshot, history, pilots);
             var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, history, pilots);
             enriched = ConfirmCallsignMatches(snapshot, enriched, pilots);
             LogEnrichmentSummary(snapshot, enriched, pilots);
@@ -310,6 +310,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 
     private static void LogCallsignMatchDiagnostics(
         TrafficSnapshot snapshot,
+        IReadOnlyList<TrafficSnapshot> history,
         IReadOnlyList<VatsimPilotCandidate> pilots)
     {
         DataSourceDebugLog.ThrottledDebug(
@@ -323,21 +324,31 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                     .Take(8)
                     .Select(contact =>
                     {
-                        var nearest = VatsimCallsignMatcher.InspectBestMatch(contact, pilots);
+                        var currentNearest = VatsimCallsignMatcher.InspectBestMatch(contact, pilots);
+                        var historicalNearest = VatsimCallsignMatcher.InspectBestHistoricalMatch(contact, history, pilots);
                         return
-                            $"contact={contact.Id} currentNearest={nearest.Callsign ?? "n/a"} " +
-                            $"match={nearest.IsMatch} reject={nearest.RejectReason ?? "none"} " +
-                            $"distanceNm={nearest.DistanceNm:0.00} altitudeDeltaFt={nearest.AltitudeDeltaFt:0} " +
-                            $"score={nearest.Score:0.00}";
+                            $"contact={contact.Id} " +
+                            $"currentNearest={currentNearest.Callsign ?? "n/a"} currentMatch={currentNearest.IsMatch} " +
+                            $"currentReject={currentNearest.RejectReason ?? "none"} currentDistanceNm={currentNearest.DistanceNm:0.00} " +
+                            $"historicalNearest={historicalNearest.Callsign ?? "n/a"} historicalMatch={historicalNearest.IsMatch} " +
+                            $"historicalReject={historicalNearest.RejectReason ?? "none"} historicalDistanceNm={historicalNearest.DistanceNm:0.00} " +
+                            $"historicalAltitudeDeltaFt={historicalNearest.AltitudeDeltaFt:0} historicalScore={historicalNearest.Score:0.00}";
                     })
                     .ToList();
+                var historyText = "historyCount=0 historySpanSeconds=0";
+                if (history.Count > 0)
+                {
+                    var historyStart = history.Min(static item => item.Timestamp);
+                    var historyEnd = history.Max(static item => item.Timestamp);
+                    historyText = $"historyCount={history.Count} historySpanSeconds={(historyEnd - historyStart).TotalSeconds:0}";
+                }
 
                 if (unresolved.Count == 0)
                 {
-                    return $"Callsign current-snapshot diagnostics | unresolved=0 pilots={pilots.Count}";
+                    return $"Callsign match diagnostics | unresolved=0 pilots={pilots.Count} {historyText}";
                 }
 
-                return $"Callsign current-snapshot diagnostics | unresolvedShown={unresolved.Count} pilots={pilots.Count} | " +
+                return $"Callsign match diagnostics | unresolvedShown={unresolved.Count} pilots={pilots.Count} {historyText} | " +
                     string.Join(" | ", unresolved);
             });
     }

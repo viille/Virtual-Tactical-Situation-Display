@@ -12,7 +12,7 @@ public static class VatsimCallsignMatcher
     private const double MinAirborneSpeedForMotionCheckKt = 40;
     private const double MinBestScoreMargin = 0.75;
     private const double MinPilotBestScoreMargin = 0.75;
-    private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(20);
 
     public static TrafficSnapshot EnrichSnapshot(
         TrafficSnapshot snapshot,
@@ -104,6 +104,36 @@ public static class VatsimCallsignMatcher
         {
             var pilot = pilots[i];
             var candidate = InspectCandidate(contact, pilot);
+            if (best is null || candidate.Score < best.Score)
+            {
+                best = candidate;
+            }
+        }
+
+        return best ?? VatsimMatchDiagnostics.None;
+    }
+
+    public static VatsimMatchDiagnostics InspectBestHistoricalMatch(
+        TrafficContactState currentContact,
+        IReadOnlyList<TrafficSnapshot> history,
+        IReadOnlyList<VatsimPilotCandidate> pilots)
+    {
+        VatsimMatchDiagnostics? best = null;
+        for (var i = 0; i < pilots.Count; i++)
+        {
+            var pilot = pilots[i];
+            if (pilot.LastUpdated is not DateTimeOffset lastUpdated)
+            {
+                continue;
+            }
+
+            var historicalContact = FindHistoricalContact(currentContact.Id, history, lastUpdated);
+            if (historicalContact is null)
+            {
+                continue;
+            }
+
+            var candidate = InspectCandidate(historicalContact, pilot);
             if (best is null || candidate.Score < best.Score)
             {
                 best = candidate;
