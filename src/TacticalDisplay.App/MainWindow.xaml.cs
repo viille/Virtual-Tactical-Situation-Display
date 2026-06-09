@@ -24,6 +24,7 @@ public partial class MainWindow : Window
 
     private readonly MainViewModel _viewModel = new();
     private readonly UpdateCheckService _updateCheckService = new();
+    private readonly TelemetryService _telemetryService = new();
     private WebDisplayServer? _webDisplayServer;
     private int _updateCheckStarted;
     private bool _isClosing;
@@ -40,6 +41,7 @@ public partial class MainWindow : Window
         Title = $"Tactical Situation Display | ver {displayVersion}";
         DataContext = _viewModel;
         _viewModel.AppVersionText = $"ver {displayVersion}";
+        _telemetryService.SendAppActivePingInBackground(displayVersion);
         ApplyWebDisplayServerState();
         RestoreWindowSize();
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
