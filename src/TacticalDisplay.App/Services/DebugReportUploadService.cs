@@ -144,16 +144,17 @@ public sealed class DebugReportUploadService
             return;
         }
 
-        foreach (var logFile in Directory.EnumerateFiles(logDirectory)
+        foreach (var logFile in Directory.EnumerateFiles(logDirectory, "*", SearchOption.AllDirectories)
                      .OrderByDescending(File.GetLastWriteTimeUtc))
         {
-            var fileName = Path.GetFileName(logFile);
-            if (string.IsNullOrWhiteSpace(fileName))
+            var relativePath = Path.GetRelativePath(logDirectory, logFile);
+            if (string.IsNullOrWhiteSpace(relativePath) ||
+                relativePath.StartsWith("..", StringComparison.Ordinal))
             {
                 continue;
             }
 
-            var entryName = $"logs/{fileName}";
+            var entryName = $"logs/{relativePath.Replace('\\', '/')}";
             var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
             long copiedBytes;
             await using (var source = new FileStream(logFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))

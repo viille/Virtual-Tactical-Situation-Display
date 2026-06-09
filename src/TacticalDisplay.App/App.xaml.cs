@@ -28,9 +28,13 @@ public partial class App : Application
 
         if (!string.IsNullOrWhiteSpace(startupCrashReportMessage))
         {
+            var message =
+                startupCrashReportMessage +
+                $"{Environment.NewLine}{Environment.NewLine}" +
+                "Please send a debug report so this crash can be investigated. Open Settings > Debug > Send Debug Report, keep logs selected, review the raw package, and confirm the upload.";
             MessageBox.Show(
                 _mainWindow,
-                startupCrashReportMessage,
+                message,
                 "Crash log recovered",
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
