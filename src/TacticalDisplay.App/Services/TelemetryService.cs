@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Reflection;
 using System.Text.Json;
 using System.IO;
+using TacticalDisplay.Core.Models;
 
 namespace TacticalDisplay.App.Services;
 
@@ -12,7 +13,8 @@ public sealed class TelemetryService
     private const string IngestKeyHeaderName = "X-VTSD-Ingest-Key";
     private const string IngestKeyMetadataKey = "DefaultTelemetryIngestKey";
     private const string IngestKeyEnvironmentVariable = "VTSD_INGEST_KEY";
-    private const string TelemetryEventName = "app_active";
+    private const string AppActiveEventName = "app_active";
+    private const string DiagnosticSnapshotEventName = "diagnostic_snapshot";
     private const string UtcDateFormat = "yyyy-MM-dd";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(3);
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -38,12 +40,19 @@ public sealed class TelemetryService
         _httpClientFactory = httpClientFactory;
     }
 
-    public void SendAppActivePingInBackground(string appVersion)
+    public void SendStartupTelemetryInBackground(
+        string appVersion,
+        TacticalDisplaySettings settings,
+        bool includeDiagnostics)
     {
-        _ = Task.Run(() => SendAppActivePingAsync(appVersion, CancellationToken.None));
+        var diagnostics = includeDiagnostics ? TelemetryDiagnostics.FromSettings(settings) : null;
+        _ = Task.Run(() => SendStartupTelemetryAsync(appVersion, diagnostics, CancellationToken.None));
     }
 
-    internal async Task SendAppActivePingAsync(string appVersion, CancellationToken cancellationToken)
+    internal async Task SendStartupTelemetryAsync(
+        string appVersion,
+        TelemetryDiagnostics? diagnostics,
+        CancellationToken cancellationToken)
     {
         var today = DateTimeOffset.UtcNow.ToString(UtcDateFormat, System.Globalization.CultureInfo.InvariantCulture);
         var stateFileExists = File.Exists(_statePath);
@@ -60,45 +69,75 @@ public sealed class TelemetryService
             return;
         }
 
-        if (string.Equals(state.LastSentUtcDate, today, StringComparison.Ordinal))
-        {
-            return;
-        }
-
         if (string.IsNullOrWhiteSpace(state.InstallationId))
         {
             state = state with { InstallationId = Guid.NewGuid().ToString("D") };
             SaveState(state);
         }
 
+        using var client = _httpClientFactory();
+        if (!string.Equals(state.LastSentUtcDate, today, StringComparison.Ordinal) &&
+            await SendTelemetryRequestAsync(
+                client,
+                ingestKey,
+                new TelemetryRequest(
+                    state.InstallationId,
+                    NormalizeAppVersion(appVersion),
+                    AppActiveEventName,
+                    null),
+                cancellationToken).ConfigureAwait(false))
+        {
+            state = state with { LastSentUtcDate = today };
+            SaveState(state);
+            DataSourceDebugLog.Debug("Telemetry", "Telemetry app_active ping sent");
+        }
+
+        if (diagnostics is not null &&
+            !string.Equals(state.LastDiagnosticsSentUtcDate, today, StringComparison.Ordinal) &&
+            await SendTelemetryRequestAsync(
+                client,
+                ingestKey,
+                new TelemetryRequest(
+                    state.InstallationId,
+                    NormalizeAppVersion(appVersion),
+                    DiagnosticSnapshotEventName,
+                    diagnostics),
+                cancellationToken).ConfigureAwait(false))
+        {
+            SaveState(state with { LastDiagnosticsSentUtcDate = today });
+            DataSourceDebugLog.Debug("Telemetry", "Telemetry diagnostic_snapshot sent");
+        }
+    }
+
+    private static async Task<bool> SendTelemetryRequestAsync(
+        HttpClient client,
+        string ingestKey,
+        TelemetryRequest telemetryRequest,
+        CancellationToken cancellationToken)
+    {
         try
         {
-            using var client = _httpClientFactory();
             using var request = new HttpRequestMessage(HttpMethod.Post, EndpointUrl);
             request.Headers.Add(IngestKeyHeaderName, ingestKey.Trim());
-            request.Content = JsonContent.Create(new TelemetryRequest(
-                state.InstallationId,
-                NormalizeAppVersion(appVersion),
-                TelemetryEventName),
-                options: JsonOptions);
-
+            request.Content = JsonContent.Create(telemetryRequest, options: JsonOptions);
             using var response = await client.SendAsync(request, cancellationToken).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
-                DataSourceDebugLog.Debug("Telemetry", $"Telemetry app_active ping failed | status={(int)response.StatusCode}");
-                return;
+                DataSourceDebugLog.Debug("Telemetry", $"Telemetry request failed | event={telemetryRequest.Event} status={(int)response.StatusCode}");
+                return false;
             }
 
-            SaveState(state with { LastSentUtcDate = today });
-            DataSourceDebugLog.Debug("Telemetry", "Telemetry app_active ping sent");
+            return true;
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or OperationCanceledException or IOException)
         {
-            DataSourceDebugLog.Debug("Telemetry", $"Telemetry app_active ping unavailable | {ex.GetType().Name}: {ex.Message}");
+            DataSourceDebugLog.Debug("Telemetry", $"Telemetry request unavailable | event={telemetryRequest.Event} {ex.GetType().Name}: {ex.Message}");
+            return false;
         }
         catch (Exception ex)
         {
-            DataSourceDebugLog.Debug("Telemetry", $"Telemetry app_active ping skipped | {ex.GetType().Name}: {ex.Message}");
+            DataSourceDebugLog.Debug("Telemetry", $"Telemetry request skipped | event={telemetryRequest.Event} {ex.GetType().Name}: {ex.Message}");
+            return false;
         }
     }
 
@@ -164,7 +203,48 @@ public sealed class TelemetryService
         return Environment.GetEnvironmentVariable(IngestKeyEnvironmentVariable) ?? string.Empty;
     }
 
-    private sealed record TelemetryState(string? InstallationId, string? LastSentUtcDate);
+    private sealed record TelemetryState(
+        string? InstallationId,
+        string? LastSentUtcDate,
+        string? LastDiagnosticsSentUtcDate = null);
 
-    private sealed record TelemetryRequest(string InstallationId, string AppVersion, string Event);
+    internal sealed record TelemetryDiagnostics(
+        string OsVersion,
+        string DataSourceMode,
+        bool WebServerEnabled,
+        bool WebServerLanAccessEnabled,
+        bool VatsimCallsignLookupEnabled,
+        bool MapLayerEnabled,
+        bool ControlledAirspaceLayerEnabled,
+        bool LaraAirspaceEnabled,
+        string OrientationMode,
+        string DirectionReferenceMode,
+        string LabelMode,
+        string CategoryFilter,
+        int RangeOptionCount,
+        int KneepadPageCount)
+    {
+        public static TelemetryDiagnostics FromSettings(TacticalDisplaySettings settings) =>
+            new(
+                Environment.OSVersion.VersionString,
+                settings.DataSourceMode,
+                settings.EnableWebServer,
+                settings.EnableWebServerLanAccess,
+                settings.EnableVatsimCallsignLookup,
+                settings.ShowMapLayer,
+                settings.ShowControlledAirspaceLayer,
+                settings.ShowAirspaceBoundaries,
+                settings.OrientationMode.ToString(),
+                settings.DirectionReferenceMode.ToString(),
+                settings.LabelMode.ToString(),
+                settings.CategoryFilter.ToString(),
+                settings.RangeScaleOptionsNm.Length,
+                settings.KneepadPages.Count);
+    }
+
+    private sealed record TelemetryRequest(
+        string InstallationId,
+        string AppVersion,
+        string Event,
+        TelemetryDiagnostics? Diagnostics);
 }

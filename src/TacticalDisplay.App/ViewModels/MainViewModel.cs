@@ -326,19 +326,19 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
-    public bool AnonymousTelemetryEnabled
+    public bool DiagnosticTelemetryEnabled
     {
-        get => Settings.EnableAnonymousTelemetry;
+        get => Settings.EnableDiagnosticTelemetry;
         set
         {
-            if (Settings.EnableAnonymousTelemetry == value)
+            if (Settings.EnableDiagnosticTelemetry == value)
             {
                 return;
             }
 
-            Settings.EnableAnonymousTelemetry = value;
+            Settings.EnableDiagnosticTelemetry = value;
             _configStore.SaveDisplaySettings(Settings);
-            DataSourceDebugLog.Info("App", $"Anonymous telemetry toggled | enabled={value}");
+            DataSourceDebugLog.Info("App", $"Diagnostic telemetry toggled | enabled={value}");
             Raise();
         }
     }
@@ -1593,7 +1593,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(SimulatorStatusLabel));
         Raise(nameof(SimulatorFooterText));
         Raise(nameof(DataSourceDebugLoggingEnabled));
-        Raise(nameof(AnonymousTelemetryEnabled));
+        Raise(nameof(DiagnosticTelemetryEnabled));
         Raise(nameof(WebServerEnabled));
         Raise(nameof(VatsimCallsignLookupEnabled));
 

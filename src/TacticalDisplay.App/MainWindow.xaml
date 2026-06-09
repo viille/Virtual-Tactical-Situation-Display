@@ -924,10 +924,14 @@
 
                     <Expander Header="Privacy" Foreground="#7CB9A9" Margin="0,0,0,4">
                         <StackPanel Margin="0,8,0,0">
-                            <CheckBox Content="Anonymous usage telemetry"
-                                      IsChecked="{Binding AnonymousTelemetryEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                            <TextBlock Text="VTSD sends one anonymous app_active ping per UTC day with installation ID and app version only."
+                                       Foreground="#7CB9A9"
+                                       TextWrapping="Wrap" />
+                            <CheckBox Content="Share diagnostic telemetry"
+                                      IsChecked="{Binding DiagnosticTelemetryEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                      Margin="0,8,0,0"
                                       Foreground="#9AFAD7" />
-                            <TextBlock Text="Sends one anonymous app_active ping per UTC day with installation ID and app version only."
+                            <TextBlock Text="Optional. Sends non-flight app settings and environment diagnostics such as data source mode, map toggles, web display setting, OS version, and kneepad page count."
                                        Foreground="#7CB9A9"
                                        TextWrapping="Wrap"
                                        Margin="0,4,0,0" />
