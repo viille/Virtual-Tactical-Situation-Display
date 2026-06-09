@@ -41,7 +41,11 @@ public partial class MainWindow : Window
         Title = $"Tactical Situation Display | ver {displayVersion}";
         DataContext = _viewModel;
         _viewModel.AppVersionText = $"ver {displayVersion}";
-        _telemetryService.SendAppActivePingInBackground(displayVersion);
+        if (_viewModel.AnonymousTelemetryEnabled)
+        {
+            _telemetryService.SendAppActivePingInBackground(displayVersion);
+        }
+
         ApplyWebDisplayServerState();
         RestoreWindowSize();
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;

@@ -326,6 +326,23 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    public bool AnonymousTelemetryEnabled
+    {
+        get => Settings.EnableAnonymousTelemetry;
+        set
+        {
+            if (Settings.EnableAnonymousTelemetry == value)
+            {
+                return;
+            }
+
+            Settings.EnableAnonymousTelemetry = value;
+            _configStore.SaveDisplaySettings(Settings);
+            DataSourceDebugLog.Info("App", $"Anonymous telemetry toggled | enabled={value}");
+            Raise();
+        }
+    }
+
     public bool WebServerEnabled
     {
         get => Settings.EnableWebServer;
@@ -1576,6 +1593,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(SimulatorStatusLabel));
         Raise(nameof(SimulatorFooterText));
         Raise(nameof(DataSourceDebugLoggingEnabled));
+        Raise(nameof(AnonymousTelemetryEnabled));
         Raise(nameof(WebServerEnabled));
         Raise(nameof(VatsimCallsignLookupEnabled));
 
