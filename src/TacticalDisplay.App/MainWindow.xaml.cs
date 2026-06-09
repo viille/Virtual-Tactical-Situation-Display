@@ -240,6 +240,18 @@ public partial class MainWindow : Window
         }
     }
 
+    private void OnSendDebugReportClicked(object sender, RoutedEventArgs e)
+    {
+        var dialog = new DebugReportDialog(
+            GetDisplayVersion(),
+            _viewModel.Settings,
+            _telemetryService)
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
+    }
+
     private async Task InitializeKneepadWebViewsAsync()
     {
         if (_kneepadWebViewEnvironment is not null || _kneepadWebViewsInitializing)

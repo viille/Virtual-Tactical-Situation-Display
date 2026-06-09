@@ -949,6 +949,9 @@
                             <Button Content="Clear WebView Cookies"
                                     Command="{Binding ClearWebViewCookiesCommand}"
                                     Margin="0,8,0,0" />
+                            <Button Content="Send Debug Report"
+                                    Margin="0,8,0,0"
+                                    Click="OnSendDebugReportClicked" />
                             <TextBlock Text="Writes flight, data source, VATSIM callsign, airspace, web display, and app diagnostics to %APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log"
                                        Foreground="#7CB9A9"
                                        TextWrapping="Wrap"

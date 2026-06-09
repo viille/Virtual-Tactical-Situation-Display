@@ -1,0 +1,110 @@
+<Window x:Class="TacticalDisplay.App.DebugReportDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Send Debug Report"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize"
+        Width="560"
+        MinWidth="480"
+        Height="620"
+        MinHeight="520"
+        Background="#102028">
+    <Grid Margin="14">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="Send Debug Report"
+                           FontSize="18"
+                           FontWeight="SemiBold"
+                           Foreground="#9AFAD7"
+                           Margin="0,0,0,8" />
+                <TextBlock Text="This report helps diagnose VTSD issues. Uploading is voluntary and happens only after you review and confirm it."
+                           Foreground="#D9F2EC"
+                           TextWrapping="Wrap"
+                           Margin="0,0,0,8" />
+                <TextBlock Text="The report is raw and not scrubbed. It can include logs, settings, and technical environment information."
+                           Foreground="#F7C873"
+                           TextWrapping="Wrap"
+                           Margin="0,0,0,14" />
+
+                <CheckBox x:Name="IncludeLogsCheck"
+                          Content="Include logs"
+                          IsChecked="True"
+                          Foreground="#9AFAD7"
+                          Margin="0,0,0,6" />
+                <CheckBox x:Name="IncludeSettingsCheck"
+                          Content="Include settings"
+                          IsChecked="True"
+                          Foreground="#9AFAD7"
+                          Margin="0,0,0,6" />
+                <CheckBox x:Name="IncludeDiagnosticsCheck"
+                          Content="Include diagnostics"
+                          IsChecked="True"
+                          Foreground="#9AFAD7"
+                          Margin="0,0,0,12" />
+
+                <TextBlock Text="Describe the issue"
+                           Foreground="#7CB9A9"
+                           Margin="0,0,0,4" />
+                <TextBox x:Name="DescriptionBox"
+                         MinHeight="90"
+                         AcceptsReturn="True"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         Margin="0,0,0,12" />
+
+                <Border x:Name="SummaryPanel"
+                        BorderBrush="#435864"
+                        BorderThickness="1"
+                        Background="#162A33"
+                        Padding="10"
+                        Visibility="Collapsed">
+                    <StackPanel>
+                        <TextBlock Text="Review Before Sending"
+                                   FontWeight="SemiBold"
+                                   Foreground="#9AFAD7"
+                                   Margin="0,0,0,6" />
+                        <TextBlock Text="The package below will be uploaded as-is. Contents are not anonymized, masked, or scrubbed."
+                                   Foreground="#F7C873"
+                                   TextWrapping="Wrap"
+                                   Margin="0,0,0,8" />
+                        <TextBlock x:Name="SummaryText"
+                                   Foreground="#D9F2EC"
+                                   FontFamily="Consolas"
+                                   FontSize="12"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock x:Name="StatusText"
+                           Foreground="#F7C873"
+                           TextWrapping="Wrap"
+                           Margin="0,10,0,0" />
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="1"
+                    Orientation="Horizontal"
+                    HorizontalAlignment="Right"
+                    Margin="0,12,0,0">
+            <Button x:Name="ReviewButton"
+                    Content="Review"
+                    Width="90"
+                    Margin="0,0,8,0"
+                    Click="OnReviewClicked" />
+            <Button x:Name="SendButton"
+                    Content="Send"
+                    Width="90"
+                    Margin="0,0,8,0"
+                    IsEnabled="False"
+                    Click="OnSendClicked" />
+            <Button Content="Cancel"
+                    Width="90"
+                    IsCancel="True" />
+        </StackPanel>
+    </Grid>
+</Window>

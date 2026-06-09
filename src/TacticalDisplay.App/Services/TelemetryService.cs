@@ -49,6 +49,20 @@ public sealed class TelemetryService
         _ = Task.Run(() => SendStartupTelemetryAsync(appVersion, diagnostics, CancellationToken.None));
     }
 
+    public string GetOrCreateInstallationId()
+    {
+        var stateFileExists = File.Exists(_statePath);
+        var state = LoadState();
+        if (!stateFileExists || string.IsNullOrWhiteSpace(state.InstallationId))
+        {
+            SaveState(state);
+        }
+
+        return state.InstallationId!;
+    }
+
+    public string GetConfiguredIngestKey() => ResolveIngestKey();
+
     internal async Task SendStartupTelemetryAsync(
         string appVersion,
         TelemetryDiagnostics? diagnostics,
