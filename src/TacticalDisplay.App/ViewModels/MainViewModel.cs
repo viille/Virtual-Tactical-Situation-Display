@@ -343,6 +343,15 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    public void SetDiagnosticTelemetryConsent(bool enabled)
+    {
+        Settings.EnableDiagnosticTelemetry = enabled;
+        Settings.DiagnosticTelemetryConsentAsked = true;
+        _configStore.SaveDisplaySettings(Settings);
+        DataSourceDebugLog.Info("App", $"Diagnostic telemetry consent answered | enabled={enabled}");
+        Raise(nameof(DiagnosticTelemetryEnabled));
+    }
+
     public bool WebServerEnabled
     {
         get => Settings.EnableWebServer;

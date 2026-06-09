@@ -41,10 +41,6 @@ public partial class MainWindow : Window
         Title = $"Tactical Situation Display | ver {displayVersion}";
         DataContext = _viewModel;
         _viewModel.AppVersionText = $"ver {displayVersion}";
-        _telemetryService.SendStartupTelemetryInBackground(
-            displayVersion,
-            _viewModel.Settings,
-            _viewModel.DiagnosticTelemetryEnabled);
         ApplyWebDisplayServerState();
         RestoreWindowSize();
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
@@ -120,6 +116,11 @@ public partial class MainWindow : Window
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         await InitializeKneepadWebViewsAsync();
+        PromptForDiagnosticTelemetryConsentIfNeeded();
+        _telemetryService.SendStartupTelemetryInBackground(
+            GetDisplayVersion(),
+            _viewModel.Settings,
+            _viewModel.DiagnosticTelemetryEnabled);
 
         if (Interlocked.Exchange(ref _updateCheckStarted, 1) != 0)
         {
@@ -225,6 +226,29 @@ public partial class MainWindow : Window
         {
             _ = UpdateKneepadWebViewsAsync();
         }
+    }
+
+    private void PromptForDiagnosticTelemetryConsentIfNeeded()
+    {
+        if (_viewModel.Settings.DiagnosticTelemetryConsentAsked || _viewModel.SuppressModalDialogs)
+        {
+            return;
+        }
+
+        if (_viewModel.DiagnosticTelemetryEnabled)
+        {
+            _viewModel.SetDiagnosticTelemetryConsent(enabled: true);
+            return;
+        }
+
+        var result = MessageBox.Show(
+            this,
+            "Allow extended telemetry?\n\nVTSD already sends one anonymous daily app_active ping with installation ID and app version. Extended telemetry also includes non-flight diagnostics such as data source mode, map toggles, web display setting, OS version, and kneepad page count.",
+            "Telemetry",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+
+        _viewModel.SetDiagnosticTelemetryConsent(result == MessageBoxResult.Yes);
     }
 
     private void OfferManualReleasePage(Uri releaseUri, string reason)

@@ -12,6 +12,7 @@ public sealed class TacticalDisplaySettings
     public string VatsimDataFeedUrl { get; set; } = "https://data.vatsim.net/v3/vatsim-data.json";
     public double VatsimCallsignRefreshSeconds { get; set; } = 15;
     public bool EnableDiagnosticTelemetry { get; set; }
+    public bool DiagnosticTelemetryConsentAsked { get; set; }
     public bool EnableDataSourceDebugLogging { get; set; }
     public double WindowWidth { get; set; } = 1280;
     public double WindowHeight { get; set; } = 840;

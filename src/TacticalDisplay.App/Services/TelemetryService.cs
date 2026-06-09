@@ -15,6 +15,7 @@ public sealed class TelemetryService
     private const string IngestKeyEnvironmentVariable = "VTSD_INGEST_KEY";
     private const string AppActiveEventName = "app_active";
     private const string DiagnosticSnapshotEventName = "diagnostic_snapshot";
+    private const string AppVersionChangedEventName = "app_version_changed";
     private const string UtcDateFormat = "yyyy-MM-dd";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(3);
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -76,6 +77,7 @@ public sealed class TelemetryService
             SaveState(state);
         }
 
+        var normalizedAppVersion = NormalizeAppVersion(appVersion);
         var ingestKey = ResolveIngestKey();
         if (string.IsNullOrWhiteSpace(ingestKey))
         {
@@ -90,13 +92,35 @@ public sealed class TelemetryService
         }
 
         using var client = _httpClientFactory();
+        if (string.IsNullOrWhiteSpace(state.LastReportedAppVersion) && !stateFileExists)
+        {
+            state = state with { LastReportedAppVersion = normalizedAppVersion };
+            SaveState(state);
+        }
+        else if ((string.IsNullOrWhiteSpace(state.LastReportedAppVersion) ||
+            !string.Equals(state.LastReportedAppVersion, normalizedAppVersion, StringComparison.Ordinal)) &&
+            await SendTelemetryRequestAsync(
+                client,
+                ingestKey,
+                new TelemetryRequest(
+                    state.InstallationId,
+                    normalizedAppVersion,
+                    AppVersionChangedEventName,
+                    null),
+                cancellationToken).ConfigureAwait(false))
+        {
+            state = state with { LastReportedAppVersion = normalizedAppVersion };
+            SaveState(state);
+            DataSourceDebugLog.Debug("Telemetry", "Telemetry app_version_changed ping sent");
+        }
+
         if (!string.Equals(state.LastSentUtcDate, today, StringComparison.Ordinal) &&
             await SendTelemetryRequestAsync(
                 client,
                 ingestKey,
                 new TelemetryRequest(
                     state.InstallationId,
-                    NormalizeAppVersion(appVersion),
+                    normalizedAppVersion,
                     AppActiveEventName,
                     null),
                 cancellationToken).ConfigureAwait(false))
@@ -113,7 +137,7 @@ public sealed class TelemetryService
                 ingestKey,
                 new TelemetryRequest(
                     state.InstallationId,
-                    NormalizeAppVersion(appVersion),
+                    normalizedAppVersion,
                     DiagnosticSnapshotEventName,
                     diagnostics),
                 cancellationToken).ConfigureAwait(false))
@@ -220,7 +244,8 @@ public sealed class TelemetryService
     private sealed record TelemetryState(
         string? InstallationId,
         string? LastSentUtcDate,
-        string? LastDiagnosticsSentUtcDate = null);
+        string? LastDiagnosticsSentUtcDate = null,
+        string? LastReportedAppVersion = null);
 
     internal sealed record TelemetryDiagnostics(
         string OsVersion,

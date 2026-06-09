@@ -924,7 +924,7 @@
 
                     <Expander Header="Privacy" Foreground="#7CB9A9" Margin="0,0,0,4">
                         <StackPanel Margin="0,8,0,0">
-                            <TextBlock Text="VTSD sends one anonymous app_active ping per UTC day with installation ID and app version only."
+                            <TextBlock Text="VTSD sends one anonymous app_active ping per UTC day with installation ID and app version only. It also sends a ping when the app version changes."
                                        Foreground="#7CB9A9"
                                        TextWrapping="Wrap" />
                             <CheckBox Content="Share diagnostic telemetry"
