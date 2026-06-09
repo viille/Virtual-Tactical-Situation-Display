@@ -5,7 +5,7 @@ namespace TacticalDisplay.App.Services;
 public static class MapboxDefaults
 {
     public const string FallbackStyleUrl = "mapbox://styles/mapbox/outdoors-v12";
-    public const string FallbackAreasStyleUrl = "mapbox://styles/ottotuhkunen/cmo1iv0wh006n01sjgbnlef0q";
+    public const string FallbackAreasStyleUrl = "mapbox://styles/ottotuhkunen/cmq6e77v9001v01s76dap9va0";
 
     private const string AccessTokenMetadataKey = "DefaultMapboxAccessToken";
     private const string StyleUrlMetadataKey = "DefaultMapboxStyleUrl";
