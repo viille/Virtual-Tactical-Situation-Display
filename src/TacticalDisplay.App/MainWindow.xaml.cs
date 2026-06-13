@@ -25,6 +25,7 @@ public partial class MainWindow : Window
     private readonly MainViewModel _viewModel = new();
     private readonly UpdateCheckService _updateCheckService = new();
     private readonly TelemetryService _telemetryService = new();
+    private readonly GlobalHotkeyService _hotkeyService;
     private WebDisplayServer? _webDisplayServer;
     private int _updateCheckStarted;
     private bool _isClosing;
@@ -40,10 +41,12 @@ public partial class MainWindow : Window
         var displayVersion = GetDisplayVersion();
         Title = $"Tactical Situation Display | ver {displayVersion}";
         DataContext = _viewModel;
+        _hotkeyService = new GlobalHotkeyService(Dispatcher, ExecuteHotkeyAction);
         _viewModel.AppVersionText = $"ver {displayVersion}";
         ApplyWebDisplayServerState();
         RestoreWindowSize();
         _viewModel.PropertyChanged += OnViewModelPropertyChanged;
+        _viewModel.HotkeyBindingsChanged += OnHotkeyBindingsChanged;
         ScopeControl.TargetClicked += OnScopeTargetClicked;
         ScopeControl.LabelMoved += OnScopeLabelMoved;
         Topmost = _viewModel.IsAlwaysOnTop;
@@ -115,6 +118,7 @@ public partial class MainWindow : Window
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _hotkeyService.Start(_viewModel.Settings.Hotkeys);
         await InitializeKneepadWebViewsAsync();
         PromptForDiagnosticTelemetryConsentIfNeeded();
         _telemetryService.SendStartupTelemetryInBackground(
@@ -226,6 +230,25 @@ public partial class MainWindow : Window
         {
             _ = UpdateKneepadWebViewsAsync();
         }
+    }
+
+    private void ExecuteHotkeyAction(string action)
+    {
+        _viewModel.ExecuteHotkeyAction(action);
+    }
+
+    private void OnHotkeyBindingsChanged(object? sender, EventArgs e)
+    {
+        _hotkeyService.UpdateBindings(_viewModel.Settings.Hotkeys);
+    }
+
+    private void OnConfigureHotkeysClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new HotkeyConfigDialog(_viewModel, _hotkeyService)
+        {
+            Owner = this
+        };
+        dialog.ShowDialog();
     }
 
     private void PromptForDiagnosticTelemetryConsentIfNeeded()
@@ -666,6 +689,7 @@ public partial class MainWindow : Window
         {
             StoreWindowSize();
             DisposeAllKneepadWebViews();
+            _hotkeyService.Dispose();
             if (_webDisplayServer is not null)
             {
                 await _webDisplayServer.DisposeAsync();
@@ -704,6 +728,7 @@ public partial class MainWindow : Window
             CloseOwnedWindowsExcept(progressWindow);
             StoreWindowSize();
             DisposeAllKneepadWebViews();
+            _hotkeyService.Dispose();
             if (_webDisplayServer is not null)
             {
                 await _webDisplayServer.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(3));

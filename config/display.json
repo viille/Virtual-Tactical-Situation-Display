@@ -35,5 +35,23 @@
   "PollRateHz": 8,
   "RenderRateFps": 24,
   "StaleSeconds": 4,
-  "RemoveAfterSeconds": 12
+  "RemoveAfterSeconds": 12,
+  "Hotkeys": [
+    { "Action": "range-up", "Keyboard": "", "Gamepad": "DPadUp", "IsEnabled": true },
+    { "Action": "range-down", "Keyboard": "", "Gamepad": "DPadDown", "IsEnabled": true },
+    { "Action": "orientation", "Keyboard": "", "Gamepad": "Y", "IsEnabled": true },
+    { "Action": "map", "Keyboard": "", "Gamepad": "", "IsEnabled": true },
+    { "Action": "declutter", "Keyboard": "Ctrl+D", "Gamepad": "X", "IsEnabled": true },
+    { "Action": "trails", "Keyboard": "", "Gamepad": "", "IsEnabled": true },
+    { "Action": "bullseye", "Keyboard": "", "Gamepad": "", "IsEnabled": true },
+    { "Action": "intercept", "Keyboard": "", "Gamepad": "A", "IsEnabled": true },
+    { "Action": "labels", "Keyboard": "", "Gamepad": "B", "IsEnabled": true },
+    { "Action": "airspace", "Keyboard": "", "Gamepad": "", "IsEnabled": true },
+    { "Action": "area", "Keyboard": "", "Gamepad": "", "IsEnabled": true },
+    { "Action": "pin", "Keyboard": "Ctrl+T", "Gamepad": "", "IsEnabled": true },
+    { "Action": "settings", "Keyboard": "Ctrl+H", "Gamepad": "Start", "IsEnabled": true },
+    { "Action": "kneepad", "Keyboard": "Ctrl+K", "Gamepad": "Back", "IsEnabled": true },
+    { "Action": "kneepad-prev", "Keyboard": "Ctrl+PageUp", "Gamepad": "LeftShoulder", "IsEnabled": true },
+    { "Action": "kneepad-next", "Keyboard": "Ctrl+PageDown", "Gamepad": "RightShoulder", "IsEnabled": true }
+  ]
 }

@@ -155,26 +155,6 @@
             <Setter Property="Width" Value="60" />
         </Style>
     </Window.Resources>
-    <Window.InputBindings>
-        <KeyBinding Modifiers="Control"
-                    Key="H"
-                    Command="{Binding ToggleSettingsCommand}" />
-        <KeyBinding Modifiers="Control"
-                    Key="D"
-                    Command="{Binding ToggleDeclutterCommand}" />
-        <KeyBinding Modifiers="Control"
-                    Key="T"
-                    Command="{Binding ToggleAlwaysOnTopCommand}" />
-        <KeyBinding Modifiers="Control"
-                    Key="K"
-                    Command="{Binding ToggleKneepadCommand}" />
-        <KeyBinding Modifiers="Control"
-                    Key="PageDown"
-                    Command="{Binding NextKneepadPageCommand}" />
-        <KeyBinding Modifiers="Control"
-                    Key="PageUp"
-                    Command="{Binding PreviousKneepadPageCommand}" />
-    </Window.InputBindings>
     <Grid Margin="4">
         <Grid.ColumnDefinitions>
             <ColumnDefinition x:Name="ScopeColumn" Width="3*" />
@@ -915,6 +895,18 @@
                                     IsSnapToTickEnabled="True"
                                     Value="{Binding AirspaceOpacityPercent, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                     Margin="0,2,0,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="Hotkeys" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
+                        <StackPanel>
+                            <TextBlock Text="Global keyboard and XInput gamepad bindings."
+                                       Foreground="#7CB9A9"
+                                       TextWrapping="Wrap"
+                                       Margin="0,0,0,6" />
+                            <Button Content="Configure Hotkeys"
+                                    Click="OnConfigureHotkeysClick"
+                                    Margin="0,4,0,0" />
                         </StackPanel>
                     </GroupBox>
 

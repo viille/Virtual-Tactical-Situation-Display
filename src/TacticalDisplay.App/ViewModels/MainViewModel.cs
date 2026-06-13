@@ -107,6 +107,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ClearKneepadImageCommand = CreateUiCommand(nameof(ClearKneepadImageCommand), ClearKneepadImage);
         OpenDebugLogFolderCommand = CreateUiCommand(nameof(OpenDebugLogFolderCommand), OpenDebugLogFolder);
         ClearWebViewCookiesCommand = CreateUiCommand(nameof(ClearWebViewCookiesCommand), ClearWebViewCookies);
+        ResetHotkeysCommand = CreateUiCommand(nameof(ResetHotkeysCommand), ResetHotkeys);
+        HotkeyRows = new ObservableCollection<HotkeyBindingViewModel>(
+            HotkeyDefaults.Actions.Select(action => new HotkeyBindingViewModel(
+                action.DisplayName,
+                EnsureHotkeyBinding(action.Action),
+                NotifyHotkeyBindingsChanged)));
 
         _renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000.0 / Settings.RenderRateFps) };
         _renderTimer.Tick += (_, _) =>
@@ -129,6 +135,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     public TacticalDisplaySettings Settings { get; }
     public bool SuppressModalDialogs { get; set; }
+    public event EventHandler? HotkeyBindingsChanged;
 
     public TacticalPicture? Picture
     {
@@ -644,6 +651,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ClearKneepadImageCommand { get; }
     public RelayCommand OpenDebugLogFolderCommand { get; }
     public RelayCommand ClearWebViewCookiesCommand { get; }
+    public RelayCommand ResetHotkeysCommand { get; }
+    public ObservableCollection<HotkeyBindingViewModel> HotkeyRows { get; }
 
     public string HeaderText =>
         $"RANGE {Settings.SelectedRangeNm} NM";
@@ -688,6 +697,101 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             _airspaceDataService.Dispose();
             _runCts.Dispose();
         }
+    }
+
+    public bool ExecuteHotkeyAction(string action)
+    {
+        switch (action.Trim().ToLowerInvariant())
+        {
+            case "range-up":
+                IncreaseRangeCommand.Execute(null);
+                return true;
+            case "range-down":
+                DecreaseRangeCommand.Execute(null);
+                return true;
+            case "orientation":
+                ToggleOrientationCommand.Execute(null);
+                return true;
+            case "map":
+                ToggleMapCommand.Execute(null);
+                return true;
+            case "declutter":
+                ToggleDeclutterCommand.Execute(null);
+                return true;
+            case "trails":
+                ToggleTrailsCommand.Execute(null);
+                return true;
+            case "bullseye":
+                ToggleBullseyeCommand.Execute(null);
+                return true;
+            case "intercept":
+                ToggleInterceptCommand.Execute(null);
+                return true;
+            case "labels":
+                ToggleLabelsCommand.Execute(null);
+                return true;
+            case "airspace":
+            case "lara":
+                ToggleAirspaceCommand.Execute(null);
+                return true;
+            case "area":
+                ToggleControlledAirspaceCommand.Execute(null);
+                return true;
+            case "pin":
+                ToggleAlwaysOnTopCommand.Execute(null);
+                return true;
+            case "settings":
+                ToggleSettingsCommand.Execute(null);
+                return true;
+            case "kneepad":
+                ToggleKneepadCommand.Execute(null);
+                return true;
+            case "kneepad-prev":
+                PreviousKneepadPageCommand.Execute(null);
+                return true;
+            case "kneepad-next":
+                NextKneepadPageCommand.Execute(null);
+                return true;
+            default:
+                DataSourceDebugLog.Warn("Input", $"Unknown hotkey action | action={action}");
+                return false;
+        }
+    }
+
+    private HotkeyBinding EnsureHotkeyBinding(string action)
+    {
+        var binding = Settings.Hotkeys.FirstOrDefault(binding =>
+            string.Equals(binding.Action, action, StringComparison.OrdinalIgnoreCase));
+        if (binding is not null)
+        {
+            return binding;
+        }
+
+        var defaultBinding = HotkeyDefaults.CreateDefaultBindings().First(binding =>
+            string.Equals(binding.Action, action, StringComparison.OrdinalIgnoreCase));
+        Settings.Hotkeys.Add(defaultBinding);
+        return defaultBinding;
+    }
+
+    private void ResetHotkeys()
+    {
+        Settings.Hotkeys = HotkeyDefaults.CreateDefaultBindings();
+        HotkeyRows.Clear();
+        foreach (var action in HotkeyDefaults.Actions)
+        {
+            HotkeyRows.Add(new HotkeyBindingViewModel(
+                action.DisplayName,
+                EnsureHotkeyBinding(action.Action),
+                NotifyHotkeyBindingsChanged));
+        }
+
+        NotifyHotkeyBindingsChanged();
+    }
+
+    private void NotifyHotkeyBindingsChanged()
+    {
+        _configStore.SaveDisplaySettings(Settings);
+        HotkeyBindingsChanged?.Invoke(this, EventArgs.Empty);
     }
 
     private void ToggleOrientation()

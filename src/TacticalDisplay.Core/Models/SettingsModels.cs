@@ -51,7 +51,52 @@ public sealed class TacticalDisplaySettings
     public double RenderRateFps { get; set; } = 24;
     public double StaleSeconds { get; set; } = 4;
     public double RemoveAfterSeconds { get; set; } = 12;
+    public List<HotkeyBinding> Hotkeys { get; set; } = HotkeyDefaults.CreateDefaultBindings();
 }
+
+public sealed class HotkeyBinding
+{
+    public string Action { get; set; } = string.Empty;
+    public string Keyboard { get; set; } = string.Empty;
+    public string Gamepad { get; set; } = string.Empty;
+    public bool IsEnabled { get; set; } = true;
+}
+
+public static class HotkeyDefaults
+{
+    public static readonly IReadOnlyList<HotkeyActionDefinition> Actions =
+    [
+        new("range-up", "Range up", string.Empty, "DPadUp"),
+        new("range-down", "Range down", string.Empty, "DPadDown"),
+        new("orientation", "Toggle north/heading up", string.Empty, "Y"),
+        new("map", "Toggle map", string.Empty, string.Empty),
+        new("declutter", "Toggle declutter", "Ctrl+D", "X"),
+        new("trails", "Toggle trails", string.Empty, string.Empty),
+        new("bullseye", "Toggle bullseye", string.Empty, string.Empty),
+        new("intercept", "Toggle intercept", string.Empty, "A"),
+        new("labels", "Cycle labels", string.Empty, "B"),
+        new("airspace", "Toggle LARA airspace", string.Empty, string.Empty),
+        new("area", "Toggle controlled airspace", string.Empty, string.Empty),
+        new("pin", "Pin window on top", "Ctrl+T", string.Empty),
+        new("settings", "Show or hide settings", "Ctrl+H", "Start"),
+        new("kneepad", "Show or hide kneepad", "Ctrl+K", "Back"),
+        new("kneepad-prev", "Previous kneepad page", "Ctrl+PageUp", "LeftShoulder"),
+        new("kneepad-next", "Next kneepad page", "Ctrl+PageDown", "RightShoulder"),
+    ];
+
+    public static List<HotkeyBinding> CreateDefaultBindings() =>
+        Actions
+            .Select(static action => new HotkeyBinding
+            {
+                Action = action.Action,
+                Keyboard = action.Keyboard,
+                Gamepad = action.Gamepad,
+                IsEnabled = true
+            })
+            .ToList();
+}
+
+public sealed record HotkeyActionDefinition(string Action, string DisplayName, string Keyboard, string Gamepad);
 
 public sealed class KneepadPage
 {

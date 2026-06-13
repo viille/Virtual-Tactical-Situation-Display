@@ -167,6 +167,27 @@ public sealed class JsonConfigStore
         }
 
         settings.SelectedKneepadPageIndex = System.Math.Clamp(settings.SelectedKneepadPageIndex, 0, settings.KneepadPages.Count - 1);
+
+        settings.Hotkeys ??= [];
+        foreach (var defaultBinding in HotkeyDefaults.CreateDefaultBindings())
+        {
+            var existing = settings.Hotkeys.FirstOrDefault(binding =>
+                string.Equals(binding.Action, defaultBinding.Action, StringComparison.OrdinalIgnoreCase));
+            if (existing is null)
+            {
+                settings.Hotkeys.Add(defaultBinding);
+                continue;
+            }
+
+            existing.Action = defaultBinding.Action;
+            existing.Keyboard ??= string.Empty;
+            existing.Gamepad ??= string.Empty;
+        }
+
+        settings.Hotkeys = settings.Hotkeys
+            .Where(static binding => HotkeyDefaults.Actions.Any(action =>
+                string.Equals(action.Action, binding.Action, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
     }
 
     private static void ValidateDisplaySettings(TacticalDisplaySettings settings)
@@ -204,7 +225,8 @@ public sealed class JsonConfigStore
             string.IsNullOrWhiteSpace(settings.VatsimDataFeedUrl) ||
             string.IsNullOrWhiteSpace(settings.AirspaceFirCode) ||
             string.IsNullOrWhiteSpace(settings.AirspaceDataBaseUrl) ||
-            !settings.KneepadPages.All(static page => IsValidKneepadContentMode(page.ContentMode)))
+            !settings.KneepadPages.All(static page => IsValidKneepadContentMode(page.ContentMode)) ||
+            !settings.Hotkeys.All(static binding => !string.IsNullOrWhiteSpace(binding.Action)))
         {
             throw new InvalidDataException("Display settings contain invalid URL or FIR values.");
         }

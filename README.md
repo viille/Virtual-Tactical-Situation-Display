@@ -89,12 +89,12 @@ Settings panel controls:
 - `Area opacity`: adjust airspace layer opacity
 - `Save Settings`: keep current settings for the next launch
 
-Keyboard shortcuts:
-- `Ctrl+H`: show or hide the settings panel
-- `Ctrl+D`: toggle declutter
-- `Ctrl+T`: pin or unpin the window on top
-- `Ctrl+K`: show or hide the kneepad
-- `Ctrl+PageUp` / `Ctrl+PageDown`: previous or next kneepad page
+Hotkeys:
+- hotkeys work globally while the desktop app is running, even when the TSD window is not active
+- open `Settings` > `Hotkeys` > `Configure Hotkeys` to change bindings in a pop-up window
+- press `SET` on a row, then press the keyboard shortcut or XInput gamepad button to assign it
+- press `Esc` while assigning to cancel, or `Delete` / `Backspace` to clear the selected binding
+- default keyboard bindings include `Ctrl+H` for settings, `Ctrl+D` for declutter, `Ctrl+T` for pin, `Ctrl+K` for kneepad, and `Ctrl+PageUp` / `Ctrl+PageDown` for kneepad pages
 
 ## Kneepad
 
