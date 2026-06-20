@@ -1,10 +1,8 @@
-# Virtual Tactical Situation Display
+![VTSD logo](VTSD.png)
 
 Virtual Tactical Situation Display is a Windows application for a clear 2D tactical air picture around your own aircraft.
 
 **Simulator use only. Not for real-world aviation, air traffic control, or operational decision-making.**
-
-![VTSD logo](VTSD.png)
 
 ## Features
 
