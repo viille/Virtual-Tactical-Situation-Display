@@ -20,6 +20,12 @@ public sealed class TrafficRepository
         _ownship = snapshot.Ownship;
         foreach (var contact in snapshot.Contacts)
         {
+            if (!PassTrackedAltitude(contact.AltitudeFt, settings.MinTrackedAltitudeFt, settings.MaxTrackedAltitudeFt))
+            {
+                _contacts.Remove(contact.Id);
+                continue;
+            }
+
             if (!_contacts.TryGetValue(contact.Id, out var tracked))
             {
                 tracked = new TrackedContact(contact, Classify(contact, classification));
@@ -74,6 +80,10 @@ public sealed class TrafficRepository
     }
 
     public int Count => _contacts.Count;
+
+    private static bool PassTrackedAltitude(double altitudeFt, double minTrackedAltitudeFt, double maxTrackedAltitudeFt) =>
+        altitudeFt >= minTrackedAltitudeFt &&
+        altitudeFt <= maxTrackedAltitudeFt;
 
     private static TargetCategory Classify(TrafficContactState contact, ClassificationConfig classification)
     {

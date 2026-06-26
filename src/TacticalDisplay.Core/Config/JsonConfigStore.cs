@@ -212,6 +212,8 @@ public sealed class JsonConfigStore
             !IsPositive(settings.StaleSeconds) ||
             !IsPositive(settings.RemoveAfterSeconds) ||
             !IsFiniteNonNegative(settings.MinTrackedAltitudeFt) ||
+            !IsPositive(settings.MaxTrackedAltitudeFt) ||
+            settings.MaxTrackedAltitudeFt < settings.MinTrackedAltitudeFt ||
             !IsPositive(settings.WindowWidth) ||
             !IsPositive(settings.WindowHeight) ||
             !IsPositive(settings.TargetSymbolScale) ||

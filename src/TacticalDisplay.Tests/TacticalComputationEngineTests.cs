@@ -24,6 +24,23 @@ public sealed class TacticalComputationEngineTests
     }
 
     [Fact]
+    public void Compute_FiltersTargetsAboveMaximumTrackedAltitude()
+    {
+        var engine = new TacticalComputationEngine();
+        var settings = new TacticalDisplaySettings
+        {
+            MaxTrackedAltitudeFt = 80000
+        };
+        var ownship = new OwnshipState("OWN", 60.0, 24.0, 21000, 0, 300, DateTimeOffset.UtcNow);
+        var contact = new TrafficContactState("T1", null, 60.1, 24.0, 100700, 180, 250, DateTimeOffset.UtcNow);
+        var tracked = new TrafficRepository.TrackedContact(contact, TargetCategory.Unknown);
+
+        var computed = engine.Compute(null, ownship, tracked, settings);
+
+        Assert.Null(computed);
+    }
+
+    [Fact]
     public void Compute_UsesVelocityProjectionForClosure()
     {
         var engine = new TacticalComputationEngine();

@@ -12,7 +12,7 @@ public sealed class TacticalComputationEngine
         TacticalDisplaySettings settings)
     {
         var contact = tracked.Current;
-        if (!PassMinimumTrackedAltitude(contact.AltitudeFt, settings.MinTrackedAltitudeFt))
+        if (!PassTrackedAltitude(contact.AltitudeFt, settings.MinTrackedAltitudeFt, settings.MaxTrackedAltitudeFt))
         {
             return null;
         }
@@ -52,8 +52,9 @@ public sealed class TacticalComputationEngine
             contact.Timestamp);
     }
 
-    private static bool PassMinimumTrackedAltitude(double altitudeFt, double minTrackedAltitudeFt) =>
-        altitudeFt >= minTrackedAltitudeFt;
+    private static bool PassTrackedAltitude(double altitudeFt, double minTrackedAltitudeFt, double maxTrackedAltitudeFt) =>
+        altitudeFt >= minTrackedAltitudeFt &&
+        altitudeFt <= maxTrackedAltitudeFt;
 
     private static bool PassCategoryFilter(TargetCategory category, CategoryFilterMode mode) =>
         mode switch
