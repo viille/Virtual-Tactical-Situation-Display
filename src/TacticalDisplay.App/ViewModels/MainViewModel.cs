@@ -517,6 +517,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         {
             SetField(ref _selectedCloudKneepadPage, value);
             Raise(nameof(CloudKneepadTitle));
+            Raise(nameof(CloudKneepadContent));
             Raise(nameof(CloudKneepadPageText));
             Raise(nameof(CloudDashboardUri));
         }
@@ -528,6 +529,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string CloudKneepadTitle => SelectedCloudKneepadPage is { } page
         ? $"{page.CollectionName} - {page.Title}"
         : "Cloud Kneepad";
+    public string CloudKneepadContent => SelectedCloudKneepadPage?.ContentMarkdown ?? "No synced kneepad pages for the active collections.";
     public string CloudKneepadPageText => SelectedCloudKneepadPage is { } page
         ? $"Cloud {CloudKneepadPages.IndexOf(page) + 1}/{CloudKneepadPages.Count}"
         : "Cloud 0/0";

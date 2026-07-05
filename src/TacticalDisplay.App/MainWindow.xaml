@@ -774,7 +774,21 @@
                                                 BorderBrush="#355A56"
                                                 BorderThickness="1"
                                                 Background="#102028">
-                                            <wv2:WebView2 x:Name="CloudKneepadViewer" />
+                                            <Grid>
+                                                <TextBox Text="{Binding CloudKneepadContent}"
+                                                         AcceptsReturn="True"
+                                                         TextWrapping="Wrap"
+                                                         VerticalScrollBarVisibility="Auto"
+                                                         HorizontalScrollBarVisibility="Disabled"
+                                                         FontFamily="Consolas"
+                                                         FontSize="14"
+                                                         Foreground="#D9F2EC"
+                                                         Background="#102028"
+                                                         BorderThickness="0"
+                                                         Padding="16"
+                                                         IsReadOnly="True" />
+                                                <wv2:WebView2 x:Name="CloudKneepadViewer" Visibility="Collapsed" />
+                                            </Grid>
                                         </Border>
                                     </Grid>
                                 </Grid>
