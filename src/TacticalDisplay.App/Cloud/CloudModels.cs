@@ -11,7 +11,7 @@ public enum CollectionAccessSource { Public, Owner, Shared, Organization }
 
 public sealed class Collection : INotifyPropertyChanged
 {
-    private bool _showKneepadPages = true; private bool _showMapFeaturesOnRadar; private bool _cacheOffline = true;
+    private bool _showKneepadPages = true; private bool _showMapFeaturesOnRadar; private bool _cacheOffline = true; private bool _isActive;
     public string Slug { get; set; } = "";
     public string Name { get; set; } = "";
     public string? Description { get; set; }
@@ -26,6 +26,7 @@ public sealed class Collection : INotifyPropertyChanged
     [JsonIgnore] public bool ShowKneepadPages { get => _showKneepadPages; set => SetField(ref _showKneepadPages, value); }
     [JsonIgnore] public bool ShowMapFeaturesOnRadar { get => _showMapFeaturesOnRadar; set => SetField(ref _showMapFeaturesOnRadar, value); }
     [JsonIgnore] public bool CacheOffline { get => _cacheOffline; set => SetField(ref _cacheOffline, value); }
+    [JsonIgnore] public bool IsActive { get => _isActive; set => SetField(ref _isActive, value); }
     [JsonIgnore] public bool UpdateAvailable => !string.Equals(CurrentVersion, CachedVersion, StringComparison.Ordinal);
     [JsonIgnore] public string GroupName => AccessSource switch
     {

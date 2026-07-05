@@ -50,6 +50,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private bool _showBullseyePopup;
     private bool _interceptSelectionArmed;
     private string? _interceptTargetId;
+    private bool _hasActiveCloudCollections;
+    private Uri? _cloudDashboardUri;
+    private CloudKneepadPageViewModel? _selectedCloudKneepadPage;
     private readonly Dictionary<string, ManualTargetMetadata> _manualTargetMetadata;
     private bool _showSimConnectDebugOnFailure;
     private DateTimeOffset? _simConnectCheckingStartedAt;
@@ -98,6 +101,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ToggleKneepadCommand = CreateUiCommand(nameof(ToggleKneepadCommand), ToggleKneepad);
         PreviousKneepadPageCommand = CreateUiCommand(nameof(PreviousKneepadPageCommand), PreviousKneepadPage);
         NextKneepadPageCommand = CreateUiCommand(nameof(NextKneepadPageCommand), NextKneepadPage);
+        PreviousCloudKneepadPageCommand = CreateUiCommand(nameof(PreviousCloudKneepadPageCommand), PreviousCloudKneepadPage);
+        NextCloudKneepadPageCommand = CreateUiCommand(nameof(NextCloudKneepadPageCommand), NextCloudKneepadPage);
         AddKneepadPageCommand = CreateUiCommand(nameof(AddKneepadPageCommand), AddKneepadPage);
         DeleteKneepadPageCommand = CreateUiCommand(nameof(DeleteKneepadPageCommand), DeleteKneepadPage);
         SetKneepadMissionPageCommand = CreateUiCommand(nameof(SetKneepadMissionPageCommand), SetKneepadMissionPage);
@@ -434,6 +439,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         {
             SetField(ref _showKneepad, value);
             Raise(nameof(KneepadToggleText));
+            Raise(nameof(ShowCloudKneepad));
+            Raise(nameof(ShowLocalKneepad));
             RaiseKneepadState();
         }
     }
@@ -501,6 +508,30 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         "Image",
         "Url"
     ];
+    public ObservableCollection<CloudKneepadPageViewModel> CloudKneepadPages { get; } = [];
+
+    public CloudKneepadPageViewModel? SelectedCloudKneepadPage
+    {
+        get => _selectedCloudKneepadPage;
+        set
+        {
+            SetField(ref _selectedCloudKneepadPage, value);
+            Raise(nameof(CloudKneepadTitle));
+            Raise(nameof(CloudKneepadPageText));
+            Raise(nameof(CloudDashboardUri));
+        }
+    }
+
+    public bool HasActiveCloudKneepad => _hasActiveCloudCollections;
+    public bool ShowCloudKneepad => ShowKneepad && HasActiveCloudKneepad;
+    public bool ShowLocalKneepad => ShowKneepad && !HasActiveCloudKneepad;
+    public string CloudKneepadTitle => SelectedCloudKneepadPage is { } page
+        ? $"{page.CollectionName} - {page.Title}"
+        : "Cloud Kneepad";
+    public string CloudKneepadPageText => SelectedCloudKneepadPage is { } page
+        ? $"Cloud {CloudKneepadPages.IndexOf(page) + 1}/{CloudKneepadPages.Count}"
+        : "Cloud 0/0";
+    public Uri? CloudDashboardUri => SelectedCloudKneepadPage?.DashboardUri ?? _cloudDashboardUri;
 
     public string SelectedKneepadContentMode
     {
@@ -646,6 +677,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ToggleKneepadCommand { get; }
     public RelayCommand PreviousKneepadPageCommand { get; }
     public RelayCommand NextKneepadPageCommand { get; }
+    public RelayCommand PreviousCloudKneepadPageCommand { get; }
+    public RelayCommand NextCloudKneepadPageCommand { get; }
     public RelayCommand AddKneepadPageCommand { get; }
     public RelayCommand DeleteKneepadPageCommand { get; }
     public RelayCommand SetKneepadMissionPageCommand { get; }
@@ -953,6 +986,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private void PreviousKneepadPage()
     {
+        if (HasActiveCloudKneepad)
+        {
+            PreviousCloudKneepadPage();
+            return;
+        }
+
         EnsureKneepadPage();
         if (Settings.KneepadPages.Count <= 1)
         {
@@ -968,6 +1007,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private void NextKneepadPage()
     {
+        if (HasActiveCloudKneepad)
+        {
+            NextCloudKneepadPage();
+            return;
+        }
+
         EnsureKneepadPage();
         if (Settings.KneepadPages.Count <= 1)
         {
@@ -976,6 +1021,43 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
         Settings.SelectedKneepadPageIndex = (Settings.SelectedKneepadPageIndex + 1) % Settings.KneepadPages.Count;
         SyncLegacyKneepadSettings();
+        RaiseKneepadState();
+    }
+
+    private void PreviousCloudKneepadPage()
+    {
+        if (CloudKneepadPages.Count <= 1)
+        {
+            return;
+        }
+
+        var index = SelectedCloudKneepadPage is null ? 0 : CloudKneepadPages.IndexOf(SelectedCloudKneepadPage);
+        SelectedCloudKneepadPage = CloudKneepadPages[index <= 0 ? CloudKneepadPages.Count - 1 : index - 1];
+    }
+
+    private void NextCloudKneepadPage()
+    {
+        if (CloudKneepadPages.Count <= 1)
+        {
+            return;
+        }
+
+        var index = SelectedCloudKneepadPage is null ? -1 : CloudKneepadPages.IndexOf(SelectedCloudKneepadPage);
+        SelectedCloudKneepadPage = CloudKneepadPages[(index + 1) % CloudKneepadPages.Count];
+    }
+
+    public void SetCloudKneepadPages(IEnumerable<CloudKneepadPageViewModel> pages, bool hasActiveCloudCollections, Uri dashboardUri)
+    {
+        var selectedKey = SelectedCloudKneepadPage?.Key;
+        var materialized = pages.ToList();
+        _hasActiveCloudCollections = hasActiveCloudCollections;
+        _cloudDashboardUri = dashboardUri;
+        CloudKneepadPages.Clear();
+        foreach (var page in materialized) CloudKneepadPages.Add(page);
+        SelectedCloudKneepadPage = CloudKneepadPages.FirstOrDefault(x => x.Key == selectedKey) ?? CloudKneepadPages.FirstOrDefault();
+        Raise(nameof(HasActiveCloudKneepad));
+        Raise(nameof(ShowCloudKneepad));
+        Raise(nameof(ShowLocalKneepad));
         RaiseKneepadState();
     }
 
@@ -1077,6 +1159,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(ShowKneepadPageChooser));
         Raise(nameof(ShowKneepadPlaceholder));
         Raise(nameof(KneepadPlaceholderText));
+        Raise(nameof(ShowCloudKneepad));
+        Raise(nameof(ShowLocalKneepad));
     }
 
     private static string NormalizeKneepadContentMode(string? mode) =>
@@ -1847,3 +1931,12 @@ public sealed class AirspaceRegionOptionViewModel : ViewModelBase
         }
     }
 }
+
+public sealed record CloudKneepadPageViewModel(
+    string Key,
+    string CollectionSlug,
+    string CollectionName,
+    string Title,
+    string? Category,
+    string ContentMarkdown,
+    Uri DashboardUri);

@@ -102,6 +102,14 @@
                       AutoGenerateColumns="False" CanUserAddRows="False" CanUserResizeColumns="True">
                 <DataGrid.GroupStyle><GroupStyle><GroupStyle.HeaderTemplate><DataTemplate><TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#9AFAD7" Margin="4"/></DataTemplate></GroupStyle.HeaderTemplate></GroupStyle></DataGrid.GroupStyle>
                 <DataGrid.Columns>
+                    <DataGridTemplateColumn Header="Active" Width="SizeToHeader">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <CheckBox IsChecked="{Binding IsActive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          HorizontalAlignment="Center" />
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
                     <DataGridTextColumn Header="Collection" Binding="{Binding Name}" IsReadOnly="True" Width="2*" MinWidth="96"/>
                     <DataGridTextColumn Header="Version" Binding="{Binding CurrentVersion}" IsReadOnly="True" Width="*" MinWidth="72"/>
                     <DataGridCheckBoxColumn Header="Update" Binding="{Binding UpdateAvailable, Mode=OneWay}" IsReadOnly="True" Width="SizeToHeader"/>

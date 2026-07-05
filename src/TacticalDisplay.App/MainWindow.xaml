@@ -473,6 +473,16 @@
                                         <StackPanel DockPanel.Dock="Right"
                                                     Orientation="Horizontal"
                                                     Margin="0,0,8,0">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ShowLocalKneepad}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
                                             <Button Content="New"
                                                     Command="{Binding AddKneepadPageCommand}"
                                                     MinWidth="52"
@@ -484,6 +494,16 @@
                                                     Padding="8,2" />
                                         </StackPanel>
                                         <StackPanel Orientation="Horizontal">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ShowLocalKneepad}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
                                             <Button Content="&lt;"
                                                     Command="{Binding PreviousKneepadPageCommand}"
                                                     Width="30"
@@ -508,8 +528,58 @@
                                                        Foreground="#9AFAD7"
                                                        VerticalAlignment="Center" />
                                         </StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <StackPanel.Style>
+                                                <Style TargetType="StackPanel">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding ShowCloudKneepad}" Value="True">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </StackPanel.Style>
+                                            <Button Content="&lt;"
+                                                    Command="{Binding PreviousCloudKneepadPageCommand}"
+                                                    Width="30"
+                                                    Padding="0"
+                                                    Margin="0,0,6,0" />
+                                            <TextBlock Text="{Binding CloudKneepadPageText}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="18"
+                                                       FontWeight="Bold"
+                                                       Foreground="#9AFAD7"
+                                                       VerticalAlignment="Center"
+                                                       Margin="0,0,6,0" />
+                                            <Button Content="&gt;"
+                                                    Command="{Binding NextCloudKneepadPageCommand}"
+                                                    Width="30"
+                                                    Padding="0"
+                                                    Margin="0,0,12,0" />
+                                            <Button Content="Dashboard"
+                                                    Click="OnCloudKneepadDashboardClick"
+                                                    MinWidth="88"
+                                                    Padding="8,2"
+                                                    Margin="0,0,12,0" />
+                                            <TextBlock Text="{Binding CloudKneepadTitle}"
+                                                       FontFamily="Consolas"
+                                                       FontSize="18"
+                                                       FontWeight="Bold"
+                                                       Foreground="#9AFAD7"
+                                                       VerticalAlignment="Center" />
+                                        </StackPanel>
                                     </DockPanel>
                                     <Grid Grid.Row="1">
+                                        <Grid.Style>
+                                            <Style TargetType="Grid">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ShowLocalKneepad}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Grid.Style>
                                         <Border BorderBrush="#355A56"
                                                 BorderThickness="1"
                                                 Background="#60071015"
@@ -659,6 +729,53 @@
                                                 </Style>
                                             </TextBlock.Style>
                                         </TextBlock>
+                                    </Grid>
+                                    <Grid Grid.Row="1">
+                                        <Grid.Style>
+                                            <Style TargetType="Grid">
+                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding ShowCloudKneepad}" Value="True">
+                                                        <Setter Property="Visibility" Value="Visible" />
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </Grid.Style>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="220" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <ListBox ItemsSource="{Binding CloudKneepadPages}"
+                                                 SelectedItem="{Binding SelectedCloudKneepadPage, Mode=TwoWay}"
+                                                 Background="#60071015"
+                                                 BorderBrush="#355A56"
+                                                 Foreground="#D9F2EC"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                 Margin="0,0,10,0">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <StackPanel Margin="2,4">
+                                                        <TextBlock Text="{Binding Title}"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="12"
+                                                                   FontWeight="SemiBold"
+                                                                   TextWrapping="Wrap"
+                                                                   Foreground="#D9F2EC" />
+                                                        <TextBlock Text="{Binding CollectionName}"
+                                                                   FontFamily="Consolas"
+                                                                   FontSize="11"
+                                                                   TextWrapping="Wrap"
+                                                                   Foreground="#9AFAD7" />
+                                                    </StackPanel>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                        <Border Grid.Column="1"
+                                                BorderBrush="#355A56"
+                                                BorderThickness="1"
+                                                Background="#102028">
+                                            <wv2:WebView2 x:Name="CloudKneepadViewer" />
+                                        </Border>
                                     </Grid>
                                 </Grid>
                             </Border>

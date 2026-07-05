@@ -1,5 +1,7 @@
 using System.Windows;
 using System.ComponentModel;
+using System.Diagnostics;
+using System.Net;
 using System.Reflection;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -8,11 +10,13 @@ using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
+using Markdig;
 using TacticalDisplay.App.Controls;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.App.ViewModels;
 using TacticalDisplay.App.Storage;
 using CloudMapFeature = TacticalDisplay.App.Cloud.MapFeature;
+using CloudOptions = TacticalDisplay.App.Cloud.CloudOptions;
 using Microsoft.Extensions.DependencyInjection;
 using CloudStartupService = TacticalDisplay.App.Cloud.CloudStartupService;
 using TacticalDisplay.Core.Models;
@@ -25,6 +29,10 @@ public partial class MainWindow : Window
     private const double MinWidthWithoutSettings = 640;
     private const double ScopeSettingsGapWidth = 10;
     private const int MaxCachedKneepadWebViews = 6;
+    private static readonly MarkdownPipeline CloudKneepadMarkdownPipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .DisableHtml()
+        .Build();
 
     private readonly MainViewModel _viewModel = new();
     private readonly UpdateCheckService _updateCheckService = new();
@@ -236,6 +244,11 @@ public partial class MainWindow : Window
         {
             _ = UpdateKneepadWebViewsAsync();
         }
+        else if (e.PropertyName is nameof(MainViewModel.SelectedCloudKneepadPage) or
+                 nameof(MainViewModel.ShowCloudKneepad))
+        {
+            _ = UpdateCloudKneepadViewerAsync();
+        }
     }
 
     private void ExecuteHotkeyAction(string action)
@@ -277,6 +290,7 @@ public partial class MainWindow : Window
         {
             var services = TacticalDisplay.App.Cloud.CloudBootstrapper.Provider;
             var content = services.GetRequiredService<TacticalDisplay.App.Cloud.CloudContentStore>();
+            var options = services.GetRequiredService<CloudOptions>();
             if (!content.IsInitialized) await content.LoadAuthorizedCacheAsync();
             var collections = content.Collections;
             new CloudOverlaySettingsStore(System.IO.Path.Combine(AppDataPaths.ApplicationDataDirectory, "cloud-overlays.json")).Apply(collections);
@@ -285,10 +299,85 @@ public partial class MainWindow : Window
             foreach (var collection in collections.Where(item => item.ShowMapFeaturesOnRadar))
                 features.AddRange(content.GetMapFeatures(collection.Slug).Where(feature => enabledTypes.Contains(feature.FeatureType)));
             ScopeControl.CloudMapFeatures = features;
+            var activeCloudCollections = collections.Any(item => item.IsActive && item.ShowKneepadPages);
+            _viewModel.SetCloudKneepadPages(BuildCloudKneepadPages(collections, content, options.DashboardUri), activeCloudCollections, options.DashboardUri);
+            await UpdateCloudKneepadViewerAsync();
         }
         catch (Exception ex)
         {
             DataSourceDebugLog.Warn("Cloud", $"Cached Cloud overlays could not be loaded | {ex.Message}");
+        }
+    }
+
+    private static IEnumerable<CloudKneepadPageViewModel> BuildCloudKneepadPages(
+        IEnumerable<TacticalDisplay.App.Cloud.Collection> collections,
+        TacticalDisplay.App.Cloud.CloudContentStore content,
+        Uri dashboardUri)
+    {
+        foreach (var collection in collections
+                     .Where(item => item.IsActive && item.ShowKneepadPages)
+                     .OrderBy(item => item.AccessSource)
+                     .ThenBy(item => item.Name))
+        {
+            var collectionDashboardUri = new Uri(dashboardUri, $"collections/{Uri.EscapeDataString(collection.Slug)}");
+            foreach (var page in content.GetPages(collection.Slug)
+                         .OrderBy(item => item.Category)
+                         .ThenBy(item => item.OrderIndex)
+                         .ThenBy(item => item.Title))
+            {
+                var title = string.IsNullOrWhiteSpace(page.Title) ? page.Slug : page.Title;
+                yield return new CloudKneepadPageViewModel(
+                    $"{collection.Slug}:{page.Slug}",
+                    collection.Slug,
+                    collection.Name,
+                    title,
+                    page.Category,
+                    page.ContentMarkdown,
+                    collectionDashboardUri);
+            }
+        }
+    }
+
+    private async Task UpdateCloudKneepadViewerAsync()
+    {
+        var page = _viewModel.SelectedCloudKneepadPage;
+        if (!_viewModel.ShowCloudKneepad)
+        {
+            return;
+        }
+
+        try
+        {
+            if (_kneepadWebViewEnvironment is null)
+            {
+                _kneepadWebViewEnvironment = await CoreWebView2Environment.CreateAsync(
+                    userDataFolder: AppDataPaths.WebViewUserDataDirectory);
+            }
+
+            await CloudKneepadViewer.EnsureCoreWebView2Async(_kneepadWebViewEnvironment);
+            if (page is null)
+            {
+                CloudKneepadViewer.NavigateToString(
+                    "<!doctype html><meta charset='utf-8'>" +
+                    "<style>body{font:16px Segoe UI,sans-serif;background:#102028;color:#d9f2ec;padding:24px;margin:0}" +
+                    "h1{font-size:24px;margin:0 0 12px;color:#9afad7}p{color:#8ea5ad}</style>" +
+                    "<h1>Cloud Kneepad</h1><p>No synced kneepad pages for the active collections.</p>");
+                return;
+            }
+
+            var body = Markdown.ToHtml(page.ContentMarkdown, CloudKneepadMarkdownPipeline);
+            var title = WebUtility.HtmlEncode(page.Title);
+            var collection = WebUtility.HtmlEncode(page.CollectionName);
+            CloudKneepadViewer.NavigateToString(
+                "<!doctype html><meta charset='utf-8'>" +
+                "<style>body{font:16px Segoe UI,sans-serif;background:#102028;color:#d9f2ec;padding:24px;margin:0}" +
+                "h1{font-size:24px;margin:0 0 4px;color:#9afad7}h2{font-size:13px;margin:0 0 18px;color:#8ea5ad;font-weight:600}" +
+                "table{border-collapse:collapse}td,th{border:1px solid #617480;padding:6px}code,pre{background:#071015}a{color:#9afad7}</style>" +
+                $"<h1>{title}</h1><h2>{collection}</h2>{body}");
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Warn("Cloud", $"Cloud kneepad page could not be rendered | {ex.Message}");
         }
     }
 
@@ -351,11 +440,22 @@ public partial class MainWindow : Window
         dialog.ShowDialog();
     }
 
+    private void OnCloudKneepadDashboardClick(object sender, RoutedEventArgs e)
+    {
+        if (_viewModel.CloudDashboardUri is null)
+        {
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo { FileName = _viewModel.CloudDashboardUri.AbsoluteUri, UseShellExecute = true });
+    }
+
     private async Task InitializeKneepadWebViewsAsync()
     {
         if (_kneepadWebViewEnvironment is not null || _kneepadWebViewsInitializing)
         {
             await UpdateKneepadWebViewsAsync();
+            await UpdateCloudKneepadViewerAsync();
             return;
         }
 
@@ -365,6 +465,7 @@ public partial class MainWindow : Window
             _kneepadWebViewEnvironment = await CoreWebView2Environment.CreateAsync(
                 userDataFolder: AppDataPaths.WebViewUserDataDirectory);
             await UpdateKneepadWebViewsAsync();
+            await UpdateCloudKneepadViewerAsync();
         }
         catch (Exception ex)
         {
