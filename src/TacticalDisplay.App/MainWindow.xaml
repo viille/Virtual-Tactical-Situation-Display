@@ -794,7 +794,25 @@
                                                         </Style>
                                                     </TextBlock.Style>
                                                 </TextBlock>
-                                                <wv2:WebView2 x:Name="CloudKneepadViewer" />
+                                                <RichTextBox x:Name="CloudKneepadViewer"
+                                                             Background="#102028"
+                                                             BorderThickness="0"
+                                                             Foreground="#D9F2EC"
+                                                             IsReadOnly="True"
+                                                             IsDocumentEnabled="True"
+                                                             Padding="20"
+                                                             VerticalScrollBarVisibility="Auto">
+                                                    <RichTextBox.Style>
+                                                        <Style TargetType="RichTextBox">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding SelectedCloudKneepadPage}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </RichTextBox.Style>
+                                                </RichTextBox>
                                             </Grid>
                                         </Border>
                                     </Grid>

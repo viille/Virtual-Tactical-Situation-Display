@@ -5,12 +5,15 @@ using System.Net;
 using System.Reflection;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using Markdig;
+using Markdig.Syntax;
+using Markdig.Syntax.Inlines;
 using TacticalDisplay.App.Controls;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.App.ViewModels;
@@ -361,44 +364,182 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task UpdateCloudKneepadViewerAsync()
+    private Task UpdateCloudKneepadViewerAsync()
     {
         var page = _viewModel.SelectedCloudKneepadPage;
         if (!_viewModel.ShowCloudKneepad)
         {
-            return;
+            return Task.CompletedTask;
         }
 
         try
         {
-            if (_kneepadWebViewEnvironment is null)
-            {
-                _kneepadWebViewEnvironment = await CoreWebView2Environment.CreateAsync(
-                    userDataFolder: AppDataPaths.WebViewUserDataDirectory);
-            }
-
-            await CloudKneepadViewer.EnsureCoreWebView2Async(_kneepadWebViewEnvironment);
             if (page is null)
             {
-                CloudKneepadViewer.Visibility = Visibility.Collapsed;
-                return;
+                CloudKneepadViewer.Document = CreateCloudKneepadDocument(null);
+                return Task.CompletedTask;
             }
 
-            CloudKneepadViewer.Visibility = Visibility.Visible;
-            var body = Markdown.ToHtml(page.ContentMarkdown, CloudKneepadMarkdownPipeline);
-            var title = WebUtility.HtmlEncode(page.Title);
-            var collection = WebUtility.HtmlEncode(page.CollectionName);
-            CloudKneepadViewer.NavigateToString(
-                "<!doctype html><meta charset='utf-8'>" +
-                "<style>body{font:16px Segoe UI,sans-serif;background:#102028;color:#d9f2ec;padding:24px;margin:0}" +
-                "h1{font-size:24px;margin:0 0 4px;color:#9afad7}h2{font-size:13px;margin:0 0 18px;color:#8ea5ad;font-weight:600}" +
-                "table{border-collapse:collapse}td,th{border:1px solid #617480;padding:6px}code,pre{background:#071015}a{color:#9afad7}</style>" +
-                $"<h1>{title}</h1><h2>{collection}</h2>{body}");
+            CloudKneepadViewer.Document = CreateCloudKneepadDocument(page);
         }
         catch (Exception ex)
         {
             DataSourceDebugLog.Warn("Cloud", $"Cloud kneepad page could not be rendered | {ex.Message}");
+            CloudKneepadViewer.Document = CreateCloudKneepadDocument(new CloudKneepadPageViewModel(
+                "render-error", string.Empty, "VTSD Cloud", "Render error", null,
+                $"Cloud kneepad page could not be rendered.\n\n{ex.Message}", _viewModel.CloudDashboardUri ?? new Uri("https://www.vtsd.app/dashboard/")));
         }
+
+        return Task.CompletedTask;
+    }
+
+    private static FlowDocument CreateCloudKneepadDocument(CloudKneepadPageViewModel? page)
+    {
+        var document = new FlowDocument
+        {
+            Background = new SolidColorBrush(Color.FromRgb(0x10, 0x20, 0x28)),
+            Foreground = new SolidColorBrush(Color.FromRgb(0xD9, 0xF2, 0xEC)),
+            FontFamily = new FontFamily("Segoe UI"),
+            FontSize = 16,
+            PagePadding = new Thickness(0),
+            ColumnWidth = double.PositiveInfinity
+        };
+
+        if (page is null)
+        {
+            document.Blocks.Add(new Paragraph(new Run("No synced kneepad pages for the active collections."))
+            {
+                Foreground = new SolidColorBrush(Color.FromRgb(0x8E, 0xA5, 0xAD))
+            });
+            return document;
+        }
+
+        document.Blocks.Add(new Paragraph(new Run(page.Title))
+        {
+            FontSize = 24,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0xFA, 0xD7)),
+            Margin = new Thickness(0, 0, 0, 2)
+        });
+        document.Blocks.Add(new Paragraph(new Run(page.CollectionName))
+        {
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = new SolidColorBrush(Color.FromRgb(0x8E, 0xA5, 0xAD)),
+            Margin = new Thickness(0, 0, 0, 16)
+        });
+
+        var markdown = Markdown.Parse(page.ContentMarkdown ?? string.Empty);
+        foreach (var block in markdown)
+        {
+            AddMarkdownBlock(document.Blocks, block);
+        }
+
+        return document;
+    }
+
+    private static void AddMarkdownBlock(BlockCollection blocks, Markdig.Syntax.Block block)
+    {
+        switch (block)
+        {
+            case HeadingBlock heading:
+                blocks.Add(CreateParagraph(heading.Inline, fontSize: heading.Level <= 1 ? 22 : heading.Level == 2 ? 19 : 17,
+                    fontWeight: FontWeights.SemiBold, foreground: Color.FromRgb(0x9A, 0xFA, 0xD7)));
+                break;
+            case ParagraphBlock paragraph:
+                blocks.Add(CreateParagraph(paragraph.Inline));
+                break;
+            case ListBlock list:
+                blocks.Add(CreateList(list));
+                break;
+            case FencedCodeBlock fenced:
+                blocks.Add(CreateCodeBlock(GetLeafBlockText(fenced)));
+                break;
+            case CodeBlock code:
+                blocks.Add(CreateCodeBlock(GetLeafBlockText(code)));
+                break;
+            case QuoteBlock quote:
+                var section = new Section { Margin = new Thickness(12, 4, 0, 8), BorderBrush = new SolidColorBrush(Color.FromRgb(0x35, 0x5A, 0x56)), BorderThickness = new Thickness(3, 0, 0, 0), Padding = new Thickness(10, 0, 0, 0) };
+                foreach (var child in quote) AddMarkdownBlock(section.Blocks, child);
+                blocks.Add(section);
+                break;
+            case ThematicBreakBlock:
+                blocks.Add(new Paragraph(new Run(new string('-', 24))) { Foreground = new SolidColorBrush(Color.FromRgb(0x61, 0x74, 0x80)) });
+                break;
+        }
+    }
+
+    private static List CreateList(ListBlock listBlock)
+    {
+        var list = new List { MarkerStyle = listBlock.IsOrdered ? TextMarkerStyle.Decimal : TextMarkerStyle.Disc, Margin = new Thickness(18, 0, 0, 8) };
+        foreach (var item in listBlock.OfType<ListItemBlock>())
+        {
+            var listItem = new ListItem();
+            foreach (var child in item) AddMarkdownBlock(listItem.Blocks, child);
+            list.ListItems.Add(listItem);
+        }
+
+        return list;
+    }
+
+    private static Paragraph CreateParagraph(ContainerInline? inline, double fontSize = 16, FontWeight? fontWeight = null, Color? foreground = null)
+    {
+        var paragraph = new Paragraph { Margin = new Thickness(0, 0, 0, 10), FontSize = fontSize };
+        if (fontWeight.HasValue) paragraph.FontWeight = fontWeight.Value;
+        if (foreground.HasValue) paragraph.Foreground = new SolidColorBrush(foreground.Value);
+        AddMarkdownInlines(paragraph.Inlines, inline);
+        return paragraph;
+    }
+
+    private static Paragraph CreateCodeBlock(string text) => new(new Run(text.TrimEnd()))
+    {
+        FontFamily = new FontFamily("Consolas"),
+        FontSize = 14,
+        Background = new SolidColorBrush(Color.FromRgb(0x07, 0x10, 0x15)),
+        BorderBrush = new SolidColorBrush(Color.FromRgb(0x35, 0x5A, 0x56)),
+        BorderThickness = new Thickness(1),
+        Padding = new Thickness(8),
+        Margin = new Thickness(0, 0, 0, 10)
+    };
+
+    private static void AddMarkdownInlines(InlineCollection target, ContainerInline? inline)
+    {
+        if (inline is null) return;
+        foreach (var child in inline)
+        {
+            switch (child)
+            {
+                case LiteralInline literal:
+                    target.Add(new Run(literal.Content.ToString()));
+                    break;
+                case LineBreakInline:
+                    target.Add(new LineBreak());
+                    break;
+                case CodeInline code:
+                    target.Add(new Run(code.Content) { FontFamily = new FontFamily("Consolas"), Background = new SolidColorBrush(Color.FromRgb(0x07, 0x10, 0x15)) });
+                    break;
+                case EmphasisInline emphasis:
+                    Span span = emphasis.DelimiterCount >= 2 ? new Bold() : new Italic();
+                    AddMarkdownInlines(span.Inlines, emphasis);
+                    target.Add(span);
+                    break;
+                case LinkInline link:
+                    var linkSpan = new Span { Foreground = new SolidColorBrush(Color.FromRgb(0x9A, 0xFA, 0xD7)) };
+                    AddMarkdownInlines(linkSpan.Inlines, link);
+                    target.Add(linkSpan);
+                    break;
+                case ContainerInline container:
+                    AddMarkdownInlines(target, container);
+                    break;
+            }
+        }
+    }
+
+    private static string GetLeafBlockText(LeafBlock block)
+    {
+        var lines = block.Lines.Lines;
+        if (lines is null) return string.Empty;
+        return string.Join(Environment.NewLine, lines.Select(line => line.Slice.ToString()));
     }
 
     private async Task RefreshCloudOverlaysAfterStartupAsync()
