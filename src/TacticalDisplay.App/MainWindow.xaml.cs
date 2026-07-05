@@ -238,6 +238,10 @@ public partial class MainWindow : Window
         {
             ApplyWebDisplayServerState();
         }
+        else if (e.PropertyName == nameof(MainViewModel.ShowKneepad) && _viewModel.ShowKneepad)
+        {
+            _ = LoadCloudOverlaysAsync();
+        }
         else if (e.PropertyName is nameof(MainViewModel.KneepadUrl) or
                  nameof(MainViewModel.ShowKneepadUrl) or
                  nameof(MainViewModel.SelectedKneepadContentMode))
@@ -290,10 +294,12 @@ public partial class MainWindow : Window
         {
             var services = TacticalDisplay.App.Cloud.CloudBootstrapper.Provider;
             var content = services.GetRequiredService<TacticalDisplay.App.Cloud.CloudContentStore>();
+            var collectionsService = services.GetRequiredService<TacticalDisplay.App.Cloud.CollectionService>();
             var options = services.GetRequiredService<CloudOptions>();
             if (!content.IsInitialized) await content.LoadAuthorizedCacheAsync();
             var collections = content.Collections;
             new CloudOverlaySettingsStore(System.IO.Path.Combine(AppDataPaths.ApplicationDataDirectory, "cloud-overlays.json")).Apply(collections);
+            await SyncActiveCloudKneepadCollectionsAsync(collections, collectionsService);
             var enabledTypes = new CloudPreferencesStore(System.IO.Path.Combine(AppDataPaths.ApplicationDataDirectory, "cloud-settings.json")).Load().EnabledFeatureTypes;
             var features = new List<CloudMapFeature>();
             foreach (var collection in collections.Where(item => item.ShowMapFeaturesOnRadar))
@@ -306,6 +312,23 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             DataSourceDebugLog.Warn("Cloud", $"Cached Cloud overlays could not be loaded | {ex.Message}");
+        }
+    }
+
+    private static async Task SyncActiveCloudKneepadCollectionsAsync(
+        IEnumerable<TacticalDisplay.App.Cloud.Collection> collections,
+        TacticalDisplay.App.Cloud.CollectionService collectionsService)
+    {
+        foreach (var collection in collections.Where(item => item.IsActive && item.ShowKneepadPages))
+        {
+            try
+            {
+                await collectionsService.SyncAsync(collection, CancellationToken.None);
+            }
+            catch (TacticalDisplay.App.Cloud.CloudApiException ex)
+            {
+                DataSourceDebugLog.Warn("Cloud", $"Active Cloud kneepad collection could not be refreshed; using cached content if available | collection={collection.Slug} error={ex.Message}");
+            }
         }
     }
 
