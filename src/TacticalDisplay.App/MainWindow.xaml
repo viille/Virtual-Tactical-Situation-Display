@@ -775,19 +775,26 @@
                                                 BorderThickness="1"
                                                 Background="#102028">
                                             <Grid>
-                                                <TextBox Text="{Binding CloudKneepadContent, Mode=OneWay}"
-                                                         AcceptsReturn="True"
-                                                         TextWrapping="Wrap"
-                                                         VerticalScrollBarVisibility="Auto"
-                                                         HorizontalScrollBarVisibility="Disabled"
-                                                         FontFamily="Consolas"
-                                                         FontSize="14"
-                                                         Foreground="#D9F2EC"
-                                                         Background="#102028"
-                                                         BorderThickness="0"
-                                                         Padding="16"
-                                                         IsReadOnly="True" />
-                                                <wv2:WebView2 x:Name="CloudKneepadViewer" Visibility="Collapsed" />
+                                                <TextBlock Text="{Binding CloudKneepadContent, Mode=OneWay}"
+                                                           FontFamily="Consolas"
+                                                           FontSize="14"
+                                                           Foreground="#8EA5AD"
+                                                           TextWrapping="Wrap"
+                                                           Margin="16"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Center">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding SelectedCloudKneepadPage}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                                <wv2:WebView2 x:Name="CloudKneepadViewer" />
                                             </Grid>
                                         </Border>
                                     </Grid>

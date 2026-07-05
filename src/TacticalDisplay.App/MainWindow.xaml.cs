@@ -380,14 +380,11 @@ public partial class MainWindow : Window
             await CloudKneepadViewer.EnsureCoreWebView2Async(_kneepadWebViewEnvironment);
             if (page is null)
             {
-                CloudKneepadViewer.NavigateToString(
-                    "<!doctype html><meta charset='utf-8'>" +
-                    "<style>body{font:16px Segoe UI,sans-serif;background:#102028;color:#d9f2ec;padding:24px;margin:0}" +
-                    "h1{font-size:24px;margin:0 0 12px;color:#9afad7}p{color:#8ea5ad}</style>" +
-                    "<h1>Cloud Kneepad</h1><p>No synced kneepad pages for the active collections.</p>");
+                CloudKneepadViewer.Visibility = Visibility.Collapsed;
                 return;
             }
 
+            CloudKneepadViewer.Visibility = Visibility.Visible;
             var body = Markdown.ToHtml(page.ContentMarkdown, CloudKneepadMarkdownPipeline);
             var title = WebUtility.HtmlEncode(page.Title);
             var collection = WebUtility.HtmlEncode(page.CollectionName);
