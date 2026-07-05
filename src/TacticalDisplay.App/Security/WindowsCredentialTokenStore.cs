@@ -34,8 +34,12 @@ public sealed class WindowsCredentialTokenStore : ISecureTokenStore
         {
             var credential = new Credential
             {
-                Type = CredTypeGeneric, TargetName = TargetName, CredentialBlobSize = (uint)(token.Length * 2),
-                CredentialBlob = blob, Persist = CredPersistLocalMachine, UserName = "VTSD Cloud"
+                Type = CredTypeGeneric,
+                TargetName = TargetName,
+                CredentialBlobSize = (uint)(token.Length * 2),
+                CredentialBlob = blob,
+                Persist = CredPersistLocalMachine,
+                UserName = "VTSD Cloud"
             };
             if (!CredWrite(ref credential, 0)) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not save the VTSD Cloud credential.");
             return Task.CompletedTask;

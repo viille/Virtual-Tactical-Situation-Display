@@ -28,7 +28,8 @@ public sealed class Collection : INotifyPropertyChanged
     [JsonIgnore] public bool CacheOffline { get => _cacheOffline; set => SetField(ref _cacheOffline, value); }
     [JsonIgnore] public bool IsActive { get => _isActive; set => SetField(ref _isActive, value); }
     [JsonIgnore] public bool UpdateAvailable => !string.Equals(CurrentVersion, CachedVersion, StringComparison.Ordinal);
-    [JsonIgnore] public string GroupName => AccessSource switch
+    [JsonIgnore]
+    public string GroupName => AccessSource switch
     {
         CollectionAccessSource.Owner => "My Collections",
         CollectionAccessSource.Shared => "Shared with me",

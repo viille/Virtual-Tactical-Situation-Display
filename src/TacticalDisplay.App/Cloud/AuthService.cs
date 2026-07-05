@@ -39,7 +39,8 @@ public sealed class AuthService
 
     public async Task SignOutAsync(CancellationToken ct)
     {
-        try { await _client.LogoutAsync(ct).ConfigureAwait(false); } catch (CloudApiException ex) when (ex.IsNetworkError || ex.IsUnauthorized) { }
+        try { await _client.LogoutAsync(ct).ConfigureAwait(false); }
+        catch (CloudApiException ex) when (ex.IsNetworkError || ex.IsUnauthorized) { }
         finally { await _tokens.ClearSessionTokenAsync().ConfigureAwait(false); Set(new(AuthStatus.SignedOut)); }
     }
     private void Set(AuthState state) { State = state; StateChanged?.Invoke(this, state); }

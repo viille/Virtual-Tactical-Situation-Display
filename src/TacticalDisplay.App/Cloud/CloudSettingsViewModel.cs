@@ -28,8 +28,10 @@ public sealed class CloudSettingsViewModel : ViewModelBase
     public string AccountText => AuthState.Status switch
     {
         AuthStatus.SignedIn => $"Signed in with VATSIM\n{AuthState.User?.DisplayName} · CID {AuthState.User?.VatsimCid}",
-        AuthStatus.SigningIn => "Waiting for browser login...", AuthStatus.SessionExpired => "Session expired. Sign in again.",
-        AuthStatus.OfflineUnknown => "Account could not be verified while offline.", _ => "Not signed in"
+        AuthStatus.SigningIn => "Waiting for browser login...",
+        AuthStatus.SessionExpired => "Session expired. Sign in again.",
+        AuthStatus.OfflineUnknown => "Account could not be verified while offline.",
+        _ => "Not signed in"
     };
     public string StatusText { get => _statusText; private set => SetField(ref _statusText, value); }
     public string CloudStatus { get => _cloudStatus; private set => SetField(ref _cloudStatus, value); }
@@ -136,8 +138,11 @@ public sealed class CloudSettingsViewModel : ViewModelBase
     }
     private static string FriendlyMessage(CloudApiException ex) => ex.ErrorCode switch
     {
-        "SHARE_CODE_INVALID" => "Invalid or expired share code.", "UNAUTHORIZED" => "Sign in with VATSIM first.",
-        "FORBIDDEN" => "You do not have permission to redeem this code.", "RATE_LIMITED" => "Too many attempts. Try again later.", _ => ex.Message
+        "SHARE_CODE_INVALID" => "Invalid or expired share code.",
+        "UNAUTHORIZED" => "Sign in with VATSIM first.",
+        "FORBIDDEN" => "You do not have permission to redeem this code.",
+        "RATE_LIMITED" => "Too many attempts. Try again later.",
+        _ => ex.Message
     };
     private void ApplyAuth(AuthState state)
     {

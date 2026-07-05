@@ -7,7 +7,8 @@ public sealed class CollectionService
     private readonly VtsdCloudClient _client; private readonly KneepadSyncService _kneepads; private readonly MapFeatureSyncService _mapFeatures;
     private readonly ILocalCollectionCache _cache; private readonly CloudContentStore _content; private readonly ICloudTelemetryService _telemetry;
     public CollectionService(VtsdCloudClient client, KneepadSyncService kneepads, MapFeatureSyncService mapFeatures,
-        ILocalCollectionCache cache, CloudContentStore content, ICloudTelemetryService telemetry) { _client = client; _kneepads = kneepads; _mapFeatures = mapFeatures; _cache = cache; _content = content; _telemetry = telemetry; }
+        ILocalCollectionCache cache, CloudContentStore content, ICloudTelemetryService telemetry)
+    { _client = client; _kneepads = kneepads; _mapFeatures = mapFeatures; _cache = cache; _content = content; _telemetry = telemetry; }
     public Task<IReadOnlyList<Collection>> LoadCachedAsync() => _cache.GetCachedCollectionsAsync();
     public async Task<IReadOnlyList<Collection>> FetchAsync(CancellationToken ct)
     {
