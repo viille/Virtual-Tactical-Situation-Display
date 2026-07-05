@@ -775,7 +775,7 @@
                                                 BorderThickness="1"
                                                 Background="#102028">
                                             <Grid>
-                                                <TextBox Text="{Binding CloudKneepadContent}"
+                                                <TextBox Text="{Binding CloudKneepadContent, Mode=OneWay}"
                                                          AcceptsReturn="True"
                                                          TextWrapping="Wrap"
                                                          VerticalScrollBarVisibility="Auto"
