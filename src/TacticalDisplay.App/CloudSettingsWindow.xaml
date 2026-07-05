@@ -1,0 +1,131 @@
+<Window x:Class="TacticalDisplay.App.CloudSettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="VTSD Cloud" Width="860" Height="680" MinWidth="700" MinHeight="520"
+        WindowStartupLocation="CenterOwner" Background="#102028" Foreground="#D9F2EC">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BooleanToVisibility" />
+        <SolidColorBrush x:Key="CloudPanelBrush" Color="#172A33" />
+        <SolidColorBrush x:Key="CloudPanelAltBrush" Color="#13262E" />
+        <SolidColorBrush x:Key="CloudTextBrush" Color="#D9F2EC" />
+        <SolidColorBrush x:Key="CloudMutedTextBrush" Color="#A9C5BE" />
+        <SolidColorBrush x:Key="CloudAccentBrush" Color="#9AFAD7" />
+        <SolidColorBrush x:Key="CloudBorderBrush" Color="#6F8792" />
+        <Style TargetType="Button">
+            <Setter Property="Foreground" Value="#071317" />
+            <Setter Property="Background" Value="#E4F3EF" />
+            <Setter Property="BorderBrush" Value="#A8C7C0" />
+            <Setter Property="MinHeight" Value="28" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="#657674" />
+                    <Setter Property="Background" Value="#C5D1CE" />
+                    <Setter Property="BorderBrush" Value="#7F918D" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource CloudTextBrush}" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+            <Style.Triggers>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Foreground" Value="{StaticResource CloudMutedTextBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="DataGrid">
+            <Setter Property="Background" Value="{StaticResource CloudPanelBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource CloudTextBrush}" />
+            <Setter Property="BorderBrush" Value="{StaticResource CloudBorderBrush}" />
+            <Setter Property="RowBackground" Value="{StaticResource CloudPanelBrush}" />
+            <Setter Property="AlternatingRowBackground" Value="{StaticResource CloudPanelAltBrush}" />
+            <Setter Property="HorizontalGridLinesBrush" Value="#355A56" />
+            <Setter Property="VerticalGridLinesBrush" Value="#355A56" />
+            <Setter Property="GridLinesVisibility" Value="Horizontal" />
+            <Setter Property="HeadersVisibility" Value="Column" />
+        </Style>
+        <Style TargetType="DataGridColumnHeader">
+            <Setter Property="Background" Value="#DCEFED" />
+            <Setter Property="Foreground" Value="#071317" />
+            <Setter Property="BorderBrush" Value="#9EBAB5" />
+            <Setter Property="Padding" Value="6,4" />
+            <Setter Property="FontWeight" Value="SemiBold" />
+        </Style>
+        <Style TargetType="DataGridRow">
+            <Setter Property="Background" Value="{StaticResource CloudPanelBrush}" />
+            <Setter Property="Foreground" Value="{StaticResource CloudTextBrush}" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#28534B" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <Style TargetType="DataGridCell">
+            <Setter Property="Background" Value="Transparent" />
+            <Setter Property="Foreground" Value="{StaticResource CloudTextBrush}" />
+            <Setter Property="BorderBrush" Value="#355A56" />
+            <Setter Property="Padding" Value="6,2" />
+            <Style.Triggers>
+                <Trigger Property="IsSelected" Value="True">
+                    <Setter Property="Background" Value="#28534B" />
+                    <Setter Property="Foreground" Value="#FFFFFF" />
+                    <Setter Property="BorderBrush" Value="#66B9A6" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+        <CollectionViewSource x:Key="GroupedCollections" Source="{Binding Collections}">
+            <CollectionViewSource.GroupDescriptions>
+                <PropertyGroupDescription PropertyName="GroupName" />
+            </CollectionViewSource.GroupDescriptions>
+        </CollectionViewSource>
+    </Window.Resources>
+    <Grid Margin="16">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="VTSD Cloud" FontSize="22" FontWeight="SemiBold" Foreground="#9AFAD7"/>
+            <TextBlock Text="{Binding AccountText}" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{StaticResource CloudTextBrush}"/>
+            <TextBlock Margin="0,4,0,0" Foreground="{StaticResource CloudTextBrush}"><Run Text="Cloud status: "/><Run Text="{Binding CloudStatus, Mode=OneWay}"/><Run Text=" &#x00B7; "/><Run Text="{Binding LastSyncText, Mode=OneWay}"/></TextBlock>
+        </StackPanel>
+        <WrapPanel Grid.Row="1" Margin="0,12,0,12">
+            <Button Content="Sign in with VATSIM" Click="OnSignIn" Visibility="{Binding CanSignIn, Converter={StaticResource BooleanToVisibility}}" Margin="0,0,8,6" Padding="10,5"/>
+            <Button Content="Cancel login" Click="OnCancelLogin" Visibility="{Binding IsSigningIn, Converter={StaticResource BooleanToVisibility}}" Margin="0,0,8,6" Padding="10,5"/>
+            <Button Content="Sync collections" Click="OnSync" Margin="0,0,8,6" Padding="10,5"/>
+            <Button Content="Redeem share code" Click="OnRedeem" Margin="0,0,8,6" Padding="10,5"/>
+            <Button Content="Open Dashboard" Click="OnDashboard" Margin="0,0,8,6" Padding="10,5"/>
+            <Button Content="Sign out" Click="OnSignOut" Visibility="{Binding CanSignOut, Converter={StaticResource BooleanToVisibility}}" Margin="0,0,8,6" Padding="10,5"/>
+            <CheckBox Content="Auto-sync updates" IsChecked="{Binding AutoSyncEnabled}" VerticalAlignment="Center" Margin="8,0,8,6"/>
+        </WrapPanel>
+        <Grid Grid.Row="2">
+            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <DataGrid ItemsSource="{Binding Source={StaticResource GroupedCollections}}" SelectedItem="{Binding SelectedCollection}"
+                      AutoGenerateColumns="False" CanUserAddRows="False" CanUserResizeColumns="True">
+                <DataGrid.GroupStyle><GroupStyle><GroupStyle.HeaderTemplate><DataTemplate><TextBlock Text="{Binding Name}" FontWeight="Bold" Foreground="#9AFAD7" Margin="4"/></DataTemplate></GroupStyle.HeaderTemplate></GroupStyle></DataGrid.GroupStyle>
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Collection" Binding="{Binding Name}" IsReadOnly="True" Width="2*" MinWidth="96"/>
+                    <DataGridTextColumn Header="Version" Binding="{Binding CurrentVersion}" IsReadOnly="True" Width="*" MinWidth="72"/>
+                    <DataGridCheckBoxColumn Header="Update" Binding="{Binding UpdateAvailable, Mode=OneWay}" IsReadOnly="True" Width="SizeToHeader"/>
+                    <DataGridCheckBoxColumn Header="Kneepad" Binding="{Binding ShowKneepadPages, Mode=TwoWay}" Width="SizeToHeader"/>
+                    <DataGridCheckBoxColumn Header="Radar" Binding="{Binding ShowMapFeaturesOnRadar, Mode=TwoWay}" Width="SizeToHeader"/>
+                    <DataGridCheckBoxColumn Header="Offline" Binding="{Binding CacheOffline, Mode=TwoWay}" Width="SizeToHeader"/>
+                </DataGrid.Columns>
+            </DataGrid>
+            <StackPanel Grid.Row="1" Margin="0,8,0,0">
+                <TextBlock Text="Radar feature filters" Foreground="#9AFAD7"/>
+                <ItemsControl ItemsSource="{Binding FeatureFilters}">
+                    <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate><DataTemplate><CheckBox Content="{Binding Name}" IsChecked="{Binding IsEnabled}" Margin="0,4,12,0"/></DataTemplate></ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </Grid>
+        <Grid Grid.Row="3" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="#9AFAD7"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal">
+                <Button Content="Open cached kneepad" Click="OnOpenKneepad" IsEnabled="{Binding CanOpenKneepad}" Padding="10,5" Margin="8,0"/>
+                <Button Content="Open collection in Dashboard" Click="OnManageCollection" Padding="10,5" Margin="0,0,8,0"/>
+                <Button Content="Close" IsCancel="True" Padding="18,5"/>
+            </StackPanel>
+        </Grid>
+    </Grid>
+</Window>

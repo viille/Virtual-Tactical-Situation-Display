@@ -20,15 +20,29 @@ public sealed class AirspaceDataService : IDisposable
 
     public async Task<IReadOnlyList<AirspaceArea>> LoadAsync(TacticalDisplaySettings settings, CancellationToken cancellationToken)
     {
-        var firCode = string.IsNullOrWhiteSpace(settings.AirspaceFirCode)
-            ? "efin"
-            : settings.AirspaceFirCode.Trim().ToLowerInvariant();
         var baseUrl = settings.AirspaceDataBaseUrl.TrimEnd('/');
-        var url = $"{baseUrl}/{firCode}.geojson";
         var activeAirspaces = await LoadActiveAirspacesBestEffortAsync(settings, cancellationToken);
+        var airspaces = new List<AirspaceArea>();
 
-        using var document = await LoadStaticAirspaceDocumentAsync(url, firCode, cancellationToken);
-        var airspaces = ParseGeoJson(document.RootElement, activeAirspaces);
+        foreach (var firCode in ResolveAirspaceFirCodes(settings))
+        {
+            var url = $"{baseUrl}/{firCode}.geojson";
+            try
+            {
+                using var document = await LoadStaticAirspaceDocumentAsync(url, firCode, cancellationToken);
+                airspaces.AddRange(ParseGeoJson(document.RootElement, activeAirspaces));
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                DataSourceDebugLog.Warn("Airspace", $"Static airspace unavailable | fir={firCode} error={ex.Message}");
+            }
+        }
+
+        airspaces = MergeAirspacesByName(airspaces);
         return await AddLocalAdizAirspacesAsync(airspaces, cancellationToken);
     }
 
@@ -110,14 +124,36 @@ public sealed class AirspaceDataService : IDisposable
 
     private async Task<Dictionary<string, AirspaceActivation>> LoadActiveAirspacesAsync(TacticalDisplaySettings settings, CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(settings.AirspaceActivationUrl))
+        var urls = ResolveAirspaceActivationUrls(settings);
+        if (urls.Count == 0)
         {
             return [];
         }
 
-        var text = await _httpClient.GetStringAsync(settings.AirspaceActivationUrl, cancellationToken);
-        using var document = JsonDocument.Parse(text);
-        return ParseReservationActivations(document.RootElement, DateTimeOffset.UtcNow);
+        var activations = new Dictionary<string, AirspaceActivation>(StringComparer.OrdinalIgnoreCase);
+        var nowUtc = DateTimeOffset.UtcNow;
+        foreach (var url in urls)
+        {
+            try
+            {
+                var text = await _httpClient.GetStringAsync(url, cancellationToken);
+                using var document = JsonDocument.Parse(text);
+                foreach (var (name, activation) in ParseReservationActivations(document.RootElement, nowUtc))
+                {
+                    activations[name] = activation;
+                }
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                DataSourceDebugLog.Warn("Airspace", $"Active reservation feed unavailable | url={url} error={ex.Message}");
+            }
+        }
+
+        return activations;
     }
 
     private static Dictionary<string, AirspaceActivation> ParseReservationActivations(JsonElement root, DateTimeOffset nowUtc)
@@ -253,6 +289,64 @@ public sealed class AirspaceDataService : IDisposable
             }
 
             merged.Add(localAirspace);
+        }
+
+        return merged;
+    }
+
+    private static IReadOnlyList<string> ResolveAirspaceFirCodes(TacticalDisplaySettings settings)
+    {
+        var firCodes = settings.AirspaceFirCodes.Length > 0
+            ? settings.AirspaceFirCodes
+            : [settings.AirspaceFirCode];
+
+        return firCodes
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static IReadOnlyList<string> ResolveAirspaceActivationUrls(TacticalDisplaySettings settings)
+    {
+        var firCodes = ResolveAirspaceFirCodes(settings).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var urls = new List<string>();
+        if (firCodes.Contains("efin"))
+        {
+            urls.Add("https://lara-backend.lusep.fi/data/reservations/efin.json");
+        }
+
+        if (firCodes.Contains("eett"))
+        {
+            urls.Add("https://lara-backend.lusep.fi/data/reservations/eett.json");
+        }
+
+        if (urls.Count == 0)
+        {
+            urls.AddRange(settings.AirspaceActivationUrls.Length > 0
+                ? settings.AirspaceActivationUrls
+                : [settings.AirspaceActivationUrl]);
+        }
+
+        return urls
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static List<AirspaceArea> MergeAirspacesByName(IEnumerable<AirspaceArea> airspaces)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var merged = new List<AirspaceArea>();
+        foreach (var airspace in airspaces)
+        {
+            if (string.IsNullOrWhiteSpace(airspace.Name) || !names.Add(airspace.Name))
+            {
+                continue;
+            }
+
+            merged.Add(airspace);
         }
 
         return merged;

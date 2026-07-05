@@ -11,6 +11,10 @@ using Microsoft.Web.WebView2.Wpf;
 using TacticalDisplay.App.Controls;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.App.ViewModels;
+using TacticalDisplay.App.Storage;
+using CloudMapFeature = TacticalDisplay.App.Cloud.MapFeature;
+using Microsoft.Extensions.DependencyInjection;
+using CloudStartupService = TacticalDisplay.App.Cloud.CloudStartupService;
 using TacticalDisplay.Core.Models;
 
 namespace TacticalDisplay.App;
@@ -119,6 +123,8 @@ public partial class MainWindow : Window
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
         _hotkeyService.Start(_viewModel.Settings.Hotkeys);
+        await LoadCloudOverlaysAsync();
+        _ = RefreshCloudOverlaysAfterStartupAsync();
         await InitializeKneepadWebViewsAsync();
         PromptForDiagnosticTelemetryConsentIfNeeded();
         _telemetryService.SendStartupTelemetryInBackground(
@@ -249,6 +255,52 @@ public partial class MainWindow : Window
             Owner = this
         };
         dialog.ShowDialog();
+    }
+
+    private async void OnOpenCloudClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            new CloudSettingsWindow { Owner = this }.ShowDialog();
+            await LoadCloudOverlaysAsync();
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Warn("Cloud", $"Cloud settings could not be opened | {ex}");
+            MessageBox.Show(this, ex.Message, "VTSD Cloud", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private async Task LoadCloudOverlaysAsync()
+    {
+        try
+        {
+            var services = TacticalDisplay.App.Cloud.CloudBootstrapper.Provider;
+            var content = services.GetRequiredService<TacticalDisplay.App.Cloud.CloudContentStore>();
+            if (!content.IsInitialized) await content.LoadAuthorizedCacheAsync();
+            var collections = content.Collections;
+            new CloudOverlaySettingsStore(System.IO.Path.Combine(AppDataPaths.ApplicationDataDirectory, "cloud-overlays.json")).Apply(collections);
+            var enabledTypes = new CloudPreferencesStore(System.IO.Path.Combine(AppDataPaths.ApplicationDataDirectory, "cloud-settings.json")).Load().EnabledFeatureTypes;
+            var features = new List<CloudMapFeature>();
+            foreach (var collection in collections.Where(item => item.ShowMapFeaturesOnRadar))
+                features.AddRange(content.GetMapFeatures(collection.Slug).Where(feature => enabledTypes.Contains(feature.FeatureType)));
+            ScopeControl.CloudMapFeatures = features;
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Warn("Cloud", $"Cached Cloud overlays could not be loaded | {ex.Message}");
+        }
+    }
+
+    private async Task RefreshCloudOverlaysAfterStartupAsync()
+    {
+        try
+        {
+            await TacticalDisplay.App.Cloud.CloudBootstrapper.Provider.GetRequiredService<CloudStartupService>()
+                .InitializeAsync(CancellationToken.None);
+            await LoadCloudOverlaysAsync();
+        }
+        catch (Exception ex) { DataSourceDebugLog.Warn("Cloud", $"Cloud startup overlay refresh failed | {ex.Message}"); }
     }
 
     private void PromptForDiagnosticTelemetryConsentIfNeeded()
@@ -695,6 +747,7 @@ public partial class MainWindow : Window
                 await _webDisplayServer.DisposeAsync();
                 _webDisplayServer = null;
             }
+            await TrackCloudClosedAsync();
             await _viewModel.DisposeAsync();
         }
         catch (Exception ex)
@@ -735,6 +788,7 @@ public partial class MainWindow : Window
                 _webDisplayServer = null;
             }
 
+            await TrackCloudClosedAsync();
             await _viewModel.DisposeAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(5));
             DataSourceDebugLog.MarkCleanShutdown();
         }
@@ -779,6 +833,19 @@ public partial class MainWindow : Window
             {
                 DataSourceDebugLog.Warn("App", $"Failed to close owned window during update shutdown | {ex.Message}");
             }
+        }
+    }
+
+    private static async Task TrackCloudClosedAsync()
+    {
+        try
+        {
+            await TacticalDisplay.App.Cloud.CloudBootstrapper.Provider.GetRequiredService<CloudStartupService>()
+                .TrackClosedAsync(CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(1));
+        }
+        catch (Exception ex) when (ex is TimeoutException or OperationCanceledException)
+        {
+            DataSourceDebugLog.Debug("Cloud", "Cloud close telemetry timed out; shutdown continues");
         }
     }
 

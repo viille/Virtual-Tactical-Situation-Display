@@ -141,7 +141,7 @@ Mouse actions:
 
 ## Airspace
 
-The app can show active V-LARA reserved airspace boundaries. It loads EFIN airspace geometry and uses the V-LARA reservations feed to highlight active reservations.
+The app can show active V-LARA reserved airspace boundaries. It loads EFIN and EETT airspace geometry and uses the V-LARA reservations feeds to highlight active reservations.
 
 Use `LARA` to toggle the layer.
 

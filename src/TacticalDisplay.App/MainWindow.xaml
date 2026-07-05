@@ -888,6 +888,25 @@
                     <GroupBox Header="V-LARA Airspace" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
                         <StackPanel>
                             <TextBlock Text="{Binding AirspaceText}" Foreground="#9AFAD7" />
+                            <TextBlock Text="Region"
+                                       Foreground="#7CB9A9"
+                                       Margin="0,6,0,0" />
+                            <ItemsControl ItemsSource="{Binding AirspaceRegionOptions}"
+                                          Margin="0,2,0,0">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel />
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <CheckBox Content="{Binding DisplayName}"
+                                                  IsChecked="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  Foreground="#D9F2EC"
+                                                  Margin="0,0,12,0" />
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
                             <TextBlock Text="{Binding AirspaceOpacityText}" Foreground="#7CB9A9" Margin="0,6,0,0" />
                             <Slider Minimum="10"
                                     Maximum="100"
@@ -907,6 +926,14 @@
                             <Button Content="Configure Hotkeys"
                                     Click="OnConfigureHotkeysClick"
                                     Margin="0,4,0,0" />
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="VTSD Cloud" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
+                        <StackPanel>
+                            <TextBlock Text="Sign in with VATSIM, sync authorized collections, redeem share codes and open Cloud kneepads."
+                                       Foreground="#7CB9A9" TextWrapping="Wrap" Margin="0,0,0,6" />
+                            <Button Content="Open VTSD Cloud" Click="OnOpenCloudClick" Margin="0,4,0,0" />
                         </StackPanel>
                     </GroupBox>
 

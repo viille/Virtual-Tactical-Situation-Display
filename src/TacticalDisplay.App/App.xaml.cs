@@ -1,12 +1,15 @@
 using System.Windows;
 using System.Windows.Threading;
 using TacticalDisplay.App.Services;
+using TacticalDisplay.App.Cloud;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace TacticalDisplay.App;
 
 public partial class App : Application
 {
     private MainWindow? _mainWindow;
+    private readonly CancellationTokenSource _cloudStartupCancellation = new();
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -25,6 +28,11 @@ public partial class App : Application
         base.OnStartup(e);
         _mainWindow = new MainWindow();
         _mainWindow.Show();
+        var cloudStartup = CloudBootstrapper.Provider.GetRequiredService<CloudStartupService>()
+            .InitializeAsync(_cloudStartupCancellation.Token);
+        _ = cloudStartup.ContinueWith(task =>
+            DataSourceDebugLog.Warn("Cloud", $"Cloud startup failed | {task.Exception?.GetBaseException().Message}"),
+            CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted, TaskScheduler.Default);
 
         if (!string.IsNullOrWhiteSpace(startupCrashReportMessage))
         {
@@ -39,6 +47,13 @@ public partial class App : Application
                 MessageBoxButton.OK,
                 MessageBoxImage.Information);
         }
+    }
+
+    protected override void OnExit(ExitEventArgs e)
+    {
+        _cloudStartupCancellation.Cancel();
+        _cloudStartupCancellation.Dispose();
+        base.OnExit(e);
     }
 
     private static void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

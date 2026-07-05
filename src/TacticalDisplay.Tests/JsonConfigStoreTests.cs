@@ -51,6 +51,58 @@ public sealed class JsonConfigStoreTests
     }
 
     [Fact]
+    public void LoadDisplaySettings_WhenUsingDefaults_IncludesFinlandAndEstoniaLara()
+    {
+        var directory = CreateTempDirectory();
+        var store = new JsonConfigStore(directory);
+
+        var settings = store.LoadDisplaySettings();
+
+        Assert.Equal(["efin", "eett"], settings.AirspaceFirCodes);
+        Assert.Contains("https://lara-backend.lusep.fi/data/reservations/efin.json", settings.AirspaceActivationUrls);
+        Assert.Contains("https://lara-backend.lusep.fi/data/reservations/eett.json", settings.AirspaceActivationUrls);
+    }
+
+    [Fact]
+    public void LoadDisplaySettings_WhenSingleAirspaceFirIsConfigured_PreservesRegionSelection()
+    {
+        var directory = CreateTempDirectory();
+        var path = Path.Combine(directory, "display.json");
+        File.WriteAllText(path, """
+        {
+          "RangeScaleOptionsNm": [10, 20, 40],
+          "SelectedRangeNm": 40,
+          "XPlane12ApiBaseUrl": "http://localhost:8086/",
+          "VatsimDataFeedUrl": "https://data.vatsim.net/v3/vatsim-data.json",
+          "AirspaceFirCode": "efin",
+          "AirspaceFirCodes": ["efin"],
+          "AirspaceDataBaseUrl": "https://raw.githubusercontent.com/ottotuhkunen/virtual-lara-airspace-data/main/data",
+          "AirspaceActivationUrl": "https://lara-backend.lusep.fi/data/reservations/efin.json",
+          "RenderRateFps": 24,
+          "PollRateHz": 8,
+          "StaleSeconds": 4,
+          "RemoveAfterSeconds": 12,
+          "MinTrackedAltitudeFt": 200,
+          "WindowWidth": 1280,
+          "WindowHeight": 840,
+          "TargetSymbolScale": 1,
+          "VatsimCallsignRefreshSeconds": 15,
+          "TrailLengthSamples": 90,
+          "KneepadPages": [
+            { "ContentMode": "Empty" }
+          ],
+          "Hotkeys": []
+        }
+        """);
+
+        var store = new JsonConfigStore(directory);
+
+        var settings = store.LoadDisplaySettings();
+
+        Assert.Equal(["efin"], settings.AirspaceFirCodes);
+    }
+
+    [Fact]
     public void LoadManualTargetMetadata_WhenJsonIsInvalid_ReplacesWithEmptyMap()
     {
         var directory = CreateTempDirectory();

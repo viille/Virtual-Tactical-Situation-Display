@@ -32,8 +32,14 @@ public sealed class TacticalDisplaySettings
     public bool ShowOnlyActiveAirspaceBoundaries { get; set; } = true;
     public double AirspaceOpacity { get; set; } = 1.0;
     public string AirspaceFirCode { get; set; } = "efin";
+    public string[] AirspaceFirCodes { get; set; } = ["efin", "eett"];
     public string AirspaceDataBaseUrl { get; set; } = "https://raw.githubusercontent.com/ottotuhkunen/virtual-lara-airspace-data/main/data";
     public string AirspaceActivationUrl { get; set; } = "https://lara-backend.lusep.fi/data/reservations/efin.json";
+    public string[] AirspaceActivationUrls { get; set; } =
+    [
+        "https://lara-backend.lusep.fi/data/reservations/efin.json",
+        "https://lara-backend.lusep.fi/data/reservations/eett.json"
+    ];
     public bool ShowBullseye { get; set; }
     public double? BullseyeLatitudeDeg { get; set; }
     public double? BullseyeLongitudeDeg { get; set; }

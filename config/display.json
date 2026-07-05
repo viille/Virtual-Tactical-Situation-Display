@@ -23,8 +23,13 @@
   "ShowOnlyActiveAirspaceBoundaries": true,
   "AirspaceOpacity": 1.0,
   "AirspaceFirCode": "efin",
+  "AirspaceFirCodes": ["efin", "eett"],
   "AirspaceDataBaseUrl": "https://raw.githubusercontent.com/ottotuhkunen/virtual-lara-airspace-data/main/data",
   "AirspaceActivationUrl": "https://lara-backend.lusep.fi/data/reservations/efin.json",
+  "AirspaceActivationUrls": [
+    "https://lara-backend.lusep.fi/data/reservations/efin.json",
+    "https://lara-backend.lusep.fi/data/reservations/eett.json"
+  ],
   "ShowBullseye": false,
   "BullseyeLatitudeDeg": null,
   "BullseyeLongitudeDeg": null,

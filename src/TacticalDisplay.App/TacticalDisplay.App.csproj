@@ -28,7 +28,15 @@
 
   <ItemGroup>
     <PackageReference Include="FSUIPCClientDLL" Version="3.3.16" />
+    <PackageReference Include="Markdig" Version="0.41.3" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="8.0.1" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3912.50" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>
@@ -66,7 +74,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>0.13.6</Version>
+    <Version>0.14.0</Version>
     <ApplicationIcon>Assets\VTSD.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="..\TacticalDisplay.App\TacticalDisplay.App.csproj" />
     <ProjectReference Include="..\TacticalDisplay.Core\TacticalDisplay.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
@@ -11,7 +12,7 @@
     </PackageReference>
   </ItemGroup>
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>

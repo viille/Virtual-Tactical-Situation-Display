@@ -139,6 +139,9 @@ public sealed class JsonConfigStore
             settings.AirspaceActivationUrl = "https://lara-backend.lusep.fi/data/reservations/efin.json";
         }
 
+        settings.AirspaceFirCodes = NormalizeAirspaceFirCodes(settings.AirspaceFirCode, settings.AirspaceFirCodes);
+        settings.AirspaceActivationUrls = NormalizeAirspaceActivationUrls(settings.AirspaceActivationUrl, settings.AirspaceActivationUrls);
+
         settings.KneepadContentMode = NormalizeKneepadContentMode(settings.KneepadContentMode);
         settings.KneepadMissionInformation ??= string.Empty;
         settings.KneepadImagePath ??= string.Empty;
@@ -226,7 +229,10 @@ public sealed class JsonConfigStore
         if (string.IsNullOrWhiteSpace(settings.XPlane12ApiBaseUrl) ||
             string.IsNullOrWhiteSpace(settings.VatsimDataFeedUrl) ||
             string.IsNullOrWhiteSpace(settings.AirspaceFirCode) ||
+            settings.AirspaceFirCodes.Length == 0 ||
+            settings.AirspaceFirCodes.Any(string.IsNullOrWhiteSpace) ||
             string.IsNullOrWhiteSpace(settings.AirspaceDataBaseUrl) ||
+            settings.AirspaceActivationUrls.Any(string.IsNullOrWhiteSpace) ||
             !settings.KneepadPages.All(static page => IsValidKneepadContentMode(page.ContentMode)) ||
             !settings.Hotkeys.All(static binding => !string.IsNullOrWhiteSpace(binding.Action)))
         {
@@ -250,6 +256,44 @@ public sealed class JsonConfigStore
         string.Equals(mode, "Mission", StringComparison.OrdinalIgnoreCase) ? "Mission" :
         string.Equals(mode, "Empty", StringComparison.OrdinalIgnoreCase) ? "Empty" :
         "Mission";
+
+    private static string[] NormalizeAirspaceFirCodes(string legacyFirCode, IEnumerable<string>? firCodes)
+    {
+        var normalized = (firCodes ?? [])
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (normalized.Length > 0)
+        {
+            return normalized;
+        }
+
+        return string.IsNullOrWhiteSpace(legacyFirCode)
+            ? ["efin", "eett"]
+            : [legacyFirCode.Trim().ToLowerInvariant()];
+    }
+
+    private static string[] NormalizeAirspaceActivationUrls(string legacyActivationUrl, IEnumerable<string>? activationUrls)
+    {
+        const string EfinActivationUrl = "https://lara-backend.lusep.fi/data/reservations/efin.json";
+        const string EettActivationUrl = "https://lara-backend.lusep.fi/data/reservations/eett.json";
+
+        var normalized = (activationUrls ?? [])
+            .Append(legacyActivationUrl)
+            .Append(EfinActivationUrl)
+            .Append(EettActivationUrl)
+            .Select(static value => string.Equals(value, "https://lara-backend.lusep.fi/topsky/lara.txt", StringComparison.OrdinalIgnoreCase)
+                ? EfinActivationUrl
+                : value)
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return normalized.Length == 0 ? [EfinActivationUrl, EettActivationUrl] : normalized;
+    }
 
     private static void BackupCorruptFile(string path)
     {

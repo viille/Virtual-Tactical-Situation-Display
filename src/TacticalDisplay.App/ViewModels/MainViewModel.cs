@@ -113,6 +113,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
                 action.DisplayName,
                 EnsureHotkeyBinding(action.Action),
                 NotifyHotkeyBindingsChanged)));
+        AirspaceRegionOptions = new ObservableCollection<AirspaceRegionOptionViewModel>(
+            CreateAirspaceRegionOptions());
 
         _renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000.0 / Settings.RenderRateFps) };
         _renderTimer.Tick += (_, _) =>
@@ -208,6 +210,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     }
 
     public string AirspaceOpacityText => $"Area opacity: {AirspaceOpacityPercent:0}%";
+
+    public ObservableCollection<AirspaceRegionOptionViewModel> AirspaceRegionOptions { get; }
 
     public double MapOpacityPercent
     {
@@ -1584,7 +1588,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         Airspaces = airspaces;
         var activeCount = airspaces.Count(a => a.IsActive);
-        AirspaceText = $"Airspace: {Settings.AirspaceFirCode.ToUpperInvariant()} {activeCount} active";
+        AirspaceText = $"Airspace: {FormatAirspaceRegion(Settings.AirspaceFirCodes)} {activeCount} active";
     }
 
     private void UpdateRefreshRate()
@@ -1605,6 +1609,66 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private static string ResolveConfigDirectory()
     {
         return AppDataPaths.ApplicationDataDirectory;
+    }
+
+    private static string FormatAirspaceRegion(IReadOnlyCollection<string> firCodes)
+    {
+        var values = firCodes
+            .Where(static fir => !string.IsNullOrWhiteSpace(fir))
+            .Select(static fir => fir.Trim().ToUpperInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (values.SetEquals(["EFIN", "EETT"]))
+        {
+            return "EFIN + EETT";
+        }
+
+        if (values.SetEquals(["EETT"]))
+        {
+            return "EETT";
+        }
+
+        return "EFIN";
+    }
+
+    private IEnumerable<AirspaceRegionOptionViewModel> CreateAirspaceRegionOptions()
+    {
+        var selected = Settings.AirspaceFirCodes.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var firCode in new[] { "efin", "eett" })
+        {
+            yield return new AirspaceRegionOptionViewModel(
+                firCode,
+                firCode.ToUpperInvariant(),
+                selected.Contains(firCode),
+                SetAirspaceRegionEnabled);
+        }
+    }
+
+    private bool SetAirspaceRegionEnabled(string firCode, bool enabled)
+    {
+        var selected = Settings.AirspaceFirCodes
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Select(static value => value.Trim().ToLowerInvariant())
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (enabled)
+        {
+            selected.Add(firCode);
+        }
+        else if (selected.Count > 1)
+        {
+            selected.Remove(firCode);
+        }
+        else
+        {
+            return false;
+        }
+
+        Settings.AirspaceFirCodes = selected
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        Raise(nameof(Settings));
+        _ = LoadAirspacesAsync();
+        return true;
     }
 
     public void CycleTargetAffiliation(string targetId)
@@ -1739,5 +1803,47 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         };
 
         return target with { DisplayName = displayName, Category = category };
+    }
+}
+
+public sealed class AirspaceRegionOptionViewModel : ViewModelBase
+{
+    private readonly Func<string, bool, bool> _setEnabled;
+    private bool _isEnabled;
+
+    public AirspaceRegionOptionViewModel(
+        string firCode,
+        string displayName,
+        bool isEnabled,
+        Func<string, bool, bool> setEnabled)
+    {
+        FirCode = firCode;
+        DisplayName = displayName;
+        _isEnabled = isEnabled;
+        _setEnabled = setEnabled;
+    }
+
+    public string FirCode { get; }
+    public string DisplayName { get; }
+
+    public bool IsEnabled
+    {
+        get => _isEnabled;
+        set
+        {
+            if (_isEnabled == value)
+            {
+                return;
+            }
+
+            if (!_setEnabled(FirCode, value))
+            {
+                Raise();
+                return;
+            }
+
+            _isEnabled = value;
+            Raise();
+        }
     }
 }

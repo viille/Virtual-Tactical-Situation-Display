@@ -7,6 +7,7 @@ using TacticalDisplay.Core.Math;
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
 using TacticalDisplay.App.Rendering;
+using TacticalDisplay.App.Cloud;
 
 namespace TacticalDisplay.App.Controls;
 
@@ -65,6 +66,10 @@ public sealed class TacticalScopeControl : FrameworkElement
         typeof(TacticalScopeControl),
         new FrameworkPropertyMetadata(0.75, FrameworkPropertyMetadataOptions.AffectsRender));
 
+    public static readonly DependencyProperty CloudMapFeaturesProperty = DependencyProperty.Register(
+        nameof(CloudMapFeatures), typeof(IReadOnlyList<MapFeature>), typeof(TacticalScopeControl),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+
     public TacticalPicture? Picture
     {
         get => (TacticalPicture?)GetValue(PictureProperty);
@@ -107,6 +112,12 @@ public sealed class TacticalScopeControl : FrameworkElement
         set => SetValue(TargetLabelBackgroundOpacityProperty, value);
     }
 
+    public IReadOnlyList<MapFeature>? CloudMapFeatures
+    {
+        get => (IReadOnlyList<MapFeature>?)GetValue(CloudMapFeaturesProperty);
+        set => SetValue(CloudMapFeaturesProperty, value);
+    }
+
     public event EventHandler<ScopeTargetClickEventArgs>? TargetClicked;
     public event EventHandler<ScopeLabelMovedEventArgs>? LabelMoved;
 
@@ -129,9 +140,11 @@ public sealed class TacticalScopeControl : FrameworkElement
         DrawRings(dc, center, radius);
         DrawFrameCompass(dc, center, ownshipHeadingDeg);
         DrawHeadingReadout(dc, center, ownshipHeadingDeg);
+        DrawTargets(dc, center, radius, ownshipHeadingDeg);
+        DrawOptionalOverlay(() => CollectionOverlayLayer.Draw(dc, CloudMapFeatures, Picture, Settings, center, radius,
+            ownshipHeadingDeg, VisualTreeHelper.GetDpi(this).PixelsPerDip));
         DrawOptionalOverlay(() => DrawIntercept(dc, center, radius, ownshipHeadingDeg));
         DrawOwnship(dc, center, ownshipHeadingDeg);
-        DrawTargets(dc, center, radius, ownshipHeadingDeg);
     }
 
     private static void DrawOptionalOverlay(Action draw)
