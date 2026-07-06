@@ -18,6 +18,7 @@ public partial class KneepadLibraryWindow : Window
         source.GroupDescriptions.Add(new PropertyGroupDescription(nameof(KneepadPage.Category)));
         Pages.ItemsSource = source.View;
         Loaded += async (_, _) => { await Viewer.EnsureCoreWebView2Async(); if (Pages.Items.Count > 0) Pages.SelectedIndex = 0; };
+        Closed += (_, _) => Viewer.Dispose();
     }
     private void OnPageChanged(object sender, SelectionChangedEventArgs e)
     {

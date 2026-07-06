@@ -13,6 +13,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
     private const string LogSource = "MSFS";
     private static readonly TimeSpan TrafficStallRecoveryThreshold = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OwnshipFreshThreshold = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MinimumTrafficRetention = TimeSpan.FromSeconds(2);
     private readonly TacticalDisplaySettings _settings;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(3);
     private readonly object _stateLock = new();
@@ -72,6 +73,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         }
 
         loopCts?.Dispose();
+        ResetSessionTrafficState();
         SetConnected(false);
     }
 
@@ -402,8 +404,10 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
     {
         OwnshipState? ownship;
         IReadOnlyList<TrafficContactState> traffic;
+        var now = DateTimeOffset.UtcNow;
         lock (_stateLock)
         {
+            PruneExpiredTraffic(now);
             ownship = _latestOwnship;
             traffic = _latestTraffic.Values.ToList();
         }
@@ -423,7 +427,22 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             TimeSpan.FromSeconds(2),
             () => $"Snapshot emitted | trafficCount={filteredTraffic.Count} rawTrafficCount={traffic.Count}");
 
-        SnapshotReceived?.Invoke(this, new TrafficSnapshot(ownship, filteredTraffic, DateTimeOffset.UtcNow));
+        SnapshotReceived?.Invoke(this, new TrafficSnapshot(ownship, filteredTraffic, now));
+    }
+
+    private void PruneExpiredTraffic(DateTimeOffset now)
+    {
+        var retention = TimeSpan.FromSeconds(Math.Max(_settings.RemoveAfterSeconds, MinimumTrafficRetention.TotalSeconds));
+        var cutoff = now - retention;
+        foreach (var objectId in _latestTraffic
+                     .Where(pair => pair.Value.Timestamp < cutoff)
+                     .Select(pair => pair.Key)
+                     .ToList())
+        {
+            _latestTraffic.Remove(objectId);
+            _ghostHitCounts.Remove(objectId);
+            _suppressedTrafficIds.Remove(objectId);
+        }
     }
 
     private static bool IsLikelyOwnshipMirror(OwnshipState ownship, TrafficContactState target)

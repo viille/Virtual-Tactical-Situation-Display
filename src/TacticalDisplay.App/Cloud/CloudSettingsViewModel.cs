@@ -4,7 +4,7 @@ using TacticalDisplay.App.ViewModels;
 
 namespace TacticalDisplay.App.Cloud;
 
-public sealed class CloudSettingsViewModel : ViewModelBase
+public sealed class CloudSettingsViewModel : ViewModelBase, IDisposable
 {
     private readonly AuthService _auth; private readonly CollectionService _collections; private readonly Storage.CloudOverlaySettingsStore _overlaySettings;
     private readonly Storage.CloudPreferencesStore _preferencesStore; private readonly ICloudTelemetryService _telemetry;
@@ -20,7 +20,7 @@ public sealed class CloudSettingsViewModel : ViewModelBase
         _content = startup.Content; _uiContext = SynchronizationContext.Current;
         var preferences = _preferencesStore.Load(); _autoSyncEnabled = preferences.AutoSyncEnabled;
         foreach (var type in Enum.GetValues<MapFeatureType>()) FeatureFilters.Add(new MapFeatureFilterViewModel(type, preferences.EnabledFeatureTypes.Contains(type)));
-        _auth.StateChanged += (_, state) => { if (_uiContext is null) ApplyAuth(state); else _uiContext.Post(_ => ApplyAuth(state), null); };
+        _auth.StateChanged += OnAuthStateChanged;
     }
     public ObservableCollection<Collection> Collections { get; } = [];
     public ObservableCollection<MapFeatureFilterViewModel> FeatureFilters { get; } = [];
@@ -148,9 +148,18 @@ public sealed class CloudSettingsViewModel : ViewModelBase
     {
         Raise(nameof(AuthState)); Raise(nameof(AccountText)); Raise(nameof(IsSignedIn)); Raise(nameof(CanSignIn)); Raise(nameof(IsSigningIn)); Raise(nameof(CanSignOut));
     }
+    private void OnAuthStateChanged(object? sender, AuthState state)
+    {
+        if (_uiContext is null) ApplyAuth(state); else _uiContext.Post(_ => ApplyAuth(state), null);
+    }
     private void OnSelectedCollectionChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(Collection.ShowKneepadPages)) Raise(nameof(CanOpenKneepad));
+    }
+    public void Dispose()
+    {
+        _auth.StateChanged -= OnAuthStateChanged;
+        if (_selectedCollection is not null) _selectedCollection.PropertyChanged -= OnSelectedCollectionChanged;
     }
     private static void MergeCachedMetadata(IEnumerable<Collection> remote, IEnumerable<Collection> cachedItems)
     {

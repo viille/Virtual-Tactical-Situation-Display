@@ -25,6 +25,7 @@ public partial class CloudSettingsWindow : Window
         {
             _operation.Cancel();
             _operation.Dispose();
+            _viewModel.Dispose();
         };
     }
     private async void OnSignIn(object sender, RoutedEventArgs e) { ResetCancellation(); await _viewModel.SignInAsync(OpenBrowser, _operation.Token); }

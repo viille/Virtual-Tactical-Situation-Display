@@ -10,6 +10,8 @@ public static class DataSourceDebugLog
     private static readonly string LogFilePath = ResolveLogFilePath();
     private static readonly string FallbackCrashLogFilePath = Path.Combine(Path.GetTempPath(), "TacticalDisplay-crash.log");
     private const long MaxLogBytes = 1_000_000;
+    private const int MaxThrottleKeys = 2048;
+    private static readonly TimeSpan ThrottleKeyRetention = TimeSpan.FromMinutes(30);
     private static volatile bool _isEnabled;
 
     public static string CurrentLogFilePath => LogFilePath;
@@ -57,6 +59,7 @@ public static class DataSourceDebugLog
     public static void ThrottledDebug(string source, string key, TimeSpan interval, Func<string> messageFactory)
     {
         var now = DateTimeOffset.UtcNow;
+        PruneThrottleKeysIfNeeded(now);
         if (LastWriteByKey.TryGetValue(key, out var lastWrite) && now - lastWrite < interval)
         {
             return;
@@ -64,6 +67,23 @@ public static class DataSourceDebugLog
 
         LastWriteByKey[key] = now;
         Debug(source, messageFactory());
+    }
+
+    private static void PruneThrottleKeysIfNeeded(DateTimeOffset now)
+    {
+        if (LastWriteByKey.Count <= MaxThrottleKeys)
+        {
+            return;
+        }
+
+        var cutoff = now - ThrottleKeyRetention;
+        foreach (var pair in LastWriteByKey)
+        {
+            if (pair.Value < cutoff)
+            {
+                LastWriteByKey.TryRemove(pair.Key, out _);
+            }
+        }
     }
 
     private static void Write(
