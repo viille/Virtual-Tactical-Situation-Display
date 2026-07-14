@@ -5,7 +5,11 @@ namespace TacticalDisplay.Core.Services;
 
 public sealed class TrafficRepository
 {
+    private static readonly TimeSpan StationaryDuplicateGracePeriod = TimeSpan.FromSeconds(5);
+    private const double StationarySpeedThresholdKt = 3;
+    private const double MeaningfulMovementThresholdNm = 0.02;
     private readonly Dictionary<string, TrackedContact> _contacts = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SuppressedContact> _suppressedContacts = new(StringComparer.OrdinalIgnoreCase);
     private OwnshipState? _previousOwnship;
     private OwnshipState? _ownship;
 
@@ -20,6 +24,12 @@ public sealed class TrafficRepository
         _ownship = snapshot.Ownship;
         foreach (var contact in snapshot.Contacts)
         {
+            if (ShouldSuppressStationaryContact(contact))
+            {
+                _contacts.Remove(contact.Id);
+                continue;
+            }
+
             if (!PassTrackedAltitude(contact.AltitudeFt, settings.MinTrackedAltitudeFt, settings.MaxTrackedAltitudeFt))
             {
                 _contacts.Remove(contact.Id);
@@ -53,6 +63,16 @@ public sealed class TrafficRepository
         {
             _contacts.Remove(removeId);
         }
+
+        var suppressedRemoveCutoff = snapshot.Timestamp -
+            TimeSpan.FromSeconds(System.Math.Max(settings.RemoveAfterSeconds, 1));
+        foreach (var removeId in _suppressedContacts
+                     .Where(pair => pair.Value.LastSeen < suppressedRemoveCutoff)
+                     .Select(pair => pair.Key)
+                     .ToList())
+        {
+            _suppressedContacts.Remove(removeId);
+        }
     }
 
     public TacticalPicture BuildPicture(TacticalDisplaySettings settings)
@@ -84,6 +104,53 @@ public sealed class TrafficRepository
     private static bool PassTrackedAltitude(double altitudeFt, double minTrackedAltitudeFt, double maxTrackedAltitudeFt) =>
         altitudeFt >= minTrackedAltitudeFt &&
         altitudeFt <= maxTrackedAltitudeFt;
+
+    private bool ShouldSuppressStationaryContact(TrafficContactState contact)
+    {
+        if (!string.IsNullOrWhiteSpace(contact.Callsign) || !IsStationary(contact))
+        {
+            _suppressedContacts.Remove(contact.Id);
+            return false;
+        }
+
+        if (!_suppressedContacts.TryGetValue(contact.Id, out var previous))
+        {
+            RememberSuppressedContact(contact);
+            return false;
+        }
+
+        if (HasMeaningfulMovement(previous.Contact, contact))
+        {
+            _suppressedContacts.Remove(contact.Id);
+            return false;
+        }
+
+        RememberSuppressedContact(contact);
+
+        return contact.Timestamp - previous.FirstSeen >= StationaryDuplicateGracePeriod;
+    }
+
+    private void RememberSuppressedContact(TrafficContactState contact)
+    {
+        if (_suppressedContacts.TryGetValue(contact.Id, out var previous))
+        {
+            _suppressedContacts[contact.Id] = previous with
+            {
+                Contact = contact,
+                LastSeen = contact.Timestamp
+            };
+            return;
+        }
+
+        _suppressedContacts[contact.Id] = new SuppressedContact(contact, contact.Timestamp, contact.Timestamp);
+    }
+
+    private static bool IsStationary(TrafficContactState contact) =>
+        !contact.SpeedKt.HasValue || contact.SpeedKt.Value <= StationarySpeedThresholdKt;
+
+    private static bool HasMeaningfulMovement(TrafficContactState previous, TrafficContactState current) =>
+        GeoMath.DistanceNm(previous.LatitudeDeg, previous.LongitudeDeg, current.LatitudeDeg, current.LongitudeDeg) >= MeaningfulMovementThresholdNm ||
+        System.Math.Abs(previous.AltitudeFt - current.AltitudeFt) >= 100;
 
     private static TargetCategory Classify(TrafficContactState contact, ClassificationConfig classification)
     {
@@ -193,4 +260,9 @@ public sealed class TrafficRepository
             return historicalClosureKt;
         }
     }
+
+    private sealed record SuppressedContact(
+        TrafficContactState Contact,
+        DateTimeOffset FirstSeen,
+        DateTimeOffset LastSeen);
 }
