@@ -141,7 +141,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(pollMs));
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                api.RequestDataOnSimObject(
+                var ownshipRequestHr = api.RequestDataOnSimObject(
                     simHandle,
                     (uint)RequestId.Ownship,
                     (uint)DefinitionId.Ownship,
@@ -151,6 +151,13 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     0,
                     0,
                     0);
+                if (ownshipRequestHr != 0)
+                {
+                    DataSourceDebugLog.Warn(
+                        LogSource,
+                        $"Ownship request failed; recycling SimConnect session | hresult=0x{ownshipRequestHr:X8}");
+                    return;
+                }
 
                 var now = DateTimeOffset.UtcNow;
                 if ((now - _lastTrafficRequestAt).TotalMilliseconds >= 500)
@@ -161,12 +168,20 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                         "traffic-request",
                         TimeSpan.FromSeconds(5),
                         () => $"Requesting traffic scan | radiusMeters={radiusMeters} rangeNm={_settings.SelectedRangeNm}");
-                    api.RequestDataOnSimObjectType(
+                    var trafficRequestHr = api.RequestDataOnSimObjectType(
                         simHandle,
                         (uint)RequestId.TrafficByType,
                         (uint)DefinitionId.Traffic,
                         radiusMeters,
                         (uint)SimObjectType.Aircraft);
+                    if (trafficRequestHr != 0)
+                    {
+                        DataSourceDebugLog.Warn(
+                            LogSource,
+                            $"Traffic request failed; recycling SimConnect session | hresult=0x{trafficRequestHr:X8}");
+                        return;
+                    }
+
                     _lastTrafficRequestAt = now;
                 }
 
@@ -225,6 +240,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 case SimConnectRecvId.Quit:
                     DataSourceDebugLog.Warn(LogSource, "Received SimConnect quit event");
                     SetConnected(false, forceNotify: true);
+                    return false;
+                case SimConnectRecvId.Exception:
+                    var exception = Marshal.PtrToStructure<SimConnectRecvException>(pData);
+                    DataSourceDebugLog.Warn(
+                        LogSource,
+                        $"SimConnect exception received; recycling session | exception={exception.dwException} sendId={exception.dwSendID} index={exception.dwIndex}");
                     return false;
                 case SimConnectRecvId.SimobjectData:
                 case SimConnectRecvId.SimobjectDataByType:
@@ -797,6 +818,17 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         public uint dwoutof;
         public uint dwDefineCount;
         public uint dwData;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SimConnectRecvException
+    {
+        public uint dwSize;
+        public uint dwVersion;
+        public uint dwID;
+        public uint dwException;
+        public uint dwSendID;
+        public uint dwIndex;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

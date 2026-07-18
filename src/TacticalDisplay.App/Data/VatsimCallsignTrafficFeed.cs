@@ -12,6 +12,9 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 {
     private const string LogSource = "VATSIM";
     private const int RequiredStableCallsignMatches = 2;
+    private const int RequiredStableCallsignSwitchMatches = 3;
+    private const double StrongSwitchMaxDistanceNm = 0.75;
+    private const double StrongSwitchMaxAltitudeDeltaFt = 400;
     private static readonly TimeSpan SnapshotHistoryRetention = TimeSpan.FromSeconds(60);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -218,27 +221,33 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 
             var callsign = enrichedContact.Callsign.Trim().ToUpperInvariant();
             pilotUpdatesByCallsign.TryGetValue(callsign, out var pilotUpdateTime);
+            var pilot = pilots.FirstOrDefault(candidate =>
+                string.Equals(candidate.Callsign, callsign, StringComparison.OrdinalIgnoreCase));
+            var matchDiagnostics = pilot is null
+                ? VatsimMatchDiagnostics.None
+                : VatsimCallsignMatcher.InspectMatch(originalContact, pilot);
             var confirmation = UpdateCallsignConfirmation(
                 enrichedContact.Id,
                 callsign,
                 pilotUpdateTime,
-                originalContact.Timestamp);
+                originalContact.Timestamp,
+                IsStrongSwitchMatch(matchDiagnostics));
             DataSourceDebugLog.ThrottledDebug(
                 LogSource,
                 $"callsign-confirmation-{enrichedContact.Id}",
                 TimeSpan.FromSeconds(5),
                 () =>
                     "Callsign confirmation | " +
-                    $"contact={enrichedContact.Id} callsign={callsign} count={confirmation.MatchCount} " +
+                    $"contact={enrichedContact.Id} callsign={callsign} count={confirmation.CandidateMatchCount} " +
                     $"confirmed={confirmation.Confirmed} pilotUpdated={pilotUpdateTime?.ToString("O") ?? "n/a"}");
 
             if (confirmation.Confirmed)
             {
-                confirmedContacts.Add(enrichedContact with { Callsign = callsign });
+                confirmedContacts.Add(enrichedContact with { Callsign = confirmation.ConfirmedCallsign });
                 continue;
             }
 
-            confirmedContacts.Add(enrichedContact with { Callsign = null });
+            confirmedContacts.Add(enrichedContact with { Callsign = confirmation.ConfirmedCallsign });
         }
 
         return enriched with { Contacts = confirmedContacts };
@@ -248,16 +257,27 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         string contactId,
         string callsign,
         DateTimeOffset? pilotUpdateTime,
-        DateTimeOffset observationTime)
+        DateTimeOffset observationTime,
+        bool strongMatch)
     {
-        if (!_callsignConfirmations.TryGetValue(contactId, out var confirmation) ||
-            !string.Equals(confirmation.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
+        if (!_callsignConfirmations.TryGetValue(contactId, out var confirmation))
         {
-            var initialCount = confirmation?.Confirmed == true ? RequiredStableCallsignMatches - 1 : 0;
-            confirmation = new CallsignConfirmation(callsign, initialCount, null, null, false);
+            confirmation = new CallsignConfirmation(callsign, 0, null, null, null, false);
+        }
+        else if (!string.Equals(confirmation.CandidateCallsign, callsign, StringComparison.OrdinalIgnoreCase))
+        {
+            confirmation = confirmation with
+            {
+                CandidateCallsign = callsign,
+                CandidateMatchCount = 0
+            };
         }
 
-        var count = confirmation.MatchCount;
+        var isSwitchCandidate = confirmation.ConfirmedCallsign is not null &&
+            !string.Equals(confirmation.ConfirmedCallsign, callsign, StringComparison.OrdinalIgnoreCase);
+        var count = isSwitchCandidate && !strongMatch
+            ? 0
+            : confirmation.CandidateMatchCount;
         // VATSIM's last_updated value can remain unchanged while the simulator
         // emits several new observations. Confirmation must follow observations,
         // otherwise a valid match remains unconfirmed forever and stationary
@@ -268,16 +288,42 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             count++;
         }
 
+        var confirmedCallsign = confirmation.ConfirmedCallsign;
+        // A very close direct match is safe enough to show immediately. This
+        // improves visibility for short-lived or stationary contacts while
+        // ordinary and historical matches still require two observations.
+        if (confirmedCallsign is null && strongMatch)
+        {
+            confirmedCallsign = callsign;
+        }
+        else if (confirmedCallsign is null && count >= RequiredStableCallsignMatches)
+        {
+            confirmedCallsign = callsign;
+        }
+        else if (confirmedCallsign is not null &&
+            !string.Equals(confirmedCallsign, callsign, StringComparison.OrdinalIgnoreCase) &&
+            strongMatch &&
+            count >= RequiredStableCallsignSwitchMatches)
+        {
+            confirmedCallsign = callsign;
+        }
+
         confirmation = confirmation with
         {
-            MatchCount = count,
+            CandidateMatchCount = count,
             LastPilotUpdateTime = pilotUpdateTime ?? confirmation.LastPilotUpdateTime,
             LastObservationTime = observationTime,
-            Confirmed = confirmation.Confirmed || count >= RequiredStableCallsignMatches
+            ConfirmedCallsign = confirmedCallsign,
+            Confirmed = confirmedCallsign is not null
         };
         _callsignConfirmations[contactId] = confirmation;
         return confirmation;
     }
+
+    private static bool IsStrongSwitchMatch(VatsimMatchDiagnostics diagnostics) =>
+        diagnostics.IsMatch &&
+        diagnostics.DistanceNm <= StrongSwitchMaxDistanceNm &&
+        diagnostics.AltitudeDeltaFt <= StrongSwitchMaxAltitudeDeltaFt;
 
     private Uri GetFeedUri()
     {
@@ -386,9 +432,10 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         DateTimeOffset? LastUpdated);
 
     private sealed record CallsignConfirmation(
-        string Callsign,
-        int MatchCount,
+        string CandidateCallsign,
+        int CandidateMatchCount,
         DateTimeOffset? LastPilotUpdateTime,
         DateTimeOffset? LastObservationTime,
+        string? ConfirmedCallsign,
         bool Confirmed);
 }

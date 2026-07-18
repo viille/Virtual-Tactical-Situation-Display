@@ -11,6 +11,11 @@ public static class VatsimCallsignMatcher
     private const double MaxMatchSpeedDeltaKt = 100;
     private const double MinAirborneSpeedForMotionCheckKt = 40;
     private const double MinBestScoreMargin = 0.75;
+    private const double FormationMaxDistanceNm = 3.0;
+    private const double FormationMaxAltitudeDeltaFt = 1500;
+    private const double FormationMaxHeadingDeltaDeg = 60;
+    private const double FormationMaxSpeedDeltaKt = 150;
+    private const double SameCallsignGroupBonus = 0.35;
     private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(20);
 
     public static TrafficSnapshot EnrichSnapshot(
@@ -142,7 +147,7 @@ public static class VatsimCallsignMatcher
         IReadOnlyList<VatsimPilotCandidate> pilots,
         IReadOnlyList<MatchCandidate> candidates)
     {
-        var best = FindBestAssignment(candidates);
+        var best = FindBestAssignment(contacts, pilots, candidates);
         var assignments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var candidate in best)
         {
@@ -169,6 +174,11 @@ public static class VatsimCallsignMatcher
 
         return best ?? VatsimMatchDiagnostics.None;
     }
+
+    public static VatsimMatchDiagnostics InspectMatch(
+        TrafficContactState contact,
+        VatsimPilotCandidate pilot) =>
+        InspectCandidate(contact, pilot);
 
     public static VatsimMatchDiagnostics InspectBestHistoricalMatch(
         TrafficContactState currentContact,
@@ -200,7 +210,10 @@ public static class VatsimCallsignMatcher
         return best ?? VatsimMatchDiagnostics.None;
     }
 
-    private static IReadOnlyList<MatchCandidate> FindBestAssignment(IReadOnlyList<MatchCandidate> candidates)
+    private static IReadOnlyList<MatchCandidate> FindBestAssignment(
+        IReadOnlyList<TrafficContactState> contacts,
+        IReadOnlyList<VatsimPilotCandidate> pilots,
+        IReadOnlyList<MatchCandidate> candidates)
     {
         if (candidates.Count == 0)
         {
@@ -255,13 +268,85 @@ public static class VatsimCallsignMatcher
                 }
 
                 current.Add(candidate);
-                Search(groupIndex + 1, score + candidate.Score);
+                Search(groupIndex + 1, score + candidate.Score - GetFormationGroupBonus(candidate, current, contacts, pilots));
                 current.RemoveAt(current.Count - 1);
                 usedPilots.Remove(candidate.PilotIndex);
             }
 
             Search(groupIndex + 1, score);
         }
+    }
+
+    private static double GetFormationGroupBonus(
+        MatchCandidate candidate,
+        IReadOnlyList<MatchCandidate> assigned,
+        IReadOnlyList<TrafficContactState> contacts,
+        IReadOnlyList<VatsimPilotCandidate> pilots)
+    {
+        var candidateContact = contacts[candidate.ContactIndex];
+        var candidatePilot = pilots[candidate.PilotIndex];
+        var candidateGroup = GetCallsignGroup(candidatePilot.Callsign);
+        if (candidateGroup is null)
+        {
+            return 0;
+        }
+
+        foreach (var existing in assigned)
+        {
+            if (existing.ContactIndex == candidate.ContactIndex)
+            {
+                continue;
+            }
+
+            var existingPilot = pilots[existing.PilotIndex];
+            if (!string.Equals(candidateGroup, GetCallsignGroup(existingPilot.Callsign), StringComparison.OrdinalIgnoreCase) ||
+                !AreFormationNeighbors(candidateContact, contacts[existing.ContactIndex]))
+            {
+                continue;
+            }
+
+            return SameCallsignGroupBonus;
+        }
+
+        return 0;
+    }
+
+    private static bool AreFormationNeighbors(
+        TrafficContactState first,
+        TrafficContactState second)
+    {
+        if (GeoMath.DistanceNm(
+                first.LatitudeDeg,
+                first.LongitudeDeg,
+                second.LatitudeDeg,
+                second.LongitudeDeg) > FormationMaxDistanceNm ||
+            System.Math.Abs(first.AltitudeFt - second.AltitudeFt) > FormationMaxAltitudeDeltaFt)
+        {
+            return false;
+        }
+
+        if (first.HeadingDeg.HasValue && second.HeadingDeg.HasValue &&
+            System.Math.Abs(GeoMath.SignedRelativeBearingDeg(first.HeadingDeg.Value, second.HeadingDeg.Value)) > FormationMaxHeadingDeltaDeg)
+        {
+            return false;
+        }
+
+        return !first.SpeedKt.HasValue || !second.SpeedKt.HasValue ||
+            System.Math.Abs(first.SpeedKt.Value - second.SpeedKt.Value) <= FormationMaxSpeedDeltaKt;
+    }
+
+    private static string? GetCallsignGroup(string callsign)
+    {
+        var normalized = callsign.Trim().ToUpperInvariant();
+        var suffixStart = normalized.Length;
+        while (suffixStart > 0 && char.IsDigit(normalized[suffixStart - 1]))
+        {
+            suffixStart--;
+        }
+
+        return suffixStart == 0 || suffixStart == normalized.Length
+            ? null
+            : normalized[..suffixStart];
     }
 
     private static int FindPilotIndexByCallsign(IReadOnlyList<VatsimPilotCandidate> pilots, string callsign)
