@@ -24,6 +24,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     private readonly Queue<TrafficSnapshot> _snapshotHistory = new();
     private readonly Dictionary<string, CallsignConfirmation> _callsignConfirmations = new(StringComparer.OrdinalIgnoreCase);
     private IReadOnlyList<VatsimPilotCandidate> _cachedPilots = [];
+    private bool _hasPilotFeedSnapshot;
     private DateTimeOffset _lastRefreshAt = DateTimeOffset.MinValue;
     private int _isEnriching;
 
@@ -107,7 +108,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     {
         var refreshInterval = TimeSpan.FromSeconds(Math.Clamp(_settings.VatsimCallsignRefreshSeconds, 15, 300));
         var now = DateTimeOffset.UtcNow;
-        if (_cachedPilots.Count > 0 && now - _lastRefreshAt < refreshInterval)
+        if (_hasPilotFeedSnapshot && now - _lastRefreshAt < refreshInterval)
         {
             return _cachedPilots;
         }
@@ -116,7 +117,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         try
         {
             now = DateTimeOffset.UtcNow;
-            if (_cachedPilots.Count > 0 && now - _lastRefreshAt < refreshInterval)
+            if (_hasPilotFeedSnapshot && now - _lastRefreshAt < refreshInterval)
             {
                 return _cachedPilots;
             }
@@ -125,7 +126,12 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             response.EnsureSuccessStatusCode();
             await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
             var feed = await JsonSerializer.DeserializeAsync<VatsimDataFeed>(stream, JsonOptions, cancellationToken).ConfigureAwait(false);
-            _cachedPilots = feed?.Pilots?
+            if (feed?.Pilots is null)
+            {
+                throw new JsonException("VATSIM feed did not contain a pilots array.");
+            }
+
+            _cachedPilots = feed.Pilots
                 .Where(static pilot => !string.IsNullOrWhiteSpace(pilot.Callsign))
                 .Select(pilot => new VatsimPilotCandidate(
                     pilot.Callsign.Trim().ToUpperInvariant(),
@@ -136,6 +142,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                     pilot.Heading,
                     pilot.LastUpdated ?? feed.General?.UpdateTimestamp))
                 .ToList() ?? [];
+            _hasPilotFeedSnapshot = true;
             _lastRefreshAt = now;
 
             DataSourceDebugLog.ThrottledDebug(
@@ -214,7 +221,8 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             var confirmation = UpdateCallsignConfirmation(
                 enrichedContact.Id,
                 callsign,
-                pilotUpdateTime);
+                pilotUpdateTime,
+                originalContact.Timestamp);
             DataSourceDebugLog.ThrottledDebug(
                 LogSource,
                 $"callsign-confirmation-{enrichedContact.Id}",
@@ -239,19 +247,23 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     private CallsignConfirmation UpdateCallsignConfirmation(
         string contactId,
         string callsign,
-        DateTimeOffset? pilotUpdateTime)
+        DateTimeOffset? pilotUpdateTime,
+        DateTimeOffset observationTime)
     {
         if (!_callsignConfirmations.TryGetValue(contactId, out var confirmation) ||
             !string.Equals(confirmation.Callsign, callsign, StringComparison.OrdinalIgnoreCase))
         {
             var initialCount = confirmation?.Confirmed == true ? RequiredStableCallsignMatches - 1 : 0;
-            confirmation = new CallsignConfirmation(callsign, initialCount, null, false);
+            confirmation = new CallsignConfirmation(callsign, initialCount, null, null, false);
         }
 
         var count = confirmation.MatchCount;
-        if (!pilotUpdateTime.HasValue ||
-            confirmation.LastPilotUpdateTime is null ||
-            pilotUpdateTime.Value > confirmation.LastPilotUpdateTime.Value)
+        // VATSIM's last_updated value can remain unchanged while the simulator
+        // emits several new observations. Confirmation must follow observations,
+        // otherwise a valid match remains unconfirmed forever and stationary
+        // contacts are later removed by TrafficRepository.
+        if (confirmation.LastObservationTime is null ||
+            observationTime > confirmation.LastObservationTime.Value)
         {
             count++;
         }
@@ -260,6 +272,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         {
             MatchCount = count,
             LastPilotUpdateTime = pilotUpdateTime ?? confirmation.LastPilotUpdateTime,
+            LastObservationTime = observationTime,
             Confirmed = confirmation.Confirmed || count >= RequiredStableCallsignMatches
         };
         _callsignConfirmations[contactId] = confirmation;
@@ -376,5 +389,6 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         string Callsign,
         int MatchCount,
         DateTimeOffset? LastPilotUpdateTime,
+        DateTimeOffset? LastObservationTime,
         bool Confirmed);
 }
