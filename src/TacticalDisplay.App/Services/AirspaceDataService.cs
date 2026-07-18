@@ -166,10 +166,17 @@ public sealed class AirspaceDataService : IDisposable
 
         foreach (var reservation in root.EnumerateArray())
         {
-            if (!TryReadUnixMilliseconds(reservation, "start", out var activeFromUtc) ||
-                !TryReadUnixMilliseconds(reservation, "end", out var activeUntilUtc) ||
-                nowUtc < activeFromUtc ||
-                nowUtc > activeUntilUtc ||
+            var hasActiveStatus = string.Equals(
+                ReadString(reservation, "status"),
+                "active",
+                StringComparison.OrdinalIgnoreCase);
+            var isWithinActivationWindow =
+                TryReadUnixMilliseconds(reservation, "start", out var activeFromUtc) &&
+                TryReadUnixMilliseconds(reservation, "end", out var activeUntilUtc) &&
+                nowUtc >= activeFromUtc &&
+                nowUtc <= activeUntilUtc;
+
+            if ((!hasActiveStatus && !isWithinActivationWindow) ||
                 !reservation.TryGetProperty("areas", out var areas) ||
                 areas.ValueKind != JsonValueKind.Array)
             {
