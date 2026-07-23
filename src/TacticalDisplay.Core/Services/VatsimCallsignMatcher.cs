@@ -16,7 +16,9 @@ public static class VatsimCallsignMatcher
     private const double FormationMaxHeadingDeltaDeg = 60;
     private const double FormationMaxSpeedDeltaKt = 150;
     private const double SameCallsignGroupBonus = 0.35;
-    private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(20);
+    // VATSIM updates are normally around 15 seconds apart. Allow one delayed
+    // update, but never match against an arbitrarily old simulator position.
+    private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(30);
 
     public static TrafficSnapshot EnrichSnapshot(
         TrafficSnapshot snapshot,
@@ -383,25 +385,92 @@ public static class VatsimCallsignMatcher
         IReadOnlyList<TrafficSnapshot> history,
         DateTimeOffset targetTime)
     {
-        TrafficContactState? best = null;
-        var bestDelta = TimeSpan.MaxValue;
+        var samples = new List<TrafficContactState>();
         foreach (var snapshot in history)
         {
             var contact = snapshot.Contacts.FirstOrDefault(item => string.Equals(item.Id, contactId, StringComparison.OrdinalIgnoreCase));
-            if (contact is null)
+            if (contact is not null)
             {
-                continue;
-            }
-
-            var delta = (contact.Timestamp - targetTime).Duration();
-            if (delta < bestDelta)
-            {
-                best = contact;
-                bestDelta = delta;
+                samples.Add(contact);
             }
         }
 
-        return bestDelta <= MaxHistoricalMatchAge ? best : null;
+        if (samples.Count == 0)
+        {
+            return null;
+        }
+
+        var ordered = samples
+            .OrderBy(static sample => sample.Timestamp)
+            .ToList();
+        var exact = ordered.FirstOrDefault(sample => sample.Timestamp == targetTime);
+        if (exact is not null)
+        {
+            return exact;
+        }
+
+        TrafficContactState? before = null;
+        TrafficContactState? after = null;
+        foreach (var sample in ordered)
+        {
+            if (sample.Timestamp < targetTime)
+            {
+                before = sample;
+                continue;
+            }
+
+            after = sample;
+            break;
+        }
+
+        // Interpolating between the two surrounding observations is more
+        // accurate than selecting a nearby sample for fast-moving traffic.
+        if (before is not null && after is not null)
+        {
+            var beforeAge = targetTime - before.Timestamp;
+            var afterAge = after.Timestamp - targetTime;
+            if (beforeAge <= MaxHistoricalMatchAge && afterAge <= MaxHistoricalMatchAge)
+            {
+                var span = (after.Timestamp - before.Timestamp).TotalSeconds;
+                if (span > 0)
+                {
+                    return Interpolate(before, after, (targetTime - before.Timestamp).TotalSeconds / span, targetTime);
+                }
+            }
+        }
+
+        var nearest = ordered
+            .OrderBy(sample => (sample.Timestamp - targetTime).Duration())
+            .First();
+        return (nearest.Timestamp - targetTime).Duration() <= MaxHistoricalMatchAge
+            ? nearest
+            : null;
+    }
+
+    private static TrafficContactState Interpolate(
+        TrafficContactState before,
+        TrafficContactState after,
+        double fraction,
+        DateTimeOffset timestamp)
+    {
+        fraction = System.Math.Clamp(fraction, 0, 1);
+        double? heading = before.HeadingDeg.HasValue && after.HeadingDeg.HasValue
+            ? GeoMath.NormalizeDegrees(before.HeadingDeg.Value +
+                (GeoMath.SignedRelativeBearingDeg(before.HeadingDeg.Value, after.HeadingDeg.Value) * fraction))
+            : null;
+        double? speed = before.SpeedKt.HasValue && after.SpeedKt.HasValue
+            ? before.SpeedKt.Value + ((after.SpeedKt.Value - before.SpeedKt.Value) * fraction)
+            : null;
+
+        return new TrafficContactState(
+            before.Id,
+            before.Callsign ?? after.Callsign,
+            before.LatitudeDeg + ((after.LatitudeDeg - before.LatitudeDeg) * fraction),
+            before.LongitudeDeg + ((after.LongitudeDeg - before.LongitudeDeg) * fraction),
+            before.AltitudeFt + ((after.AltitudeFt - before.AltitudeFt) * fraction),
+            heading,
+            speed,
+            timestamp);
     }
 
     private static bool IsCandidate(TrafficContactState contact, VatsimPilotCandidate pilot, out double score)

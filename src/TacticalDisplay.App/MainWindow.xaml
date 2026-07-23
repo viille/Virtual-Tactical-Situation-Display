@@ -189,7 +189,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="68" />
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="92" />
+                        <ColumnDefinition Width="142" />
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Row="0"
@@ -216,6 +216,13 @@
                                 Width="46"
                                 Visibility="Collapsed"
                                 Click="OnExitFullscreenButtonClick"
+                                WindowChrome.IsHitTestVisibleInChrome="True"
+                                Style="{StaticResource MfdWindowButtonStyle}" />
+                        <Button x:Name="FullscreenButton"
+                                Content="FULL"
+                                Width="46"
+                                Visibility="Visible"
+                                Click="OnFullscreenButtonClick"
                                 WindowChrome.IsHitTestVisibleInChrome="True"
                                 Style="{StaticResource MfdWindowButtonStyle}" />
                         <Button Content="?"
@@ -419,7 +426,7 @@
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Bottom arrows : Increase or decrease label background opacity" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="? : Show this help" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="- : Minimize" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="EXIT / Esc : Leave fullscreen-like maximized mode" Margin="0,0,0,4" />
+                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="FULL / Esc : Toggle fullscreen on the current monitor" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="X : Close" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="" Margin="0,0,0,4" />
                                             <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="" Margin="0,0,0,4" />
@@ -1075,7 +1082,7 @@
 
                     <GroupBox Header="Hotkeys" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
                         <StackPanel>
-                            <TextBlock Text="Global keyboard and XInput gamepad bindings."
+                            <TextBlock Text="Global keyboard, XInput gamepad, and flight joystick bindings."
                                        Foreground="#7CB9A9"
                                        TextWrapping="Wrap"
                                        Margin="0,0,0,6" />

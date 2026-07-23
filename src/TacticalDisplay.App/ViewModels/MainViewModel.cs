@@ -779,6 +779,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             case "pin":
                 ToggleAlwaysOnTopCommand.Execute(null);
                 return true;
+            case "fullscreen":
+                // Fullscreen is owned by MainWindow because it changes native window bounds.
+                return false;
             case "settings":
                 ToggleSettingsCommand.Execute(null);
                 return true;

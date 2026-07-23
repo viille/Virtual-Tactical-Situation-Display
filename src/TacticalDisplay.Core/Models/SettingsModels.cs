@@ -85,6 +85,7 @@ public static class HotkeyDefaults
         new("airspace", "Toggle LARA airspace", string.Empty, string.Empty),
         new("area", "Toggle controlled airspace", string.Empty, string.Empty),
         new("pin", "Pin window on top", "Ctrl+T", string.Empty),
+        new("fullscreen", "Toggle fullscreen", "Ctrl+Shift+F", string.Empty),
         new("settings", "Show or hide settings", "Ctrl+H", "Start"),
         new("kneepad", "Show or hide kneepad", "Ctrl+K", "Back"),
         new("kneepad-prev", "Previous kneepad page", "Ctrl+PageUp", "LeftShoulder"),
