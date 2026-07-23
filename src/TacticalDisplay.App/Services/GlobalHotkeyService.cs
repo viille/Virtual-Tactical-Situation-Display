@@ -15,6 +15,9 @@ public sealed class GlobalHotkeyService : IDisposable
     private const int WmSysKeyDown = 0x0104;
     private const int WmSysKeyUp = 0x0105;
     private const int XInputMaxControllers = 4;
+    private const int MaxJoystickDevices = 16;
+    private const uint JoyReturnButtons = 0x00000080;
+    private const uint JoyNoError = 0;
 
     private readonly Dispatcher _dispatcher;
     private readonly Action<string> _executeAction;
@@ -23,8 +26,11 @@ public sealed class GlobalHotkeyService : IDisposable
     private readonly HashSet<string> _pressedKeyboardBindings = new(StringComparer.OrdinalIgnoreCase);
     private readonly XInputState[] _previousGamepadStates = new XInputState[XInputMaxControllers];
     private readonly bool[] _previousGamepadConnected = new bool[XInputMaxControllers];
+    private readonly uint[] _previousJoystickButtons = new uint[MaxJoystickDevices];
+    private readonly bool[] _previousJoystickConnected = new bool[MaxJoystickDevices];
     private Dictionary<string, string> _keyboardBindings = new(StringComparer.OrdinalIgnoreCase);
     private List<GamepadBinding> _gamepadBindings = [];
+    private List<JoystickBinding> _joystickBindings = [];
     private IntPtr _keyboardHook;
     private bool _disposed;
 
@@ -41,6 +47,7 @@ public sealed class GlobalHotkeyService : IDisposable
     }
 
     public event EventHandler<GamepadButtonPressedEventArgs>? GamepadButtonPressed;
+    public event EventHandler<JoystickButtonPressedEventArgs>? JoystickButtonPressed;
 
     public bool SuppressActions { get; set; }
 
@@ -66,6 +73,7 @@ public sealed class GlobalHotkeyService : IDisposable
     {
         var keyboardBindings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var gamepadBindings = new List<GamepadBinding>();
+        var joystickBindings = new List<JoystickBinding>();
 
         foreach (var binding in bindings.Where(static binding => binding.IsEnabled))
         {
@@ -78,10 +86,16 @@ public sealed class GlobalHotkeyService : IDisposable
             {
                 gamepadBindings.Add(gamepad);
             }
+
+            if (TryParseJoystickBinding(binding.Gamepad, binding.Action, out var joystick))
+            {
+                joystickBindings.Add(joystick);
+            }
         }
 
         _keyboardBindings = keyboardBindings;
         _gamepadBindings = gamepadBindings;
+        _joystickBindings = joystickBindings;
         _pressedKeyboardBindings.Clear();
     }
 
@@ -263,6 +277,62 @@ public sealed class GlobalHotkeyService : IDisposable
             _previousGamepadConnected[index] = true;
             _previousGamepadStates[index] = state;
         }
+
+        PollJoysticks();
+    }
+
+    private void PollJoysticks()
+    {
+        var deviceCount = (int)Math.Min(joyGetNumDevs(), (uint)MaxJoystickDevices);
+        for (var index = 0; index < MaxJoystickDevices; index++)
+        {
+            if (index >= deviceCount)
+            {
+                _previousJoystickConnected[index] = false;
+                _previousJoystickButtons[index] = 0;
+                continue;
+            }
+
+            var info = new JoystickInfoEx { Size = (uint)Marshal.SizeOf<JoystickInfoEx>(), Flags = JoyReturnButtons };
+            if (joyGetPosEx((uint)index, ref info) != JoyNoError)
+            {
+                _previousJoystickConnected[index] = false;
+                _previousJoystickButtons[index] = 0;
+                continue;
+            }
+
+            var previousButtons = _previousJoystickConnected[index] ? _previousJoystickButtons[index] : info.Buttons;
+            var pressedButtons = info.Buttons & ~previousButtons;
+            if (pressedButtons != 0)
+            {
+                for (var button = 0; button < 32; button++)
+                {
+                    var mask = 1u << button;
+                    if ((pressedButtons & mask) == 0)
+                    {
+                        continue;
+                    }
+
+                    var buttonNumber = button + 1;
+                    var bindingText = $"Joystick{index + 1}:Button{buttonNumber}";
+                    JoystickButtonPressed?.Invoke(this, new JoystickButtonPressedEventArgs(
+                        index,
+                        buttonNumber,
+                        bindingText));
+
+                    foreach (var binding in _joystickBindings)
+                    {
+                        if (binding.DeviceIndex == index && binding.ButtonNumber == buttonNumber)
+                        {
+                            Dispatch(binding.Action);
+                        }
+                    }
+                }
+            }
+
+            _previousJoystickConnected[index] = true;
+            _previousJoystickButtons[index] = info.Buttons;
+        }
     }
 
     private static bool TryParseGamepadBinding(string? value, string action, out GamepadBinding binding)
@@ -296,6 +366,30 @@ public sealed class GlobalHotkeyService : IDisposable
         }
 
         binding = new GamepadBinding(action, controllerIndex, button);
+        return true;
+    }
+
+    private static bool TryParseJoystickBinding(string? value, string action, out JoystickBinding binding)
+    {
+        binding = default;
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var parts = value.Trim().Split(':', 2, StringSplitOptions.TrimEntries);
+        if (parts.Length != 2 ||
+            !parts[0].StartsWith("Joystick", StringComparison.OrdinalIgnoreCase) ||
+            !int.TryParse(parts[0]["Joystick".Length..], out var oneBasedDevice) ||
+            oneBasedDevice < 1 || oneBasedDevice > MaxJoystickDevices ||
+            !parts[1].StartsWith("Button", StringComparison.OrdinalIgnoreCase) ||
+            !int.TryParse(parts[1]["Button".Length..], out var buttonNumber) ||
+            buttonNumber < 1 || buttonNumber > 32)
+        {
+            return false;
+        }
+
+        binding = new JoystickBinding(action, oneBasedDevice - 1, buttonNumber);
         return true;
     }
 
@@ -408,6 +502,32 @@ public sealed class GlobalHotkeyService : IDisposable
 
     [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
     private static extern uint XInputGetState(int dwUserIndex, out XInputState pState);
+
+    [DllImport("winmm.dll")]
+    private static extern uint joyGetNumDevs();
+
+    [DllImport("winmm.dll")]
+    private static extern uint joyGetPosEx(uint uJoyID, ref JoystickInfoEx pji);
+
+    private readonly record struct JoystickBinding(string Action, int DeviceIndex, int ButtonNumber);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct JoystickInfoEx
+    {
+        public uint Size;
+        public uint Flags;
+        public uint X;
+        public uint Y;
+        public uint Z;
+        public uint R;
+        public uint U;
+        public uint V;
+        public uint Buttons;
+        public uint ButtonNumber;
+        public uint Pov;
+        public uint Reserved1;
+        public uint Reserved2;
+    }
 }
 
 public sealed class GamepadButtonPressedEventArgs : EventArgs
@@ -421,4 +541,18 @@ public sealed class GamepadButtonPressedEventArgs : EventArgs
     public int ControllerIndex { get; }
     public string Button { get; }
     public string BindingText => $"Gamepad{ControllerIndex + 1}:{Button}";
+}
+
+public sealed class JoystickButtonPressedEventArgs : EventArgs
+{
+    public JoystickButtonPressedEventArgs(int deviceIndex, int buttonNumber, string bindingText)
+    {
+        DeviceIndex = deviceIndex;
+        ButtonNumber = buttonNumber;
+        BindingText = bindingText;
+    }
+
+    public int DeviceIndex { get; }
+    public int ButtonNumber { get; }
+    public string BindingText { get; }
 }

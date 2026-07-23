@@ -17,6 +17,7 @@ public partial class HotkeyConfigDialog : Window
         DataContext = viewModel;
         _hotkeyService = hotkeyService;
         _hotkeyService.GamepadButtonPressed += OnGamepadButtonPressed;
+        _hotkeyService.JoystickButtonPressed += OnJoystickButtonPressed;
         PreviewKeyDown += OnWindowPreviewKeyDown;
         Closed += OnClosed;
     }
@@ -127,6 +128,17 @@ public partial class HotkeyConfigDialog : Window
         FinishHotkeyCapture();
     }
 
+    private void OnJoystickButtonPressed(object? sender, JoystickButtonPressedEventArgs e)
+    {
+        if (_capturingHotkeyRow is null || _capturingHotkeyDevice != "gamepad")
+        {
+            return;
+        }
+
+        _capturingHotkeyRow.SetGamepad(e.BindingText);
+        FinishHotkeyCapture();
+    }
+
     private void OnCloseClick(object sender, RoutedEventArgs e)
     {
         Close();
@@ -136,6 +148,7 @@ public partial class HotkeyConfigDialog : Window
     {
         ClearHotkeyCapture();
         _hotkeyService.GamepadButtonPressed -= OnGamepadButtonPressed;
+        _hotkeyService.JoystickButtonPressed -= OnJoystickButtonPressed;
         PreviewKeyDown -= OnWindowPreviewKeyDown;
         Closed -= OnClosed;
     }

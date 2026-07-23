@@ -18,7 +18,7 @@
         </Grid.RowDefinitions>
 
         <TextBlock Grid.Row="0"
-                   Text="Press SET, then press the keyboard shortcut or gamepad button. Esc cancels; Delete or Backspace clears the selected binding."
+                   Text="Press SET, then press the keyboard shortcut, XInput gamepad button, or flight joystick button. Esc cancels; Delete or Backspace clears the selected binding."
                    Foreground="#7CB9A9"
                    TextWrapping="Wrap"
                    Margin="0,0,0,10" />

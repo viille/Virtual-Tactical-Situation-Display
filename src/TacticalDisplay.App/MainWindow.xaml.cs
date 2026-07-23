@@ -3,12 +3,14 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Net;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using System.Windows.Interop;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
 using Markdig;
@@ -45,7 +47,8 @@ public partial class MainWindow : Window
     private int _updateCheckStarted;
     private bool _isClosing;
     private bool _shutdownCompleted;
-    private bool _fullscreenWarningOpen;
+    private bool _isFullscreen;
+    private Rect? _windowedBounds;
     private bool _kneepadWebViewsInitializing;
     private CoreWebView2Environment? _kneepadWebViewEnvironment;
     private readonly Dictionary<KneepadPage, WebView2> _kneepadWebViews = new();
@@ -260,6 +263,12 @@ public partial class MainWindow : Window
 
     private void ExecuteHotkeyAction(string action)
     {
+        if (string.Equals(action.Trim(), "fullscreen", StringComparison.OrdinalIgnoreCase))
+        {
+            ToggleFullscreen();
+            return;
+        }
+
         _viewModel.ExecuteHotkeyAction(action);
     }
 
@@ -781,7 +790,7 @@ public partial class MainWindow : Window
 
     private void StoreWindowSize()
     {
-        if (WindowState != WindowState.Normal)
+        if (_isFullscreen || WindowState != WindowState.Normal)
         {
             return;
         }
@@ -869,60 +878,125 @@ public partial class MainWindow : Window
 
     private void OnExitFullscreenButtonClick(object sender, RoutedEventArgs e)
     {
-        ExitFullscreenLikeState();
+        ExitFullscreen();
+    }
+
+    private void OnFullscreenButtonClick(object sender, RoutedEventArgs e)
+    {
+        ToggleFullscreen();
+    }
+
+    private void ToggleFullscreen()
+    {
+        if (_isFullscreen)
+        {
+            ExitFullscreen();
+            return;
+        }
+
+        EnterFullscreen();
+    }
+
+    private void EnterFullscreen()
+    {
+        if (_isFullscreen)
+        {
+            return;
+        }
+
+        if (WindowState == WindowState.Normal)
+        {
+            _windowedBounds = new Rect(Left, Top, ActualWidth > 0 ? ActualWidth : Width, ActualHeight > 0 ? ActualHeight : Height);
+        }
+        else
+        {
+            _windowedBounds = RestoreBounds;
+        }
+
+        var monitorBounds = GetCurrentMonitorBoundsInDips();
+        WindowState = WindowState.Normal;
+        WindowStyle = WindowStyle.None;
+        ResizeMode = ResizeMode.NoResize;
+        Left = monitorBounds.Left;
+        Top = monitorBounds.Top;
+        Width = monitorBounds.Width;
+        Height = monitorBounds.Height;
+        _isFullscreen = true;
+        ExitFullscreenButton.Visibility = Visibility.Visible;
+        FullscreenButton.Visibility = Visibility.Collapsed;
+    }
+
+    private void ExitFullscreen()
+    {
+        if (!_isFullscreen)
+        {
+            if (WindowState == WindowState.Maximized)
+            {
+                WindowState = WindowState.Normal;
+            }
+
+            return;
+        }
+
+        _isFullscreen = false;
+        ResizeMode = ResizeMode.CanResize;
+        WindowStyle = WindowStyle.None;
+        WindowState = WindowState.Normal;
+        if (_windowedBounds is Rect bounds && bounds.Width > 0 && bounds.Height > 0)
+        {
+            Left = bounds.Left;
+            Top = bounds.Top;
+            Width = bounds.Width;
+            Height = bounds.Height;
+        }
+
+        _windowedBounds = null;
+        ExitFullscreenButton.Visibility = Visibility.Collapsed;
+        FullscreenButton.Visibility = Visibility.Visible;
+    }
+
+    private Rect GetCurrentMonitorBoundsInDips()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        var monitor = MonitorFromWindow(handle, MonitorDefaultToNearest);
+        if (monitor == IntPtr.Zero)
+        {
+            return SystemParameters.WorkArea;
+        }
+
+        var info = new MonitorInfo { CbSize = Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info))
+        {
+            return SystemParameters.WorkArea;
+        }
+
+        var dpi = VisualTreeHelper.GetDpi(this);
+        return new Rect(
+            info.Monitor.Left / dpi.DpiScaleX,
+            info.Monitor.Top / dpi.DpiScaleY,
+            (info.Monitor.Right - info.Monitor.Left) / dpi.DpiScaleX,
+            (info.Monitor.Bottom - info.Monitor.Top) / dpi.DpiScaleY);
     }
 
     private void OnWindowStateChanged(object? sender, EventArgs e)
     {
-        var isFullscreenLike = WindowState == WindowState.Maximized;
-        ExitFullscreenButton.Visibility = isFullscreenLike ? Visibility.Visible : Visibility.Collapsed;
-
-        if (isFullscreenLike)
+        if (!_isFullscreen && WindowState == WindowState.Maximized)
         {
-            ShowFullscreenWarning();
+            // A double-click on the custom frame can still maximize the window.
+            // Treat it as the same monitor-local fullscreen mode.
+            Dispatcher.BeginInvoke(ToggleFullscreen, DispatcherPriority.Loaded);
         }
     }
 
     private void OnWindowKeyDown(object sender, KeyEventArgs e)
     {
-        if (e.Key != Key.Escape || WindowState != WindowState.Maximized)
+        if (e.Key != Key.Escape || (!_isFullscreen && WindowState != WindowState.Maximized))
         {
             return;
         }
 
-        ExitFullscreenLikeState();
+        ExitFullscreen();
         e.Handled = true;
-    }
-
-    private void ExitFullscreenLikeState()
-    {
-        if (WindowState == WindowState.Maximized)
-        {
-            WindowState = WindowState.Normal;
-        }
-    }
-
-    private void ShowFullscreenWarning()
-    {
-        if (_fullscreenWarningOpen)
-        {
-            return;
-        }
-
-        _fullscreenWarningOpen = true;
-        try
-        {
-            MessageBox.Show(
-                this,
-                "This application is not intended to be used in fullscreen mode.\n\nUse the EXIT button or press Esc to return to windowed mode.",
-                "Fullscreen Not Recommended",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
-        }
-        finally
-        {
-            _fullscreenWarningOpen = false;
-        }
     }
 
     private void OnHelpButtonClick(object sender, RoutedEventArgs e)
@@ -1123,5 +1197,32 @@ public partial class MainWindow : Window
         return normalized.Length <= maxLength
             ? normalized
             : $"{normalized[..maxLength].Trim()}...";
+    }
+
+    private const uint MonitorDefaultToNearest = 2;
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo monitorInfo);
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MonitorInfo
+    {
+        public int CbSize;
+        public MonitorRect Monitor;
+        public MonitorRect Work;
+        public uint Flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
     }
 }

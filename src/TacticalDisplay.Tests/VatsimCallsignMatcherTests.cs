@@ -272,4 +272,27 @@ public sealed class VatsimCallsignMatcherTests
 
         Assert.Equal("FIN123", enriched.Contacts.Single().Callsign);
     }
+
+    [Fact]
+    public void EnrichSnapshotFromHistory_InterpolatesFastMovingContactBetweenSamples()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var firstTime = now.AddSeconds(-20);
+        var targetTime = now.AddSeconds(-15);
+        var secondTime = now.AddSeconds(-10);
+
+        static TrafficSnapshot Snapshot(DateTimeOffset timestamp, double latitude) =>
+            new(
+                new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, timestamp),
+                [new TrafficContactState("T1", null, latitude, 24.0, 5000, 90, 450, timestamp)],
+                timestamp);
+
+        var current = Snapshot(now, 61.0);
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(
+            current,
+            [Snapshot(firstTime, 60.0), Snapshot(secondTime, 60.2), current],
+            [new VatsimPilotCandidate("FIN123", 60.1, 24.0, 5000, 450, 90, targetTime)]);
+
+        Assert.Equal("FIN123", enriched.Contacts.Single().Callsign);
+    }
 }
