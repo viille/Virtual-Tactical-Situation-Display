@@ -16,9 +16,9 @@ public static class VatsimCallsignMatcher
     private const double FormationMaxHeadingDeltaDeg = 60;
     private const double FormationMaxSpeedDeltaKt = 150;
     private const double SameCallsignGroupBonus = 0.35;
-    // VATSIM updates are normally around 15 seconds apart. Allow one delayed
-    // update, but never match against an arbitrarily old simulator position.
-    private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(30);
+    // Keep the historical match bounded so stale positions cannot be assigned
+    // to a current VATSIM pilot. Interpolation handles the normal update gap.
+    private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(20);
 
     public static TrafficSnapshot EnrichSnapshot(
         TrafficSnapshot snapshot,
