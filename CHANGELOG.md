@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.6 — 2026-07-26
+
+- Switched debug report uploads to direct Vercel Blob client multipart uploads.
+
 ## 0.14.5 — 2026-07-23
 
 - Improved VATSIM callsign matching with timestamp-aware historical samples and position interpolation.
