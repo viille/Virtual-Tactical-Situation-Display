@@ -1,172 +1,100 @@
 ![VTSD logo](VTSD.png)
 
-Virtual Tactical Situation Display is a Windows application for a clear 2D tactical air picture around your own aircraft.
+# Virtual Tactical Situation Display
+
+Virtual Tactical Situation Display (VTSD) is a Windows app that shows a simple tactical air picture around your own simulator aircraft.
 
 **Simulator use only. Not for real-world aviation, air traffic control, or operational decision-making.**
 
+![Tactical Situation Display screenshot](TacticalDisplay.App.png)
+
 ## Features
 
-- own aircraft position and heading
-- nearby simulator traffic
+- ownship and nearby simulator traffic
+- support for MSFS, X-Plane 12, legacy X-Plane/XPUIPC, and Demo mode
 - friend, package, support, enemy, and unknown target symbols
-- range, bearing, altitude difference, target heading, aspect, and closure labels
-- target trails
-- adjustable target symbol size
-- virtual MFD-style frame with on-screen controls
-- active V-LARA reserved airspace boundaries
-- user-defined bullseye reference point
-- multi-page kneepad for mission text, imported images, and URL pages
+- map, trails, declutter, bullseye, and active V-LARA airspace overlays
+- VTSD Cloud for synced collections, kneepad pages, and map features
+- kneepad for mission text, images, URL pages, and Cloud pages
+- tablet web display on the local network
+- global keyboard and gamepad hotkeys
 
-## Screenshot
+## Requirements
 
-![Tactical Situation Display screenshot](TacticalDisplay.App.png)
+- Windows
+- Microsoft Edge WebView2 Runtime
+- a supported simulator if you want live traffic data
+
+SimConnect is bundled for Microsoft Flight Simulator. X-Plane 12 uses its local Web API. Legacy X-Plane support requires XPUIPC.
 
 ## Quick Start
 
-1. Download the latest release.
+1. Download and extract the latest VTSD release.
 2. Start `TacticalDisplay.App.exe`.
-3. Use `Demo` first to check the display.
-4. Click `SET` to open or hide the settings panel.
-5. Select `MSFS`, `XPlane 12`, or `Xplane Legacy (XPUIPC)` from `Source` when using live simulator data.
+3. Use `Demo` first to check that the display works.
+4. Open `SET`.
+5. Select `MSFS`, `XPlane 12`, or `Xplane Legacy (XPUIPC)`.
 6. Click `Apply Source`.
 
-## Data Sources
+## VTSD Cloud
 
-- `Demo` uses built-in test traffic.
-- `MSFS` uses Microsoft Flight Simulator through SimConnect.
-- `XPlane 12` uses the X-Plane 12 local Web API.
-- `Xplane Legacy (XPUIPC)` uses X-Plane through XPUIPC.
+Open `SET` > `VTSD Cloud` to sign in with VATSIM.
 
-SimConnect is bundled with the app. X-Plane 12 uses `http://localhost:8086/` by default; check that the X-Plane Web API is available and incoming traffic is not disabled. For legacy X-Plane support, install XPUIPC into `X-Plane\Resources\plugins`.
+Cloud can sync authorized collections, redeem share codes, cache content for offline use, and show synced kneepad pages or map features in VTSD.
 
-When live simulator traffic does not include callsigns, the app can enrich matching nearby contacts from the official VATSIM public data feed. VATSIM data is used only for callsign metadata; position, speed, heading, and altitude still come from the selected simulator source.
+## Main Controls
 
-## Display Controls
+- `RNG +` / `RNG -`: change range
+- `N/HDG`: switch north-up / heading-up
+- `MAP`: show or hide the map
+- `DCLR`: reduce clutter
+- `TRAIL`: show or hide trails
+- `BE`: show or hide bullseye
+- `LARA`: show or hide active V-LARA airspace
+- `AREA`: show or hide controlled airspace map style
+- `INT`: select or clear an intercept target
+- `LBL`: cycle label detail
+- `KNEE`: show or hide kneepad
+- `WEB`: show or hide tablet web display
+- `SET`: show or hide settings
+- `PIN`: keep the window on top
 
-The app opens directly into the tactical display. The settings panel is hidden by default and can be opened with `SET`.
-The current orientation and range are shown in the upper-left corner of the display surface.
+Click a target to cycle its affiliation. Right click a target or label to rename it. Drag a label to move it. Middle click a target or label to hide or show that label.
 
 ## Tablet Display
 
-The desktop app starts a lightweight web display on port `8787`. Open the `Web: http://...:8787/` address shown in the app footer from a tablet or another device on the same local network.
+Turn on `WEB`, then open the `Web: http://...:8787/` address shown in the app footer from a tablet or another device on the same local network.
 
-The tablet display renders the Mapbox map and tactical canvas on the device and stays synchronized with the desktop app. It includes controls for range, orientation, map opacity, label background opacity, map, declutter, trails, bullseye, intercept target selection, labels, LARA airspace, controlled airspace layers, kneepad, pin, settings, and target symbol size. These controls update the same display state as the main window controls.
-
-The tablet display can be turned on or off with the `WEB` frame button next to `SET`.
-
-If the tablet cannot connect, allow the app through Windows Firewall for private networks and check that both devices are connected to the same network.
-
-Frame controls:
-- `RNG +` / `RNG -`: change visible range
-- `N/HDG`: switch north-up / heading-up
-- top up/down arrows: increase or decrease map opacity
-- bottom up/down arrows: increase or decrease label background opacity
-- `MAP`: show or hide the map layer
-- `DCLR`: reduce display clutter
-- `TRAIL`: show or hide target trails
-- `BE`: show or hide bullseye
-- `LARA`: show or hide active V-LARA airspace boundaries
-- `AREA`: switch between the base map and the TMA/CTR/CTA map style
-- `INT`: select or clear one intercept target
-- `PIN`: pin or unpin the window on top
-- `LBL`: cycle label detail level
-- `KNEE`: show or hide the kneepad
-- `SET`: show or hide the settings panel
-- `WEB`: turn tablet web server on or off
-- `TGT +` / `TGT -`: increase or decrease target symbol size
-
-The scope uses four range rings at 1/4, 1/2, 3/4, and full selected range. Heading is shown as an `HDG` readout at the top of the radar area, and the compass reference is drawn as a circular outer compass instead of radial lines through the display.
-
-Window controls:
-- the app uses its own borderless window controls
-- drag empty, non-functional parts of the virtual frame to move the window
-- resize from the window edge
-- the last normal window size is saved when the app closes
-
-Settings panel controls:
-- `Area opacity`: adjust airspace layer opacity
-- `Save Settings`: keep current settings for the next launch
-
-Hotkeys:
-- hotkeys work globally while the desktop app is running, even when the TSD window is not active
-- open `Settings` > `Hotkeys` > `Configure Hotkeys` to change bindings in a pop-up window
-- press `SET` on a row, then press the keyboard shortcut or XInput gamepad button to assign it
-- press `Esc` while assigning to cancel, or `Delete` / `Backspace` to clear the selected binding
-- default keyboard bindings include `Ctrl+H` for settings, `Ctrl+D` for declutter, `Ctrl+T` for pin, `Ctrl+K` for kneepad, and `Ctrl+PageUp` / `Ctrl+PageDown` for kneepad pages
+If the tablet cannot connect, allow VTSD through Windows Firewall for private networks and check that both devices are on the same network.
 
 ## Kneepad
 
-The kneepad opens inside the TSD display area with `KNEE` or `Ctrl+K`.
+Open the kneepad with `KNEE` or `Ctrl+K`.
 
-Kneepad pages:
-- use `<` / `>` or `Ctrl+PageUp` / `Ctrl+PageDown` to change pages
-- use `New` to add a page
-- use `Del` to delete the current page
-- empty pages let you choose `Mission`, `Image`, or `URL` directly from the kneepad
+Kneepad pages can contain mission text, imported images, URL pages, and synced VTSD Cloud kneepad pages. Use `<` / `>` or `Ctrl+PageUp` / `Ctrl+PageDown` to change pages.
 
-Page types:
-- `Mission`: editable mission information text
-- `Image`: an imported kneepad image scaled to the display area
-- `URL`: an embedded WebView2 browser page
+## Hotkeys
 
-URL pages stay loaded in the background while switching kneepad pages. The cache is bounded so old background pages are released instead of growing memory use without limit.
+Open `SET` > `Hotkeys` > `Configure Hotkeys` to change keyboard and XInput gamepad bindings.
 
-WebView2 profile data is stored under `%APPDATA%\VirtualTacticalSituationDisplay\WebView2`, so URL page login cookies can persist between app launches. Use `Settings` > `Debug` > `Clear WebView Cookies` to remove saved WebView cookies.
+Common default keyboard bindings:
 
-The tablet display mirrors kneepad state, page navigation, and selected page content. Tablet URL pages use the tablet browser's own cookie and session handling.
-
-## Targets
-
-Intercept target mode:
-- click `INT`, then left click a target to mark it for intercept
-- with `INT` armed, left click either the target symbol or its label
-- the display draws a line to the selected target, highlights the target, and shows intercept heading and time to intercept in the top `INT` readout next to `HDG`
-- `NO INT` means the current speed and target motion do not produce an intercept solution
-- click `INT` again to clear the current intercept target
-
-Symbols:
-- friend = circle
-- package = diamond
-- support = square
-- enemy = cross
-- unknown = dot
-
-Mouse actions:
-- click `INT`, then left click a target: select or clear the intercept target
-- left click a target: cycle affiliation
-- right click a target: rename
-- right click a label: rename that target
-- drag a label: move that label
-- middle click a target or label: hide or show that label
-
-## Airspace
-
-The app can show active V-LARA reserved airspace boundaries. It loads EFIN and EETT airspace geometry and uses the V-LARA reservations feeds to highlight active reservations.
-
-Use `LARA` to toggle the layer.
-
-## Bullseye
-
-Enter latitude and longitude in the settings panel, then click `Set Bullseye`.
-After coordinates have been set, use `BE` to show or hide bullseye without clearing the saved coordinates.
-
-Accepted examples:
-- `N60.3172` and `E024.9633`
-- `60.3172N` and `024.9633E`
-- `60.3172` and `24.9633`
-
-`S` and `W` work normally. Click `Clear Bullseye` to remove it.
-
-When the bullseye is within the selected range, the display shows its symbol plus bearing/range from ownship.
+- `Ctrl+H`: settings
+- `Ctrl+D`: declutter
+- `Ctrl+T`: pin window on top
+- `Ctrl+K`: kneepad
+- `Ctrl+PageUp` / `Ctrl+PageDown`: kneepad pages
 
 ## Troubleshooting
 
-If live data does not appear, check:
-- the correct source is selected
-- the simulator is running
-- XPUIPC is installed when using legacy X-Plane
-- X-Plane 12 local Web API URL is correct when using `XPlane 12`
+If live data does not appear, check that the correct source is selected, the simulator is running, and the required simulator interface is enabled.
 
-If the map layer says `Map unavailable`, check that Microsoft Edge WebView2 Runtime is installed and online map access is available. A `0x8000FFFF` startup error usually means WebView2 failed before the map page or online tiles loaded.
+For X-Plane 12, check that the local Web API is available at `http://localhost:8086/`. For legacy X-Plane, check that XPUIPC is installed in `X-Plane\Resources\plugins`.
 
-Debug logs are written to `%APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log` when Debug is enabled in the app. The log includes flight-time data source, VATSIM callsign, airspace, web display, and app diagnostics.
+If the map says `Map unavailable`, install or repair Microsoft Edge WebView2 Runtime.
+
+Debug logs are written to `%APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log` when Debug is enabled in settings.
+
+## License
+
+This project is licensed under the terms in `LICENSE`.
