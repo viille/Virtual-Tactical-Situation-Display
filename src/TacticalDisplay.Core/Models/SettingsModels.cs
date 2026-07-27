@@ -18,7 +18,7 @@ public sealed class TacticalDisplaySettings
     public double WindowHeight { get; set; } = 840;
     public double MinTrackedAltitudeFt { get; set; } = 200;
     public double MaxTrackedAltitudeFt { get; set; } = 80000;
-    public int[] RangeScaleOptionsNm { get; init; } = [10, 20, 40, 80, 120];
+    public int[] RangeScaleOptionsNm { get; set; } = [5, 10, 20, 40, 80, 100];
     public int SelectedRangeNm { get; set; } = 40;
     public ScopeOrientationMode OrientationMode { get; set; } = ScopeOrientationMode.HeadingUp;
     public DirectionReferenceMode DirectionReferenceMode { get; set; } = DirectionReferenceMode.True;

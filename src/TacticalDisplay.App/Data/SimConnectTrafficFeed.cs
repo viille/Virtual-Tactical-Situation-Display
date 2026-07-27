@@ -11,6 +11,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
 {
     private const string NativeSimConnectDllName = "SimConnect.dll";
     private const string LogSource = "MSFS";
+    // SimConnect rejects traffic query radii above 200 km with exception 31
+    // (SIMCONNECT_EXCEPTION_OUT_OF_BOUNDS).
+    private const double MaxTrafficRequestRadiusMeters = 200_000.0;
     private static readonly TimeSpan TrafficStallRecoveryThreshold = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OwnshipFreshThreshold = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan MinimumTrafficRetention = TimeSpan.FromSeconds(2);
@@ -162,7 +165,10 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 var now = DateTimeOffset.UtcNow;
                 if ((now - _lastTrafficRequestAt).TotalMilliseconds >= 500)
                 {
-                    var radiusMeters = (uint)System.Math.Clamp(_settings.SelectedRangeNm * 1852.0, 18520.0, 222240.0);
+                    var radiusMeters = (uint)System.Math.Clamp(
+                        _settings.SelectedRangeNm * 1852.0,
+                        18520.0,
+                        MaxTrafficRequestRadiusMeters);
                     DataSourceDebugLog.ThrottledDebug(
                         LogSource,
                         "traffic-request",
