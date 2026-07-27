@@ -129,6 +129,21 @@ public sealed class JsonConfigStore
         settings.WindowHeight = System.Math.Clamp(settings.WindowHeight, 480, 2160);
         settings.VatsimCallsignRefreshSeconds = System.Math.Clamp(settings.VatsimCallsignRefreshSeconds, 15, 300);
 
+        // SimConnect traffic queries are limited to 200 km, which is just
+        // under 108 NM. Migrate the old 120 NM option to the safe 100 NM max
+        // and add the new 5 NM option to existing settings files.
+        settings.RangeScaleOptionsNm = (settings.RangeScaleOptionsNm ?? [])
+            .Select(range => range == 120 ? 100 : range)
+            .Append(5)
+            .Distinct()
+            .OrderBy(range => range)
+            .ToArray();
+
+        if (settings.SelectedRangeNm == 120)
+        {
+            settings.SelectedRangeNm = 100;
+        }
+
         if (settings.TrailLengthSamples == 15)
         {
             settings.TrailLengthSamples = 90;
