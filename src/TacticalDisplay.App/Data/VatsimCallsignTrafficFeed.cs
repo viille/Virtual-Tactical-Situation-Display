@@ -12,6 +12,8 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 {
     private const string LogSource = "VATSIM";
     private const int RequiredStableCallsignMatches = 2;
+    private const int RequiredStableFallbackCallsignMatches = 3;
+    private static readonly TimeSpan RequiredFallbackObservationWindow = TimeSpan.FromSeconds(2);
     private const int RequiredStableCallsignSwitchMatches = 3;
     private const double StrongSwitchMaxDistanceNm = 0.75;
     private const double StrongSwitchMaxAltitudeDeltaFt = 400;
@@ -88,7 +90,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             var history = GetSnapshotHistory();
             LogCallsignMatchDiagnostics(snapshot, history, pilots);
             var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, history, pilots);
-            enriched = ConfirmCallsignMatches(snapshot, enriched, pilots);
+            enriched = ConfirmCallsignMatches(snapshot, enriched, history, pilots);
             LogEnrichmentSummary(snapshot, enriched, pilots);
             SnapshotReceived?.Invoke(this, enriched);
         }
@@ -186,6 +188,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     private TrafficSnapshot ConfirmCallsignMatches(
         TrafficSnapshot original,
         TrafficSnapshot enriched,
+        IReadOnlyList<TrafficSnapshot> history,
         IReadOnlyList<VatsimPilotCandidate> pilots)
     {
         var activeContactIds = enriched.Contacts
@@ -226,12 +229,30 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             var matchDiagnostics = pilot is null
                 ? VatsimMatchDiagnostics.None
                 : VatsimCallsignMatcher.InspectMatch(originalContact, pilot);
+            if (!matchDiagnostics.IsMatch && pilot is not null)
+            {
+                // The simulator and VATSIM timestamps/positions can be a few
+                // seconds apart. Reuse the same historical evidence that
+                // produced the assignment before counting a confirmation.
+                matchDiagnostics = VatsimCallsignMatcher.InspectBestHistoricalMatch(
+                    originalContact,
+                    history,
+                    [pilot]);
+            }
+            if (!matchDiagnostics.IsMatch)
+            {
+                // Never display an unconfirmed candidate merely because the
+                // assignment was produced from a stale or transient sample.
+                confirmedContacts.Add(enrichedContact with { Callsign = null });
+                continue;
+            }
             var confirmation = UpdateCallsignConfirmation(
                 enrichedContact.Id,
                 callsign,
                 pilotUpdateTime,
                 originalContact.Timestamp,
-                IsStrongSwitchMatch(matchDiagnostics));
+                IsStrongSwitchMatch(matchDiagnostics),
+                matchDiagnostics.IsFallback);
             DataSourceDebugLog.ThrottledDebug(
                 LogSource,
                 $"callsign-confirmation-{enrichedContact.Id}",
@@ -258,18 +279,20 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         string callsign,
         DateTimeOffset? pilotUpdateTime,
         DateTimeOffset observationTime,
-        bool strongMatch)
+        bool strongMatch,
+        bool fallbackMatch)
     {
         if (!_callsignConfirmations.TryGetValue(contactId, out var confirmation))
         {
-            confirmation = new CallsignConfirmation(callsign, 0, null, null, null, false);
+            confirmation = new CallsignConfirmation(callsign, 0, null, null, null, false, null);
         }
         else if (!string.Equals(confirmation.CandidateCallsign, callsign, StringComparison.OrdinalIgnoreCase))
         {
             confirmation = confirmation with
             {
                 CandidateCallsign = callsign,
-                CandidateMatchCount = 0
+                CandidateMatchCount = 0,
+                CandidateFirstObservationTime = null
             };
         }
 
@@ -287,6 +310,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         {
             count++;
         }
+        var firstObservationTime = confirmation.CandidateFirstObservationTime ?? observationTime;
 
         var confirmedCallsign = confirmation.ConfirmedCallsign;
         // A very close direct match is safe enough to show immediately. This
@@ -296,7 +320,11 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         {
             confirmedCallsign = callsign;
         }
-        else if (confirmedCallsign is null && count >= RequiredStableCallsignMatches)
+        else if (confirmedCallsign is null &&
+            count >= RequiredStableCallsignMatches &&
+            (!fallbackMatch ||
+                (count >= RequiredStableFallbackCallsignMatches &&
+                    observationTime - firstObservationTime >= RequiredFallbackObservationWindow)))
         {
             confirmedCallsign = callsign;
         }
@@ -313,6 +341,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             CandidateMatchCount = count,
             LastPilotUpdateTime = pilotUpdateTime ?? confirmation.LastPilotUpdateTime,
             LastObservationTime = observationTime,
+            CandidateFirstObservationTime = firstObservationTime,
             ConfirmedCallsign = confirmedCallsign,
             Confirmed = confirmedCallsign is not null
         };
@@ -437,5 +466,6 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         DateTimeOffset? LastPilotUpdateTime,
         DateTimeOffset? LastObservationTime,
         string? ConfirmedCallsign,
-        bool Confirmed);
+        bool Confirmed,
+        DateTimeOffset? CandidateFirstObservationTime);
 }

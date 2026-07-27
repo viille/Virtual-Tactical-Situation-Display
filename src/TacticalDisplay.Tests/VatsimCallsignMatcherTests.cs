@@ -295,4 +295,106 @@ public sealed class VatsimCallsignMatcherTests
 
         Assert.Equal("FIN123", enriched.Contacts.Single().Callsign);
     }
+
+    [Fact]
+    public void EnrichSnapshotFromHistory_UsesConservativeKinematicFallbackForOffsetMsfsTraffic()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var feedTime = now.AddSeconds(-2);
+        var historical = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, feedTime),
+            [new TrafficContactState("T1", null, 60.05, 24.0, 5000, 90, 250, feedTime)],
+            feedTime);
+        var current = historical with
+        {
+            Timestamp = now,
+            Contacts = [historical.Contacts.Single() with { Timestamp = now }]
+        };
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(
+            current,
+            [historical, current],
+            [new VatsimPilotCandidate("FIN123", 60.10, 24.0, 5000, 250, 90, feedTime)]);
+
+        Assert.Equal("FIN123", enriched.Contacts.Single().Callsign);
+    }
+
+    [Fact]
+    public void EnrichSnapshotFromHistory_RejectsFallbackWhenMotionDoesNotMatch()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var feedTime = now.AddSeconds(-2);
+        var contact = new TrafficContactState("T1", null, 60.05, 24.0, 5000, 90, 250, feedTime);
+        var snapshot = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, feedTime),
+            [contact],
+            feedTime);
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(
+            snapshot with { Timestamp = now },
+            [snapshot],
+            [new VatsimPilotCandidate("FIN123", 60.10, 24.0, 5000, 250, 270, feedTime)]);
+
+        Assert.Null(enriched.Contacts.Single().Callsign);
+    }
+
+    [Fact]
+    public void EnrichSnapshotFromHistory_RejectsAmbiguousKinematicFallback()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var feedTime = now.AddSeconds(-2);
+        var contact = new TrafficContactState("T1", null, 60.05, 24.0, 5000, 90, 250, feedTime);
+        var snapshot = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, feedTime),
+            [contact],
+            feedTime);
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(
+            snapshot,
+            [snapshot],
+            [
+                new VatsimPilotCandidate("FIN123", 60.10, 24.0, 5000, 250, 90, feedTime),
+                new VatsimPilotCandidate("FIN124", 60.105, 24.0, 5000, 250, 90, feedTime)
+            ]);
+
+        Assert.Null(enriched.Contacts.Single().Callsign);
+    }
+
+    [Fact]
+    public void EnrichSnapshotFromHistory_AllowsUniqueNearFallbackWhenMsfsMotionIsUnavailable()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var feedTime = now.AddSeconds(-2);
+        var contact = new TrafficContactState("T1", null, 60.05, 24.0, 5000, null, null, feedTime);
+        var snapshot = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, feedTime),
+            [contact],
+            feedTime);
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(
+            snapshot,
+            [snapshot],
+            [new VatsimPilotCandidate("FIN123", 60.075, 24.0, 5050, 250, 90, feedTime)]);
+
+        Assert.Equal("FIN123", enriched.Contacts.Single().Callsign);
+    }
+
+    [Fact]
+    public void EnrichSnapshotFromHistory_RejectsMotionlessFallbackOutsideNearEnvelope()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var feedTime = now.AddSeconds(-2);
+        var contact = new TrafficContactState("T1", null, 60.05, 24.0, 5000, null, null, feedTime);
+        var snapshot = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, feedTime),
+            [contact],
+            feedTime);
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(
+            snapshot,
+            [snapshot],
+            [new VatsimPilotCandidate("FIN123", 60.10, 24.0, 5050, 250, 90, feedTime)]);
+
+        Assert.Null(enriched.Contacts.Single().Callsign);
+    }
 }

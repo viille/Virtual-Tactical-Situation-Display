@@ -9,6 +9,21 @@ public static class VatsimCallsignMatcher
     private const double MaxMatchAltitudeFt = 800;
     private const double MaxMatchHeadingDeltaDeg = 45;
     private const double MaxMatchSpeedDeltaKt = 100;
+    // MSFS multiplayer traffic can be several miles away from the VATSIM
+    // feed position even when its motion is an excellent match. This is a
+    // deliberately conservative second-pass gate, never used by the
+    // position-only matcher.
+    private const double FallbackMaxDistanceNm = 6.0;
+    private const double FallbackMaxAltitudeDeltaFt = 800;
+    private const double FallbackMaxHeadingDeltaDeg = 25;
+    private const double FallbackMaxSpeedDeltaKt = 80;
+    // A short-range contact is much safer to identify than a distant one.
+    // MSFS sometimes omits one or both motion values for multiplayer objects;
+    // allow that only in this tight envelope and still require uniqueness and
+    // repeated confirmation in the app layer.
+    private const double NearFallbackMaxDistanceNm = 2.0;
+    private const double NearFallbackMaxAltitudeDeltaFt = 500;
+    private const double MinFallbackScoreMargin = 1.5;
     private const double MinAirborneSpeedForMotionCheckKt = 40;
     private const double MinBestScoreMargin = 0.75;
     private const double FormationMaxDistanceNm = 3.0;
@@ -141,15 +156,52 @@ public static class VatsimCallsignMatcher
             }
         }
 
-        return BuildAssignedCallsigns(contacts, pilots, candidates);
+        var assignments = BuildAssignedCallsigns(contacts, pilots, candidates);
+        var assignedPilotIndexes = assignments.Values
+            .Select(callsign => FindPilotIndexByCallsign(pilots, callsign))
+            .Where(static index => index >= 0)
+            .ToHashSet();
+        var fallbackCandidates = new List<MatchCandidate>();
+        for (var contactIndex = 0; contactIndex < contacts.Count; contactIndex++)
+        {
+            if (!string.IsNullOrWhiteSpace(contacts[contactIndex].Callsign) ||
+                assignments.ContainsKey(contacts[contactIndex].Id))
+            {
+                continue;
+            }
+
+            for (var pilotIndex = 0; pilotIndex < pilots.Count; pilotIndex++)
+            {
+                if (assignedPilotIndexes.Contains(pilotIndex) ||
+                    pilots[pilotIndex].LastUpdated is not DateTimeOffset lastUpdated)
+                {
+                    continue;
+                }
+
+                var historicalContact = FindHistoricalContact(contacts[contactIndex].Id, history, lastUpdated);
+                if (historicalContact is not null &&
+                    IsFallbackCandidate(historicalContact, pilots[pilotIndex], out var score))
+                {
+                    fallbackCandidates.Add(new MatchCandidate(contactIndex, pilotIndex, score));
+                }
+            }
+        }
+
+        foreach (var pair in BuildAssignedCallsigns(contacts, pilots, fallbackCandidates, MinFallbackScoreMargin))
+        {
+            assignments[pair.Key] = pair.Value;
+        }
+
+        return assignments;
     }
 
     private static Dictionary<string, string> BuildAssignedCallsigns(
         IReadOnlyList<TrafficContactState> contacts,
         IReadOnlyList<VatsimPilotCandidate> pilots,
-        IReadOnlyList<MatchCandidate> candidates)
+        IReadOnlyList<MatchCandidate> candidates,
+        double minScoreMargin = MinBestScoreMargin)
     {
-        var best = FindBestAssignment(contacts, pilots, candidates);
+        var best = FindBestAssignment(contacts, pilots, candidates, minScoreMargin);
         var assignments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var candidate in best)
         {
@@ -215,7 +267,8 @@ public static class VatsimCallsignMatcher
     private static IReadOnlyList<MatchCandidate> FindBestAssignment(
         IReadOnlyList<TrafficContactState> contacts,
         IReadOnlyList<VatsimPilotCandidate> pilots,
-        IReadOnlyList<MatchCandidate> candidates)
+        IReadOnlyList<MatchCandidate> candidates,
+        double minScoreMargin = MinBestScoreMargin)
     {
         if (candidates.Count == 0)
         {
@@ -229,7 +282,7 @@ public static class VatsimCallsignMatcher
             .ToList();
         if (candidatesByContact.Count == 1 &&
             candidatesByContact[0].Count > 1 &&
-            candidatesByContact[0][1].Score - candidatesByContact[0][0].Score < MinBestScoreMargin)
+            candidatesByContact[0][1].Score - candidatesByContact[0][0].Score < minScoreMargin)
         {
             return [];
         }
@@ -475,12 +528,24 @@ public static class VatsimCallsignMatcher
 
     private static bool IsCandidate(TrafficContactState contact, VatsimPilotCandidate pilot, out double score)
     {
-        var diagnostics = InspectCandidate(contact, pilot);
+        var diagnostics = InspectStrictCandidate(contact, pilot);
         score = diagnostics.Score;
         return diagnostics.IsMatch;
     }
 
     private static VatsimMatchDiagnostics InspectCandidate(TrafficContactState contact, VatsimPilotCandidate pilot)
+    {
+        var strict = InspectStrictCandidate(contact, pilot);
+        if (strict.IsMatch)
+        {
+            return strict;
+        }
+
+        var fallback = CreateFallbackDiagnostics(contact, pilot);
+        return fallback.IsMatch ? fallback : strict;
+    }
+
+    private static VatsimMatchDiagnostics InspectStrictCandidate(TrafficContactState contact, VatsimPilotCandidate pilot)
     {
         var distanceNm = GeoMath.DistanceNm(contact.LatitudeDeg, contact.LongitudeDeg, pilot.LatitudeDeg, pilot.LongitudeDeg);
         var altitudeDeltaFt = System.Math.Abs(contact.AltitudeFt - pilot.AltitudeFt);
@@ -518,6 +583,52 @@ public static class VatsimCallsignMatcher
         return new VatsimMatchDiagnostics(true, pilot.Callsign, distanceNm, altitudeDeltaFt, score, null);
     }
 
+    private static bool IsFallbackCandidate(
+        TrafficContactState contact,
+        VatsimPilotCandidate pilot,
+        out double score)
+    {
+        var diagnostics = CreateFallbackDiagnostics(contact, pilot);
+        score = diagnostics.Score;
+        return diagnostics.IsMatch;
+    }
+
+    private static VatsimMatchDiagnostics CreateFallbackDiagnostics(
+        TrafficContactState contact,
+        VatsimPilotCandidate pilot)
+    {
+        var distanceNm = GeoMath.DistanceNm(contact.LatitudeDeg, contact.LongitudeDeg, pilot.LatitudeDeg, pilot.LongitudeDeg);
+        var altitudeDeltaFt = System.Math.Abs(contact.AltitudeFt - pilot.AltitudeFt);
+        var hasHeading = contact.HeadingDeg.HasValue;
+        var hasSpeed = contact.SpeedKt.HasValue;
+        var headingDeltaDeg = hasHeading
+            ? System.Math.Abs(GeoMath.SignedRelativeBearingDeg(contact.HeadingDeg!.Value, pilot.HeadingDeg))
+            : 0;
+        var speedDeltaKt = hasSpeed
+            ? System.Math.Abs(contact.SpeedKt!.Value - pilot.GroundspeedKt)
+            : 0;
+        var score = distanceNm + altitudeDeltaFt / 1000.0 + headingDeltaDeg / 90.0 + speedDeltaKt / 180.0;
+        var hasReliableMotion = ShouldCheckMotion(contact, pilot);
+        var isNearPositionMatch = distanceNm <= NearFallbackMaxDistanceNm &&
+            altitudeDeltaFt <= NearFallbackMaxAltitudeDeltaFt &&
+            (!hasHeading || headingDeltaDeg <= MaxMatchHeadingDeltaDeg) &&
+            (!hasSpeed || speedDeltaKt <= MaxMatchSpeedDeltaKt);
+        var isMatch = (hasReliableMotion &&
+            distanceNm <= FallbackMaxDistanceNm &&
+            altitudeDeltaFt <= FallbackMaxAltitudeDeltaFt &&
+            headingDeltaDeg <= FallbackMaxHeadingDeltaDeg &&
+            speedDeltaKt <= FallbackMaxSpeedDeltaKt) ||
+            (!hasReliableMotion && isNearPositionMatch);
+        return new VatsimMatchDiagnostics(
+            isMatch,
+            pilot.Callsign,
+            distanceNm,
+            altitudeDeltaFt,
+            score,
+            isMatch ? null : "fallback-kinematics",
+            IsFallback: isMatch);
+    }
+
     private static bool ShouldCheckMotion(TrafficContactState contact, VatsimPilotCandidate pilot) =>
         contact.HeadingDeg.HasValue &&
         contact.SpeedKt.HasValue &&
@@ -540,7 +651,8 @@ public sealed record VatsimMatchDiagnostics(
     double DistanceNm,
     double AltitudeDeltaFt,
     double Score,
-    string? RejectReason)
+    string? RejectReason,
+    bool IsFallback = false)
 {
     public static VatsimMatchDiagnostics None { get; } = new(false, null, 0, 0, double.MaxValue, "no-pilots");
 }
