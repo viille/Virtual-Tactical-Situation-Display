@@ -13,7 +13,8 @@ public sealed class DebugReportUploadService
 {
     private const string HandleUploadUrl = "https://vtsd-telemetry.vercel.app/api/debug-upload/client";
     private const string BlobApiUrl = "https://vercel.com/api/blob";
-    private const string BlobPathname = "debug-reports/debug-report.zip";
+    private const string BlobPathPrefix = "debug-reports/";
+    private const string BlobApiVersion = "12";
     private const int MultipartPartSize = 8 * 1024 * 1024;
     private const string IngestKeyHeaderName = "X-VTSD-Ingest-Key";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromMinutes(10);
@@ -90,6 +91,7 @@ public sealed class DebugReportUploadService
         }
 
         using var client = new HttpClient { Timeout = RequestTimeout };
+        var blobPathname = $"{BlobPathPrefix}{Guid.NewGuid():N}.zip";
         var metadataJson = JsonSerializer.Serialize(
             DebugReportUploadMetadata.FromReportMetadata(report.Metadata),
             JsonOptions);
@@ -109,7 +111,7 @@ public sealed class DebugReportUploadService
             type = "blob.generate-client-token",
             payload = new
             {
-                pathname = "debug-reports/debug-report.zip",
+                pathname = blobPathname,
                 clientPayload,
                 multipart = true
             }
@@ -136,11 +138,12 @@ public sealed class DebugReportUploadService
         {
             ["Authorization"] = $"Bearer {token}",
             ["x-vercel-blob-store-id"] = storeId,
+            ["x-api-version"] = BlobApiVersion,
             ["x-vercel-blob-access"] = "private",
             ["x-content-type"] = "application/zip"
         };
 
-        var query = $"pathname={Uri.EscapeDataString(BlobPathname)}";
+        var query = $"pathname={Uri.EscapeDataString(blobPathname)}";
         using var createRequest = new HttpRequestMessage(HttpMethod.Post, $"{BlobApiUrl}/mpu?{query}");
         AddHeaders(createRequest, commonHeaders);
         createRequest.Headers.Add("x-mpu-action", "create");
