@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.10 — 2026-08-05
+
+- Fixed long-running memory growth in the WebView2/Mapbox map layer by coalescing map updates and limiting them to four per second.
+
 ## 0.14.7 — 2026-07-27
 
 - Improved VATSIM callsign matching for MSFS traffic with conservative kinematic fallback matching.

@@ -249,7 +249,9 @@ public partial class OpenFreeMapControl : UserControl
             let map = null;
             let currentToken = '';
             let currentStyle = '';
-            let lastState = null;
+            const mapUpdateIntervalMs = 250;
+            let pendingState = null;
+            let updateTimer = null;
 
             const setStatus = text => {
               statusEl.textContent = text || '';
@@ -311,28 +313,49 @@ public partial class OpenFreeMapControl : UserControl
               return true;
             };
 
-            window.updateTacticalMap = state => {
-              lastState = state;
-              if (!ensureMap(state)) {
+            const acknowledgeMapState = () => {
+              window.chrome?.webview?.postMessage('map-state-applied');
+            };
+
+            const applyLatestMapState = () => {
+              updateTimer = null;
+              const state = pendingState;
+              pendingState = null;
+              if (!state) {
+                acknowledgeMapState();
                 return;
               }
 
-              setStatus('');
-              map.jumpTo({
-                center: [state.longitudeDeg, state.latitudeDeg],
-                zoom: calculateZoom(state),
-                bearing: state.bearingDeg,
-                pitch: 0,
-              });
+              try {
+                if (!ensureMap(state)) {
+                  return;
+                }
+
+                setStatus('');
+                map.jumpTo({
+                  center: [state.longitudeDeg, state.latitudeDeg],
+                  zoom: calculateZoom(state),
+                  bearing: state.bearingDeg,
+                  pitch: 0,
+                });
+              } finally {
+                acknowledgeMapState();
+              }
+            };
+
+            window.updateTacticalMap = state => {
+              // Coalesce high-frequency render updates. WebView2/Mapbox keeps native
+              // render resources alive while jumpTo calls are queued, so an update
+              // for every scope frame can grow the process for the whole session.
+              pendingState = state;
+              if (updateTimer === null) {
+                updateTimer = setTimeout(applyLatestMapState, mapUpdateIntervalMs);
+              }
             };
 
             if (window.chrome?.webview) {
               window.chrome.webview.addEventListener('message', event => {
-                try {
-                  window.updateTacticalMap(event.data);
-                } finally {
-                  window.chrome.webview.postMessage('map-state-applied');
-                }
+                window.updateTacticalMap(event.data);
               });
             }
           </script>
