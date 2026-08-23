@@ -249,7 +249,7 @@ public partial class OpenFreeMapControl : UserControl
             let map = null;
             let currentToken = '';
             let currentStyle = '';
-            const mapUpdateIntervalMs = 250;
+            const mapUpdateIntervalMs = 500;
             let pendingState = null;
             let updateTimer = null;
 
@@ -295,6 +295,8 @@ public partial class OpenFreeMapControl : UserControl
                 zoom: 7,
                 bearing: 0,
                 pitch: 0,
+                fadeDuration: 0,
+                renderWorldCopies: false,
                 attributionControl: true,
                 interactive: false,
               });

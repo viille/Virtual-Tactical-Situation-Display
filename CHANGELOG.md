@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.14.11 - 2026-08-23
+
+- Reduced GPU work in the WebView2/Mapbox map layer by lowering camera updates to two per second and disabling unnecessary fade and world-copy rendering.
+
 ## 0.14.10 — 2026-08-05
 
 - Fixed long-running memory growth in the WebView2/Mapbox map layer by coalescing map updates and limiting them to four per second.
