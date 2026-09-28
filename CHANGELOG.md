@@ -4,6 +4,7 @@
 
 - Fixed MSFS traffic closure to use smoothed position-based range changes, with velocity-based startup fallback and diagnostics for comparing both calculations.
 - Improved closure stability around target teleports and added explicit closure labels and high-speed head-on regression coverage.
+- Improved tactical closure responsiveness by weighting recent position-derived range samples more heavily.
 
 ## 0.14.11 - 2026-08-23
 
