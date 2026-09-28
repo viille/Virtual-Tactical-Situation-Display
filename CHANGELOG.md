@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.14.12 - 2026-09-28
+
+- Fixed MSFS traffic closure to use smoothed position-based range changes, with velocity-based startup fallback and diagnostics for comparing both calculations.
+- Improved closure stability around target teleports and added explicit closure labels and high-speed head-on regression coverage.
+
 ## 0.14.11 - 2026-08-23
 
 - Reduced GPU work in the WebView2/Mapbox map layer by lowering camera updates to two per second and disabling unnecessary fade and world-copy rendering.
