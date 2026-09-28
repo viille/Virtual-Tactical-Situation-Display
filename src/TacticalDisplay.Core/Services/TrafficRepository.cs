@@ -276,6 +276,7 @@ public sealed class TrafficRepository
 
         public double? EstimateClosureKt(OwnshipState? previousOwnship, OwnshipState ownship, double bearingFromOwnshipToTargetDeg)
         {
+            var previousSource = ClosureSource;
             PositionClosureKt = null;
             VectorClosureKt = null;
             PositionClosureKt = EstimatePositionClosure();
@@ -301,6 +302,11 @@ public sealed class TrafficRepository
                 ClosureSource = "vector";
                 LastKnownClosureKt = VectorClosureKt;
                 return VectorClosureKt;
+            }
+
+            if (previousSource == "vector")
+            {
+                LastKnownClosureKt = null;
             }
 
             ClosureSource = LastKnownClosureKt.HasValue ? "last-known" : "unavailable";

@@ -192,12 +192,38 @@ public sealed class TrafficRepositoryTests
         Assert.InRange(tracked.RelativeRangeNm!.Value, 9.99, 10.02);
         _ = repository.BuildPicture(settings);
         Assert.NotNull(tracked.VectorClosureKt);
+        Assert.NotNull(tracked.LastKnownClosureKt);
 
         var timestamp = now.AddSeconds(1);
         var missingVelocity = firstContact with { SpeedKt = null, HeadingDeg = null, Timestamp = timestamp };
         repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = timestamp }, [missingVelocity], timestamp), classification, settings);
-        _ = repository.BuildPicture(settings);
+        var target = Assert.Single(repository.BuildPicture(settings).Targets);
         Assert.Null(tracked.VectorClosureKt);
+        Assert.Null(tracked.LastKnownClosureKt);
+        Assert.Null(target.ClosureKt);
+        Assert.Equal("unavailable", tracked.ClosureSource);
+    }
+
+    [Fact]
+    public void Closure_FirstSampleContributesToMinimumRegressionWindow()
+    {
+        var repository = new TrafficRepository();
+        var now = DateTimeOffset.UtcNow;
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var ownship = new OwnshipState("OWN", 0, 0, 5000, 90, 250, now);
+
+        for (var second = 0; second <= 2; second++)
+        {
+            var timestamp = now.AddSeconds(second);
+            var latitude = (10 - 50 * second / 3600.0) / 60.0;
+            var contact = new TrafficContactState("T1", "FIN123", latitude, 0, 5000, 180, 250, timestamp);
+            repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = timestamp }, [contact], timestamp), classification, settings);
+        }
+
+        var target = Assert.Single(repository.BuildPicture(settings).Targets);
+        Assert.InRange(target.ClosureKt!.Value, 49, 51);
+        Assert.Equal("position", repository.GetTrackedContact("T1")!.ClosureSource);
     }
 
     [Fact]
