@@ -8,6 +8,7 @@ public sealed class TrafficRepositoryTests
 {
     [Theory]
     [InlineData(165.0, "C+165")]
+    [InlineData(0.0, "C+0")]
     [InlineData(-42.0, "C-42")]
     [InlineData(null, "C---")]
     public void FormatClosureLabel_IdentifiesClosure(double? closure, string expected) =>
@@ -122,8 +123,81 @@ public sealed class TrafficRepositoryTests
 
         var tracked = repository.GetTrackedContact("T1")!;
         Assert.Null(tracked.LastKnownClosureKt);
+        Assert.Null(tracked.PositionClosureKt);
+        Assert.Null(tracked.VectorClosureKt);
+        Assert.Equal("unavailable", tracked.ClosureSource);
         var selected = repository.BuildPicture(settings).Targets.Single().ClosureKt;
         Assert.True(selected is null || System.Math.Abs(selected.Value) < 1500);
+    }
+
+    [Fact]
+    public void Closure_AcceptsHighSpeedHeadOnWithoutTeleportReset()
+    {
+        var repository = new TrafficRepository();
+        var now = DateTimeOffset.UtcNow;
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var ownship = new OwnshipState("OWN", 0, 0, 5000, 90, 0, now);
+
+        for (var second = 0; second <= 4; second++)
+        {
+            var timestamp = now.AddSeconds(second);
+            var longitude = 10.0 / 60.0 - 1600 * second / 3600.0 / 60.0;
+            var contact = new TrafficContactState("T1", "FAST1", 0, longitude, 5000, 270, 1600, timestamp);
+            repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = timestamp }, [contact], timestamp), classification, settings);
+        }
+
+        var tracked = repository.GetTrackedContact("T1")!;
+        var target = Assert.Single(repository.BuildPicture(settings).Targets);
+        Assert.InRange(target.ClosureKt!.Value, 1590, 1610);
+        Assert.Equal("position", tracked.ClosureSource);
+        Assert.True(tracked.History.Count >= 5);
+    }
+
+    [Fact]
+    public void Closure_DetectsTargetTeleportWhenRangeStaysSame()
+    {
+        var repository = new TrafficRepository();
+        var now = DateTimeOffset.UtcNow;
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var ownship = new OwnshipState("OWN", 0, 0, 5000, 90, 0, now);
+        var east = new TrafficContactState("T1", "TELE1", 0, 10.0 / 60.0, 5000, 270, 250, now);
+        repository.ApplySnapshot(new TrafficSnapshot(ownship, [east], now), classification, settings);
+        _ = repository.BuildPicture(settings);
+
+        var teleportTime = now.AddSeconds(1);
+        var west = east with { LongitudeDeg = -10.0 / 60.0, Timestamp = teleportTime };
+        repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = teleportTime }, [west], teleportTime), classification, settings);
+
+        var tracked = repository.GetTrackedContact("T1")!;
+        Assert.Null(tracked.LastKnownClosureKt);
+        Assert.Null(tracked.PositionClosureKt);
+        Assert.Null(tracked.VectorClosureKt);
+        Assert.Equal("unavailable", tracked.ClosureSource);
+        Assert.Single(tracked.History);
+    }
+
+    [Fact]
+    public void Closure_InitializesRelativeRangeOnFirstSampleAndClearsStaleVectorData()
+    {
+        var repository = new TrafficRepository();
+        var now = DateTimeOffset.UtcNow;
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var ownship = new OwnshipState("OWN", 0, 0, 5000, 90, 300, now);
+        var firstContact = new TrafficContactState("T1", "FIN123", 10.0 / 60.0, 0, 5000, 270, 250, now);
+        repository.ApplySnapshot(new TrafficSnapshot(ownship, [firstContact], now), classification, settings);
+        var tracked = repository.GetTrackedContact("T1")!;
+        Assert.InRange(tracked.RelativeRangeNm!.Value, 9.99, 10.02);
+        _ = repository.BuildPicture(settings);
+        Assert.NotNull(tracked.VectorClosureKt);
+
+        var timestamp = now.AddSeconds(1);
+        var missingVelocity = firstContact with { SpeedKt = null, HeadingDeg = null, Timestamp = timestamp };
+        repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = timestamp }, [missingVelocity], timestamp), classification, settings);
+        _ = repository.BuildPicture(settings);
+        Assert.Null(tracked.VectorClosureKt);
     }
 
     [Fact]

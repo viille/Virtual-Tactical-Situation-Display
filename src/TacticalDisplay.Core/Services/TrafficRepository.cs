@@ -12,7 +12,8 @@ public sealed class TrafficRepository
     private static readonly TimeSpan MinimumPositionClosureWindow = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaximumPositionClosureGap = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan ContactIdentityGap = TimeSpan.FromSeconds(10);
-    private const double MaximumPlausibleRelativeSpeedKt = 1500;
+    private const double MaximumPlausibleTargetGroundSpeedKt = 2000;
+    private const double MaximumPlausibleClosureKt = 3000;
     private readonly Dictionary<string, TrackedContact> _contacts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SuppressedContact> _suppressedContacts = new(StringComparer.OrdinalIgnoreCase);
     private OwnshipState? _previousOwnship;
@@ -43,7 +44,7 @@ public sealed class TrafficRepository
 
             if (!_contacts.TryGetValue(contact.Id, out var tracked))
             {
-                tracked = new TrackedContact(contact, Classify(contact, classification));
+                tracked = new TrackedContact(contact, snapshot.Ownship, Classify(contact, classification));
                 _contacts[contact.Id] = tracked;
             }
 
@@ -110,7 +111,7 @@ public sealed class TrafficRepository
         _contacts.TryGetValue(id, out var tracked) ? tracked : null;
 
     public static string FormatClosureLabel(double? closureKt) =>
-        closureKt.HasValue ? $"C{closureKt.Value:+0;-0;0}" : "C---";
+        closureKt.HasValue ? $"C{closureKt.Value:+0;-0;+0}" : "C---";
 
     private static bool PassTrackedAltitude(double altitudeFt, double minTrackedAltitudeFt, double maxTrackedAltitudeFt) =>
         altitudeFt >= minTrackedAltitudeFt &&
@@ -193,7 +194,7 @@ public sealed class TrafficRepository
     {
         private readonly List<RelativeRangePoint> _relativeRangeHistory = [];
 
-        public TrackedContact(TrafficContactState current, TargetCategory category)
+        public TrackedContact(TrafficContactState current, OwnshipState ownship, TargetCategory category)
         {
             LastKnownCallsign = string.IsNullOrWhiteSpace(current.Callsign)
                 ? null
@@ -204,6 +205,8 @@ public sealed class TrafficRepository
             Category = category;
             LastUpdate = current.Timestamp;
             History = [new PositionHistoryPoint(current.LatitudeDeg, current.LongitudeDeg, current.AltitudeFt, current.Timestamp)];
+            RelativeRangeNm = GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, current.LatitudeDeg, current.LongitudeDeg);
+            _relativeRangeHistory.Add(new RelativeRangePoint(RelativeRangeNm.Value, current.Timestamp));
         }
 
         public TrafficContactState Current { get; private set; }
@@ -226,14 +229,22 @@ public sealed class TrafficRepository
             }
 
             var gap = update.Timestamp - LastUpdate;
+            if (gap <= TimeSpan.Zero)
+            {
+                return;
+            }
+
             var rangeNm = GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, update.LatitudeDeg, update.LongitudeDeg);
             var identityReset = gap > ContactIdentityGap;
-            var jumpReset = IsImplausibleRangeJump(rangeNm, update.Timestamp);
+            var jumpReset = IsImplausibleTargetPositionJump(update, gap);
             if (identityReset || jumpReset)
             {
                 _relativeRangeHistory.Clear();
                 History.Clear();
                 LastKnownClosureKt = null;
+                PositionClosureKt = null;
+                VectorClosureKt = null;
+                ClosureSource = "unavailable";
             }
 
             Current = update;
@@ -246,12 +257,6 @@ public sealed class TrafficRepository
             }
 
             RelativeRangeNm = rangeNm;
-            if (jumpReset || identityReset)
-            {
-                _relativeRangeHistory.Add(new RelativeRangePoint(rangeNm, update.Timestamp));
-                return;
-            }
-
             _relativeRangeHistory.Add(new RelativeRangePoint(rangeNm, update.Timestamp));
             _relativeRangeHistory.RemoveAll(point => update.Timestamp - point.Timestamp > RelativeRangeHistoryWindow);
         }
@@ -271,6 +276,8 @@ public sealed class TrafficRepository
 
         public double? EstimateClosureKt(OwnshipState? previousOwnship, OwnshipState ownship, double bearingFromOwnshipToTargetDeg)
         {
+            PositionClosureKt = null;
+            VectorClosureKt = null;
             PositionClosureKt = EstimatePositionClosure();
             if (ownship.SpeedKt.HasValue && Current.SpeedKt.HasValue && Current.HeadingDeg.HasValue)
             {
@@ -300,22 +307,17 @@ public sealed class TrafficRepository
             return LastKnownClosureKt;
         }
 
-        private bool IsImplausibleRangeJump(double currentRangeNm, DateTimeOffset timestamp)
+        private bool IsImplausibleTargetPositionJump(TrafficContactState update, TimeSpan gap)
         {
-            if (_relativeRangeHistory.Count == 0)
+            if (History.Count == 0 || gap <= TimeSpan.Zero)
             {
                 return false;
             }
 
-            var previous = _relativeRangeHistory[^1];
-            var seconds = (timestamp - previous.Timestamp).TotalSeconds;
-            if (seconds <= 0)
-            {
-                return false;
-            }
-
-            var apparentKt = System.Math.Abs(currentRangeNm - previous.RangeNm) / (seconds / 3600.0);
-            return apparentKt > MaximumPlausibleRelativeSpeedKt;
+            var previous = History[^1];
+            var targetDistanceNm = GeoMath.DistanceNm(previous.LatitudeDeg, previous.LongitudeDeg, update.LatitudeDeg, update.LongitudeDeg);
+            var apparentTargetGroundSpeedKt = targetDistanceNm / gap.TotalHours;
+            return apparentTargetGroundSpeedKt > MaximumPlausibleTargetGroundSpeedKt;
         }
 
         private double? EstimatePositionClosure()
@@ -347,7 +349,7 @@ public sealed class TrafficRepository
 
             var slope = points.Select((point, index) => (xs[index] - meanX) * (point.RangeNm - meanY)).Sum() / denominator;
             var closure = -slope;
-            return double.IsFinite(closure) && System.Math.Abs(closure) <= MaximumPlausibleRelativeSpeedKt
+            return double.IsFinite(closure) && System.Math.Abs(closure) <= MaximumPlausibleClosureKt
                 ? closure
                 : null;
         }
