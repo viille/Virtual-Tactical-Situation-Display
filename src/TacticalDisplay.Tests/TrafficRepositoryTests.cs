@@ -18,6 +18,7 @@ public sealed class TrafficRepositoryTests
     [InlineData(0)]
     [InlineData(50)]
     [InlineData(-40)]
+    [InlineData(200)]
     [InlineData(800)]
     public void Closure_UsesRelativeRangeRegression(double expectedKt)
     {
@@ -99,6 +100,99 @@ public sealed class TrafficRepositoryTests
         }
 
         Assert.InRange(System.Math.Abs(repository.BuildPicture(settings).Targets.Single().ClosureKt!.Value), 0, 80);
+    }
+
+    [Fact]
+    public void Closure_RecencyWeightedRegressionRespondsToRecentManeuver()
+    {
+        var repository = new TrafficRepository();
+        var now = DateTimeOffset.UtcNow;
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var ownship = new OwnshipState("OWN", 0, 0, 5000, 90, 0, now);
+
+        for (var sample = 0; sample <= 8; sample++)
+        {
+            var elapsedSeconds = sample * 0.5;
+            var timestamp = now.AddSeconds(elapsedSeconds);
+            var distanceClosedNm = (100 * System.Math.Min(elapsedSeconds, 2) + 500 * System.Math.Max(0, elapsedSeconds - 2)) / 3600.0;
+            var contact = new TrafficContactState(
+                "T1",
+                "MANEUVER1",
+                (20 - distanceClosedNm) / 60.0,
+                0,
+                5000,
+                180,
+                250,
+                timestamp);
+            repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = timestamp }, [contact], timestamp), classification, settings);
+        }
+
+        var tracked = repository.GetTrackedContact("T1")!;
+        var target = Assert.Single(repository.BuildPicture(settings).Targets);
+        Assert.InRange(target.ClosureKt!.Value, 330, 350);
+        const double equalWeightClosureKt = 300;
+        Assert.True(
+            System.Math.Abs(500 - target.ClosureKt.Value) < System.Math.Abs(500 - equalWeightClosureKt),
+            $"Expected weighted closure {target.ClosureKt.Value:0.0} kt to be closer to the recent 500 kt trend than the equal-weight estimate.");
+        Assert.Equal("position", tracked.ClosureSource);
+    }
+
+    [Fact]
+    public void Closure_OldRangeTransientHasReducedInfluence()
+    {
+        var repository = new TrafficRepository();
+        var now = DateTimeOffset.UtcNow;
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var ownship = new OwnshipState("OWN", 0, 0, 5000, 90, 0, now);
+
+        for (var sample = 0; sample <= 8; sample++)
+        {
+            var elapsedSeconds = sample * 0.5;
+            var timestamp = now.AddSeconds(elapsedSeconds);
+            var rangeNm = 20 - 200 * elapsedSeconds / 3600.0;
+            if (sample == 0)
+            {
+                rangeNm += 0.02;
+            }
+
+            var contact = new TrafficContactState("T1", "TRANSIENT1", rangeNm / 60.0, 0, 5000, 180, 250, timestamp);
+            repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = timestamp }, [contact], timestamp), classification, settings);
+        }
+
+        var closure = Assert.Single(repository.BuildPicture(settings).Targets).ClosureKt!.Value;
+        const double equalWeightClosureKt = 209.6;
+        Assert.True(
+            System.Math.Abs(closure - 200) < System.Math.Abs(equalWeightClosureKt - 200),
+            $"Expected the old transient to have less influence than with equal weighting; got {closure:0.0} kt.");
+    }
+
+    [Fact]
+    public void Closure_NewestModestRangeErrorDoesNotDominateWeightedRegression()
+    {
+        var repository = new TrafficRepository();
+        var now = DateTimeOffset.UtcNow;
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var ownship = new OwnshipState("OWN", 0, 0, 5000, 90, 0, now);
+
+        for (var sample = 0; sample <= 8; sample++)
+        {
+            var elapsedSeconds = sample * 0.5;
+            var timestamp = now.AddSeconds(elapsedSeconds);
+            var rangeNm = 20 - 200 * elapsedSeconds / 3600.0;
+            if (sample == 8)
+            {
+                rangeNm += 0.02;
+            }
+
+            var contact = new TrafficContactState("T1", "NEWESTERR1", rangeNm / 60.0, 0, 5000, 180, 250, timestamp);
+            repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = timestamp }, [contact], timestamp), classification, settings);
+        }
+
+        var closure = Assert.Single(repository.BuildPicture(settings).Targets).ClosureKt!.Value;
+        Assert.InRange(closure, 160, 240);
     }
 
     [Fact]

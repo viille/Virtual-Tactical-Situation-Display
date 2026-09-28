@@ -8,12 +8,14 @@ public sealed class TrafficRepository
     private static readonly TimeSpan StationaryDuplicateGracePeriod = TimeSpan.FromSeconds(5);
     private const double StationarySpeedThresholdKt = 3;
     private const double MeaningfulMovementThresholdNm = 0.02;
-    private static readonly TimeSpan RelativeRangeHistoryWindow = TimeSpan.FromSeconds(6);
+    private static readonly TimeSpan RelativeRangeHistoryWindow = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan MinimumPositionClosureWindow = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan MaximumPositionClosureGap = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan ContactIdentityGap = TimeSpan.FromSeconds(10);
     private const double MaximumPlausibleTargetGroundSpeedKt = 2000;
     private const double MaximumPlausibleClosureKt = 3000;
+    private const double MinimumRangeSampleWeight = 0.5;
+    private const double MaximumRangeSampleWeight = 2.0;
     private readonly Dictionary<string, TrackedContact> _contacts = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, SuppressedContact> _suppressedContacts = new(StringComparer.OrdinalIgnoreCase);
     private OwnshipState? _previousOwnship;
@@ -344,20 +346,56 @@ public sealed class TrafficRepository
             }
 
             var origin = points[0].Timestamp;
-            var xs = points.Select(point => (point.Timestamp - origin).TotalHours).ToArray();
-            var meanX = xs.Average();
-            var meanY = points.Average(point => point.RangeNm);
-            var denominator = xs.Sum(x => (x - meanX) * (x - meanX));
+            var xs = new double[points.Length];
+            var weights = new double[points.Length];
+            var totalWeight = 0.0;
+            var weightedXTotal = 0.0;
+            var weightedRangeTotal = 0.0;
+            for (var index = 0; index < points.Length; index++)
+            {
+                var point = points[index];
+                var x = (point.Timestamp - origin).TotalHours;
+                var weight = GetRangeSampleWeight(point.Timestamp, latest);
+                xs[index] = x;
+                weights[index] = weight;
+                totalWeight += weight;
+                weightedXTotal += weight * x;
+                weightedRangeTotal += weight * point.RangeNm;
+            }
+
+            var meanX = weightedXTotal / totalWeight;
+            var meanRange = weightedRangeTotal / totalWeight;
+            var weightedCovariance = 0.0;
+            var weightedTimeVariance = 0.0;
+            for (var index = 0; index < points.Length; index++)
+            {
+                var centeredX = xs[index] - meanX;
+                var centeredRange = points[index].RangeNm - meanRange;
+                weightedCovariance += weights[index] * centeredX * centeredRange;
+                weightedTimeVariance += weights[index] * centeredX * centeredX;
+            }
+
+            var denominator = weightedTimeVariance;
             if (denominator <= 0)
             {
                 return null;
             }
 
-            var slope = points.Select((point, index) => (xs[index] - meanX) * (point.RangeNm - meanY)).Sum() / denominator;
+            var slope = weightedCovariance / denominator;
             var closure = -slope;
             return double.IsFinite(closure) && System.Math.Abs(closure) <= MaximumPlausibleClosureKt
                 ? closure
                 : null;
+        }
+
+        private static double GetRangeSampleWeight(DateTimeOffset timestamp, DateTimeOffset latest)
+        {
+            var normalizedAge = (latest - timestamp).TotalSeconds / RelativeRangeHistoryWindow.TotalSeconds;
+            var weightRange = MaximumRangeSampleWeight - MinimumRangeSampleWeight;
+            return System.Math.Clamp(
+                MaximumRangeSampleWeight - normalizedAge * weightRange,
+                MinimumRangeSampleWeight,
+                MaximumRangeSampleWeight);
         }
 
         private sealed record RelativeRangePoint(double RangeNm, DateTimeOffset Timestamp);
