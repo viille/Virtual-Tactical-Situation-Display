@@ -41,7 +41,7 @@ public sealed class TacticalComputationEngineTests
     }
 
     [Fact]
-    public void Compute_UsesVelocityProjectionForClosure()
+    public void Compute_UsesVelocityProjectionForClosureDuringStartup()
     {
         var engine = new TacticalComputationEngine();
         var settings = new TacticalDisplaySettings();

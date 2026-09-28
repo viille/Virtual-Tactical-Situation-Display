@@ -1005,7 +1005,7 @@ public sealed class TacticalScopeControl : FrameworkElement
             ? AviationFormat.TargetAspect(target.HeadingDeg.Value, target.BearingDegTrue)
             : "---";
         var heading = target.HeadingDeg.HasValue ? FormatDirection(target.HeadingDeg.Value) : "---";
-        var closure = target.ClosureKt.HasValue ? $"{target.ClosureKt.Value:0}" : "---";
+        var closure = TrafficRepository.FormatClosureLabel(target.ClosureKt);
         var full = $"{aspect,-5} {heading} {closure}";
         var secondary = new LabelLine(full, Colors.LightGray, 12, FontWeights.Normal);
         return [primary, secondary];

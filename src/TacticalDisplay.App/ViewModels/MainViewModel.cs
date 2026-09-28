@@ -1632,8 +1632,31 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
 
         _repository.ApplySnapshot(snapshot, _classification, Settings);
+        if (_feed is SimConnectTrafficFeed)
+        {
+            LogMsfsClosureDiagnostics(snapshot);
+        }
         TrafficText = $"{_repository.Count} contacts";
         _refreshCounter++;
+    }
+
+    private void LogMsfsClosureDiagnostics(TrafficSnapshot snapshot)
+    {
+        var picture = _repository.BuildPicture(Settings);
+        foreach (var target in picture.Targets)
+        {
+            var tracked = _repository.GetTrackedContact(target.Id);
+            if (tracked is null)
+            {
+                continue;
+            }
+
+            DataSourceDebugLog.ThrottledDebug(
+                "MSFS",
+                $"closure-{target.Id}",
+                TimeSpan.FromSeconds(3),
+                () => $"MSFS closure | objectId={target.Id} callsign={target.DisplayName} rangeNm={target.RangeNm:0.00} targetGsKt={target.SpeedKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} targetHdg={target.HeadingDeg?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} vectorClosureKt={tracked.VectorClosureKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} positionClosureKt={tracked.PositionClosureKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} selectedClosureKt={target.ClosureKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} source={tracked.ClosureSource}");
+        }
     }
 
     private void RefreshPicture()

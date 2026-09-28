@@ -2015,7 +2015,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
       const lines = [primary];
       if (snapshot.labelMode === 'Full' && !target.isStale) {
         const heading = target.headingDeg == null ? '---' : formatDirection(target.headingDeg);
-        const closure = target.closureKt == null ? '---' : `${Math.round(target.closureKt)}`;
+        const closure = target.closureKt == null ? 'C---' : `C${target.closureKt >= 0 ? '+' : ''}${Math.round(target.closureKt)}`;
         lines.push(`${heading} ${closure}`);
       }
       ctx.font = '14px Consolas, monospace';

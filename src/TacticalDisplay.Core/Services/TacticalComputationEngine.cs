@@ -36,6 +36,7 @@ public sealed class TacticalComputationEngine
             ? contact.Id
             : contact.Callsign.Trim().ToUpperInvariant();
         var history = settings.TrailsEnabled ? tracked.History : [];
+        var closureKt = tracked.EstimateClosureKt(previousOwnship, ownship, trueBearing);
         return new ComputedTarget(
             contact.Id,
             label,
@@ -47,7 +48,7 @@ public sealed class TacticalComputationEngine
             relAltFt,
             contact.HeadingDeg,
             contact.SpeedKt,
-            tracked.EstimateClosureKt(previousOwnship, ownship, trueBearing),
+            closureKt,
             history,
             contact.Timestamp);
     }
