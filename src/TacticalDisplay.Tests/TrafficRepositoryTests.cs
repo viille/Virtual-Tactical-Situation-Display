@@ -137,14 +137,27 @@ public sealed class TrafficRepositoryTests
         var now = DateTimeOffset.UtcNow;
         var settings = new TacticalDisplaySettings();
         var classification = new ClassificationConfig();
-        var ownship = new OwnshipState("OWN", 0, 0, 5000, 90, 0, now);
+        var ownship = new OwnshipState("OWN", 0, -5.0 / 60.0, 5000, 90, 800, now);
 
         for (var second = 0; second <= 4; second++)
         {
             var timestamp = now.AddSeconds(second);
-            var longitude = 10.0 / 60.0 - 1600 * second / 3600.0 / 60.0;
-            var contact = new TrafficContactState("T1", "FAST1", 0, longitude, 5000, 270, 1600, timestamp);
-            repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = timestamp }, [contact], timestamp), classification, settings);
+            var movementNm = 800 * second / 3600.0;
+            var sampleOwnship = ownship with
+            {
+                LongitudeDeg = (-5 + movementNm) / 60.0,
+                Timestamp = timestamp
+            };
+            var contact = new TrafficContactState(
+                "T1",
+                "FAST1",
+                0,
+                (5 - movementNm) / 60.0,
+                5000,
+                270,
+                800,
+                timestamp);
+            repository.ApplySnapshot(new TrafficSnapshot(sampleOwnship, [contact], timestamp), classification, settings);
         }
 
         var tracked = repository.GetTrackedContact("T1")!;
@@ -152,6 +165,9 @@ public sealed class TrafficRepositoryTests
         Assert.InRange(target.ClosureKt!.Value, 1590, 1610);
         Assert.Equal("position", tracked.ClosureSource);
         Assert.True(tracked.History.Count >= 5);
+        Assert.InRange(tracked.Current.SpeedKt!.Value, 799, 801);
+        Assert.InRange(tracked.VectorClosureKt!.Value, 1590, 1610);
+        Assert.InRange(tracked.PositionClosureKt!.Value, 1590, 1610);
     }
 
     [Fact]
