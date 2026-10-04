@@ -49,7 +49,43 @@ public sealed class VatsimCallsignTrafficFeedTests
         await feed.DisposeAsync();
     }
 
-    private static TrafficSnapshot Snapshot(DateTimeOffset timestamp, string callsign) =>
+    [Fact]
+    public async Task Enrichment_OwnshipIdentityChangeRevokesPreviouslyPublishedOwnCallsign()
+    {
+        var inner = new ManualTrafficFeed();
+        var settings = new TacticalDisplaySettings { VatsimDataFeedUrl = "https://unit.test/feed.json" };
+        VatsimOwnshipIdentity identity = new("99999", "OTHER");
+        var feed = new VatsimCallsignTrafficFeed(
+            inner,
+            settings,
+            () => identity,
+            new HttpClient(new JsonHandler("""
+                {"general":{},"pilots":[{"callsign":"OWN2","latitude":60.1,"longitude":24,"altitude":5000,"groundspeed":250,"heading":180,"cid":23456}]}
+                """)));
+        var firstPublished = new TaskCompletionSource<TrafficSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondPublished = new TaskCompletionSource<TrafficSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var publishedCount = 0;
+        feed.SnapshotReceived += (_, snapshot) =>
+        {
+            if (Interlocked.Increment(ref publishedCount) == 1) firstPublished.TrySetResult(snapshot);
+            else secondPublished.TrySetResult(snapshot);
+        };
+
+        var now = DateTimeOffset.UtcNow;
+        inner.Publish(Snapshot(now, null));
+        var initial = await firstPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("OWN2", Assert.Single(initial.Contacts).Callsign);
+
+        identity = new VatsimOwnshipIdentity("23456", null);
+        inner.Publish(Snapshot(now.AddSeconds(1), null));
+        var afterIdentityChange = await secondPublished.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        var contact = Assert.Single(afterIdentityChange.Contacts);
+        Assert.Null(contact.Callsign);
+        Assert.True(contact.CallsignRevoked);
+        await feed.DisposeAsync();
+    }
+
+    private static TrafficSnapshot Snapshot(DateTimeOffset timestamp, string? callsign) =>
         new(new OwnshipState("OWN", 60, 24, 5000, 90, 250, timestamp),
             [new TrafficContactState("T1", callsign, 60.1, 24, 5000, 180, 250, timestamp)], timestamp);
 
@@ -76,5 +112,14 @@ public sealed class VatsimCallsignTrafficFeedTests
             RequestStarted.TrySetResult();
             return await _response.Task.WaitAsync(cancellationToken);
         }
+    }
+
+    private sealed class JsonHandler(string json) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json")
+            });
     }
 }

@@ -42,6 +42,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     private long _lastObservedConnectionEpoch;
     private string _lastIdentityKey = string.Empty;
     private VatsimOwnshipIdentity? _effectiveOwnshipIdentity;
+    private bool _identityStateResetPending;
 
     public VatsimCallsignTrafficFeed(
         ITrafficDataFeed inner,
@@ -238,6 +239,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         }
 
         _callsignConfirmations.Clear();
+        _identityStateResetPending = true;
         lock (_publicationLock)
         {
             _callSignOwnership.Clear();
@@ -264,6 +266,17 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     {
         lock (_publicationLock)
         {
+            if (_identityStateResetPending)
+            {
+                snapshot = snapshot with
+                {
+                    Contacts = snapshot.Contacts.Select(contact => string.IsNullOrWhiteSpace(contact.Callsign)
+                        ? contact with { CallsignRevoked = true }
+                        : contact).ToArray()
+                };
+                _identityStateResetPending = false;
+            }
+
             return _callSignOwnership.Reconcile(snapshot, identity?.Callsign, ConfirmedCallsignEvidenceRetention);
         }
     }
