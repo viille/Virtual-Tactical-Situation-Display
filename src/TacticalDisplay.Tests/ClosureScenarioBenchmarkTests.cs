@@ -1,5 +1,6 @@
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
+using System.Text;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -15,7 +16,8 @@ public sealed class ClosureScenarioBenchmarkTests(ITestOutputHelper output)
     public void ClosureBenchmark_ReportsTruthPositionVectorAndPublishedEstimatesAcrossScenarios()
     {
         var scenarios = CreateScenarios();
-        output.WriteLine("scenario | T50/T90 final [fixed4s] | peak error P/V/F kt | steady MAE P/V/F kt | steady jitter P/V/F kt | source jump kt | outlier deviation/recovery kt/s");
+        var report = new StringBuilder("| Scenario | T50/T90 final (fixed 4 s) s | Peak error P/V/F kt | Steady MAE P/V/F kt | Steady jitter P/V/F kt | Source jump kt | Outlier max deviation current [fixed 4 s] kt | Recovery current [fixed 4 s] s | Final truth/P/V/published kt and source |\n|---|---:|---:|---:|---:|---:|---:|---:|---|\n");
+        output.WriteLine("scenario | T50/T90 final [fixed4s] | peak error P/V/F kt | steady MAE P/V/F kt | steady jitter P/V/F kt | source jump kt | outlier deviation current [fixed4s] kt | recovery current [fixed4s] s");
         foreach (var scenario in scenarios)
         {
             var samples = Run(scenario);
@@ -40,16 +42,25 @@ public sealed class ClosureScenarioBenchmarkTests(ITestOutputHelper output)
                 ? samples.Where(sample => sample.Time is >= 7.75 and <= 8.5).Select(sample => System.Math.Abs(sample.Final.GetValueOrDefault() - sample.Truth)).DefaultIfEmpty(0).Max()
                 : 0;
             var outlierRecovery = scenario.BadPositionSample ? RecoveryTime(samples, 8, 20) : 0;
+            var baselineOutlierDeviation = scenario.BadPositionSample ? BaselineMaximumDeviation(samples, 7.75, 8.5) : 0;
+            var baselineOutlierRecovery = scenario.BadPositionSample ? BaselineRecoveryTime(samples, 8, 20, 20) : 0;
 
             var responseText = $"{Format(t50)}/{Format(t90)}" + (oldT50.HasValue ? $" [{Format(oldT50)}/{Format(oldT90)}]" : string.Empty);
-            output.WriteLine($"{scenario.Name} | {responseText} s | {peakPositionError:F1}/{peakVectorError:F1}/{peakFinalError:F1} | " +
+            var scenarioLine = $"{scenario.Name} | {responseText} s | {peakPositionError:F1}/{peakVectorError:F1}/{peakFinalError:F1} | " +
                 $"{steadyPositionMae:F1}/{steadyVectorMae:F1}/{steadyFinalMae:F1} | {steadyPositionJitter:F1}/{steadyVectorJitter:F1}/{steadyFinalJitter:F1} | " +
-                $"{transitionJump:F1} | {outlierDeviation:F1}/{outlierRecovery:F2}");
+                $"{transitionJump:F1} | {outlierDeviation:F1} [{baselineOutlierDeviation:F1}] | {outlierRecovery:F2} [{baselineOutlierRecovery:F2}]";
+            output.WriteLine(scenarioLine);
+            Console.WriteLine(scenarioLine);
             var latest = samples.Last();
-            output.WriteLine($"  final truth={latest.Truth:F1} position={Format(latest.Position)} vector={Format(latest.Vector)} published={Format(latest.Final)} source={latest.Source}");
+            report.AppendLine(string.Create(System.Globalization.CultureInfo.InvariantCulture,
+                $"| {scenario.Name} | {responseText} | {peakPositionError:F1}/{peakVectorError:F1}/{peakFinalError:F1} | {steadyPositionMae:F1}/{steadyVectorMae:F1}/{steadyFinalMae:F1} | {steadyPositionJitter:F1}/{steadyVectorJitter:F1}/{steadyFinalJitter:F1} | {transitionJump:F1} | {outlierDeviation:F1} [{baselineOutlierDeviation:F1}] | {outlierRecovery:F2} [{baselineOutlierRecovery:F2}] | {latest.Truth:F1}/{Format(latest.Position)}/{Format(latest.Vector)}/{Format(latest.Final)} {latest.Source} |"));
+            var estimateLine = $"  final truth={latest.Truth:F1} position={Format(latest.Position)} vector={Format(latest.Vector)} published={Format(latest.Final)} source={latest.Source}";
+            output.WriteLine(estimateLine);
+            Console.WriteLine(estimateLine);
         }
 
         Assert.Equal(14, scenarios.Count);
+        WriteGitHubSummary(report.ToString());
         var startup = Run(scenarios.Single(scenario => scenario.Name == "startup-vector-before-history")).First();
         Assert.Null(startup.Position);
         Assert.NotNull(startup.Vector);
@@ -62,6 +73,54 @@ public sealed class ClosureScenarioBenchmarkTests(ITestOutputHelper output)
         Assert.Contains(alignmentRecovery, sample => sample.Alignment == "unavailable" && sample.RangeDecision == "rejected-alignment-unavailable");
         Assert.Contains(alignmentRecovery, sample => sample.Alignment == "exact" && sample.RangeDecision == "accepted-aligned");
         Assert.All(scenarios.Select(Run), samples => Assert.NotEmpty(samples));
+
+        var constant = Run(scenarios.Single(scenario => scenario.Name == "constant-closure"));
+        Assert.InRange(MeanError(constant, static sample => sample.Final), 0, 5);
+        Assert.InRange(Jitter(constant, static sample => sample.Final), 0, 5);
+        Assert.Equal("position", constant.Last().Source);
+
+        var stepSamples = Run(scenarios.Single(scenario => scenario.Name == "closure-step-100-500"));
+        var currentT50 = ResponseTime(stepSamples, 4, 0.5);
+        var baselineT50 = BaselineResponseTime(stepSamples, 4, 0.5);
+        var currentT90 = ResponseTime(stepSamples, 4, 0.9);
+        var baselineT90 = BaselineResponseTime(stepSamples, 4, 0.9);
+        Assert.True(currentT50.HasValue && baselineT50.HasValue && currentT50.Value < baselineT50.Value);
+        Assert.True(currentT90.HasValue && baselineT90.HasValue && currentT90.Value < baselineT90.Value);
+
+        var outlier = Run(scenarios.Single(scenario => scenario.Name == "single-bad-position"));
+        var oldOutlierDeviation = BaselineMaximumDeviation(outlier, 7.75, 8.5);
+        var oldOutlierRecovery = BaselineRecoveryTime(outlier, 8, 20, 20);
+        Assert.True(outlier.Where(sample => sample.Time is >= 7.75 and <= 8.5)
+            .Select(sample => System.Math.Abs(sample.Final.GetValueOrDefault() - sample.Truth)).DefaultIfEmpty(0).Max() <= oldOutlierDeviation);
+        Assert.True(RecoveryTime(outlier, 8, 20) <= oldOutlierRecovery + 0.25);
+        var unavailableAlignment = alignmentRecovery.Select((sample, index) => (sample, index))
+            .Where(item => item.sample.Alignment == "unavailable").ToArray();
+        Assert.NotEmpty(unavailableAlignment);
+        Assert.All(unavailableAlignment, item =>
+        {
+            Assert.Equal("rejected-alignment-unavailable", item.sample.RangeDecision);
+            Assert.Equal("degraded-latest-ownship", item.sample.DisplayGeometry);
+            Assert.True(item.sample.DisplayTargetPresent);
+            if (item.index > 0) Assert.Equal(alignmentRecovery[item.index - 1].RegressionSampleCount, item.sample.RegressionSampleCount);
+        });
+        Assert.True(alignmentRecovery.Last().Final.HasValue);
+        Assert.InRange(System.Math.Abs(alignmentRecovery.Last().Final!.Value - alignmentRecovery.Last().Truth), 0, 5);
+        Assert.True(System.Math.Abs(disagreement.Final!.Value - disagreement.Position!.Value) <= 5);
+        var transition = Run(scenarios.Single(scenario => scenario.Name == "vector-position-transition"));
+        var maxSourceJump = transition.Zip(transition.Skip(1), (before, after) => (before, after))
+            .Where(pair => pair.before.Source != pair.after.Source && pair.before.Final.HasValue && pair.after.Final.HasValue)
+            .Select(pair => System.Math.Abs((pair.after.Final!.Value - pair.before.Final!.Value) - (pair.after.Truth - pair.before.Truth)))
+            .DefaultIfEmpty(0).Max();
+        Assert.InRange(maxSourceJump, 0, 50);
+    }
+
+    private static void WriteGitHubSummary(string report)
+    {
+        var summaryPath = Environment.GetEnvironmentVariable("GITHUB_STEP_SUMMARY");
+        if (!string.IsNullOrWhiteSpace(summaryPath))
+        {
+            File.AppendAllText(summaryPath, "## Closure benchmark\n\n" + report + "\n", Encoding.UTF8);
+        }
     }
 
     private static List<Sample> Run(Scenario scenario)
@@ -82,7 +141,7 @@ public sealed class ClosureScenarioBenchmarkTests(ITestOutputHelper output)
                 GroundTrackDeg: ownMotion.ReportedTrack ?? ownMotion.Track);
 
             var targetPose = PositionAt(time, scenario.TargetMotion, initialNorthNm: 20);
-            if (scenario.BadPositionSample && System.Math.Abs(time - 8) < 0.001) targetPose = targetPose with { EastNm = targetPose.EastNm + 0.2 };
+            if (scenario.BadPositionSample && System.Math.Abs(time - 8) < 0.001) targetPose = targetPose with { NorthNm = targetPose.NorthNm + 0.2 };
             var targetMotion = scenario.TargetMotion(time);
             var targetTime = start.AddSeconds(time);
             var contact = new TrafficContactState("T1", "BENCH1", targetPose.NorthNm / 60, targetPose.EastNm / 60,
@@ -92,7 +151,8 @@ public sealed class ClosureScenarioBenchmarkTests(ITestOutputHelper output)
             var computed = repository.BuildPicture(settings).Targets.SingleOrDefault();
             var tracked = repository.GetTrackedContact("T1")!;
             samples.Add(new Sample(time, TruthClosure(time, scenario), tracked.RelativeRangeNm, tracked.PositionClosureKt,
-                tracked.VectorClosureKt, computed?.ClosureKt, tracked.ClosureSource, tracked.AlignmentMethod, tracked.RangeSampleDecision));
+                tracked.VectorClosureKt, computed?.ClosureKt, tracked.ClosureSource, tracked.AlignmentMethod, tracked.RangeSampleDecision,
+                tracked.DisplayGeometryMode, computed is not null, tracked.RegressionSampleCount));
         }
 
         return samples;
@@ -212,6 +272,19 @@ public sealed class ClosureScenarioBenchmarkTests(ITestOutputHelper output)
         samples.FirstOrDefault(sample => sample.Time > eventTime && sample.Final.HasValue &&
             System.Math.Abs(sample.Final.Value - sample.Truth) <= errorLimit)?.Time - eventTime ?? 0;
 
+    private static double BaselineMaximumDeviation(IReadOnlyList<Sample> samples, double start, double end) =>
+        BaselineValues(samples).Where(sample => sample.Time >= start && sample.Time <= end && sample.Value.HasValue)
+            .Select(sample => System.Math.Abs(sample.Value!.Value - sample.Truth)).DefaultIfEmpty(0).Max();
+
+    private static double BaselineRecoveryTime(IReadOnlyList<Sample> samples, double eventTime, double errorLimit, double maximumWait) =>
+        BaselineValues(samples).Where(sample => sample.Time > eventTime && sample.Time <= eventTime + maximumWait &&
+                sample.Value.HasValue && System.Math.Abs(sample.Value.Value - sample.Truth) <= errorLimit)
+            .Select(sample => (double?)sample.Time).FirstOrDefault() - eventTime ?? maximumWait;
+
+    private static IEnumerable<(double Time, double Truth, double? Value)> BaselineValues(IReadOnlyList<Sample> samples) =>
+        samples.Select((sample, index) => (sample.Time, sample.Truth,
+            Value: BaselineFixedFourSecond(samples.Take(index + 1).ToArray())));
+
     private static double StandardDeviation(double[] values)
     {
         if (values.Length == 0) return 0;
@@ -246,7 +319,10 @@ public sealed class ClosureScenarioBenchmarkTests(ITestOutputHelper output)
         double? Final,
         string Source,
         string Alignment,
-        string RangeDecision);
+        string RangeDecision,
+        string DisplayGeometry,
+        bool DisplayTargetPresent,
+        int RegressionSampleCount);
     private sealed record Scenario(
         string Name,
         Func<double, Motion> OwnshipMotion,

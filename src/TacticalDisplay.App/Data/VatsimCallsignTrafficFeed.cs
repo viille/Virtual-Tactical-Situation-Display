@@ -85,16 +85,25 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 
     private void OnInnerConnectionChanged(object? sender, bool connected)
     {
+        long connectionEpoch;
         if (!connected)
         {
             lock (_pendingSnapshotLock)
             {
                 _connectionEpoch++;
+                connectionEpoch = _connectionEpoch;
                 _pendingSnapshot = null;
             }
 
             lock (_publicationLock) _callSignOwnership.Clear();
         }
+        else
+        {
+            lock (_pendingSnapshotLock) connectionEpoch = _connectionEpoch;
+        }
+
+        DataSourceDebugLog.ThrottledDebug(LogSource, $"connection-{connected}-{connectionEpoch}", TimeSpan.FromSeconds(1),
+            () => $"Callsign feed connection changed | connected={connected} connectionEpoch={connectionEpoch} ownershipCleared={!connected}");
 
         ConnectionChanged?.Invoke(sender, connected);
     }
@@ -240,12 +249,15 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 
         _callsignConfirmations.Clear();
         _identityStateResetPending = true;
+        var previousIdentityKey = _lastIdentityKey;
         lock (_publicationLock)
         {
             _callSignOwnership.Clear();
             _lastIdentityKey = identityKey;
             _effectiveOwnshipIdentity = identity;
         }
+        DataSourceDebugLog.ThrottledDebug(LogSource, $"identity-reset-{identityKey}", TimeSpan.FromSeconds(1),
+            () => $"Callsign ownership reset after ownship identity change | previousIdentity={previousIdentityKey} currentIdentity={identityKey}");
     }
 
     private VatsimOwnshipIdentity? GetPublicationIdentity()
@@ -594,8 +606,12 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                 : "none";
             var margin = secondScore.HasValue ? secondScore.Value - candidateScore : double.NaN;
             assignmentDiagnostics.TryGetValue(contact.Id, out var assignment);
-            var line = $"Callsign pipeline | contact={key} proposed={proposedCallsign ?? "---"} candidateScore={candidateScore:0.000} " +
+            var candidateSummary = string.Join(",", ranked.Take(4).Select(match =>
+                $"{match.Callsign}:{match.Score.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture)}:{(match.IsMatch ? "candidate" : match.RejectReason ?? "rejected")}"));
+            var publishedContact = published.Contacts.FirstOrDefault(item => ContactIdentityKey(item) == key);
+            var line = $"Callsign pipeline | contact={contact.Id} generation={contact.Generation} proposed={proposedCallsign ?? "---"} candidateScore={candidateScore:0.000} " +
                 $"secondBestScore={secondScore?.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} margin={margin:0.000} source={source} " +
+                $"candidateCount={ranked.Count(match => match.IsMatch)} candidateAlternatives={candidateSummary} " +
                 $"assignmentComponent={assignment?.ComponentId.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "---"} " +
                 $"assignmentComponentContacts={assignment?.ComponentContactCount.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "---"} " +
                 $"currentAssignmentStable={assignment?.StableAcrossPlausibleSolutions.ToString() ?? "unknown"} " +
@@ -603,6 +619,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                 $"ambiguityReason={assignment?.AmbiguityReason ?? "not-in-current-candidate-graph"} " +
                 $"confirmation={(state?.Confirmed == true ? "confirmed" : "pending")} previousConfirmed={state?.PreviousConfirmedCallsign ?? "---"} " +
                 $"confirmed={state?.ConfirmedCallsign ?? "---"} ownership={ownership} published={publishedCallsign ?? "---"} rejectReason={reason} " +
+                $"revoked={publishedContact?.CallsignRevoked ?? raw.Contacts.FirstOrDefault(item => ContactIdentityKey(item) == key)?.CallsignRevoked ?? false} " +
                 $"ownshipExcluded={ownExcluded} ownshipReason={ownshipReason} historicalCandidate={historical.Callsign ?? "---"} " +
                 $"decision={(publishedCallsign is null ? "rejected-or-unresolved" : "accepted-and-published")}";
             DataSourceDebugLog.ThrottledDebug(LogSource, $"callsign-pipeline-{key}", TimeSpan.FromSeconds(5), () => line);

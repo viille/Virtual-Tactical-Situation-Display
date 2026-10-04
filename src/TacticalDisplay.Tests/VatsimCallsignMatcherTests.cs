@@ -1,11 +1,129 @@
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
+using System.Text;
 using Xunit;
+using Xunit.Abstractions;
 
 namespace TacticalDisplay.Tests;
 
-public sealed class VatsimCallsignMatcherTests
+public sealed class VatsimCallsignMatcherTests(ITestOutputHelper output)
 {
+    [Fact]
+    public void AssignmentSearch_LargeSymmetricFormationStaysAmbiguousWithinWorkAndTimeLimits()
+    {
+        var report = new StringBuilder("| Contacts | Pilots | Candidate edges | Largest component | Relaxed columns | Search ms | Stable pairs |\n|---:|---:|---:|---:|---:|---:|---:|\n");
+        foreach (var size in new[] { 6, 8, 10, 12, 15 })
+        {
+            var metrics = VatsimCallsignMatcher.MeasureAssignmentSearch(size, size, (_, _) => 1.0);
+
+            Assert.Equal(size * size, metrics.CandidateEdges);
+            Assert.Equal(size, metrics.LargestComponentContactCount);
+            Assert.Equal(size, metrics.LargestComponentPilotCount);
+            Assert.True(metrics.RelaxedColumns < 2_000_000,
+                $"{size}x{size} symmetric assignment relaxed {metrics.RelaxedColumns} columns.");
+            Assert.Empty(metrics.StablePairs);
+            var searchMilliseconds = metrics.Elapsed.TotalMilliseconds.ToString("F2", System.Globalization.CultureInfo.InvariantCulture);
+            var measurement = $"callsign-formation | contacts={size} pilots={size} edges={metrics.CandidateEdges} component={metrics.LargestComponentContactCount}x{metrics.LargestComponentPilotCount} relaxedColumns={metrics.RelaxedColumns} searchMs={searchMilliseconds} stablePairs={metrics.StablePairs.Count}";
+            output.WriteLine(measurement);
+            Console.WriteLine(measurement);
+            report.AppendLine($"| {size} | {size} | {metrics.CandidateEdges} | {metrics.LargestComponentContactCount}x{metrics.LargestComponentPilotCount} | {metrics.RelaxedColumns} | {searchMilliseconds} | {metrics.StablePairs.Count} |");
+            Assert.True(metrics.Elapsed < TimeSpan.FromSeconds(2),
+                $"{size}x{size} symmetric assignment search took {metrics.Elapsed.TotalSeconds:0.000}s.");
+
+            var now = DateTimeOffset.UnixEpoch;
+            var snapshot = new TrafficSnapshot(new OwnshipState("OWN", 60, 24, 5000, 0, 0, now),
+                Enumerable.Range(0, size).Select(index => new TrafficContactState($"T{index}", null, 60.1, 24, 5000, 90, 250, now)).ToArray(), now);
+            var pilots = Enumerable.Range(0, size).Select(index => new VatsimPilotCandidate($"FIN{index:000}", 60.1, 24, 5000, 250, 90)).ToArray();
+            var enriched = VatsimCallsignMatcher.EnrichSnapshot(snapshot, pilots);
+            Assert.All(enriched.Contacts, contact => Assert.Null(contact.Callsign));
+            var publishedCallsigns = enriched.Contacts.Where(contact => contact.Callsign is not null).Select(contact => contact.Callsign!).ToArray();
+            Assert.Equal(publishedCallsigns.Length, publishedCallsigns.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+        }
+
+        var summaryPath = Environment.GetEnvironmentVariable("GITHUB_STEP_SUMMARY");
+        if (!string.IsNullOrWhiteSpace(summaryPath))
+        {
+            File.AppendAllText(summaryPath, "## Callsign assignment benchmark\n\n" + report + "\n", Encoding.UTF8);
+        }
+    }
+
+    [Fact]
+    public void AssignmentSearch_KeepsUnambiguousPairBesideAmbiguousFormation()
+    {
+        var metrics = VatsimCallsignMatcher.MeasureAssignmentSearch(4, 4, (contact, pilot) =>
+            contact == 3 && pilot == 3 ? 0.1 : contact < 3 && pilot < 3 ? 1.0 : null);
+
+        Assert.Equal(10, metrics.CandidateEdges);
+        Assert.Contains((3, 3), metrics.StablePairs);
+        Assert.DoesNotContain(metrics.StablePairs, pair => pair.ContactIndex < 3);
+        Assert.Equal(metrics.StablePairs.Count, metrics.StablePairs.Select(pair => pair.PilotIndex).Distinct().Count());
+    }
+
+    [Fact]
+    public void AssignmentSearch_MatchesExhaustivePlausibleIntersectionForSmallCandidateGraphs()
+    {
+        var random = new Random(73015);
+        double[] scores = [0.1, 0.35, 0.6, 1.0, 1.4, 1.6, 1.9, 2.2];
+        for (var size = 2; size <= 5; size++)
+        {
+            for (var example = 0; example < 20; example++)
+            {
+                var matrix = new double?[size, size];
+                for (var contact = 0; contact < size; contact++)
+                {
+                    for (var pilot = 0; pilot < size; pilot++)
+                    {
+                        if (contact == 0 || pilot == 0 || random.NextDouble() < 0.65)
+                        {
+                            matrix[contact, pilot] = scores[random.Next(scores.Length)];
+                        }
+                    }
+                }
+
+                var actual = VatsimCallsignMatcher.MeasureAssignmentSearch(size, size,
+                    (contact, pilot) => matrix[contact, pilot]).StablePairs.ToHashSet();
+                var expected = ExhaustiveStablePairs(matrix);
+                Assert.Equal(expected.OrderBy(pair => pair.ContactIndex).ThenBy(pair => pair.PilotIndex),
+                    actual.OrderBy(pair => pair.ContactIndex).ThenBy(pair => pair.PilotIndex));
+            }
+        }
+    }
+
+    private static HashSet<(int ContactIndex, int PilotIndex)> ExhaustiveStablePairs(double?[,] scores)
+    {
+        var size = scores.GetLength(0);
+        const double unmatchedPenalty = 1.5;
+        const double plausibleMargin = 0.75;
+        var usedPilots = new HashSet<int>();
+        var current = new Dictionary<int, int>();
+        var solutions = new List<(double Score, Dictionary<int, int> Assignments)>();
+        Enumerate(0, 0);
+        var best = solutions.Min(solution => solution.Score);
+        var plausible = solutions.Where(solution => solution.Score <= best + plausibleMargin).ToArray();
+        return plausible[0].Assignments
+            .Where(pair => plausible.All(solution => solution.Assignments.TryGetValue(pair.Key, out var pilot) && pilot == pair.Value))
+            .Select(pair => (pair.Key, pair.Value)).ToHashSet();
+
+        void Enumerate(int contact, double total)
+        {
+            if (contact == size)
+            {
+                solutions.Add((total, new Dictionary<int, int>(current)));
+                return;
+            }
+
+            Enumerate(contact + 1, total);
+            for (var pilot = 0; pilot < size; pilot++)
+            {
+                if (scores[contact, pilot] is not double score || !usedPilots.Add(pilot)) continue;
+                current[contact] = pilot;
+                Enumerate(contact + 1, total + score - unmatchedPenalty);
+                current.Remove(contact);
+                usedPilots.Remove(pilot);
+            }
+        }
+    }
+
     [Fact]
     public void EnrichSnapshot_AddsCallsignWhenPilotPositionMatches()
     {

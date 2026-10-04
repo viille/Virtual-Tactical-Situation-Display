@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Kept clearly supported callsign assignments when another formation component is ambiguous; weak matches now compete with an unmatched result.
+- Replaced exponential callsign assignment enumeration with a polynomial cost-minimization search while preserving unmatched alternatives and stable pairs across plausible assignments.
+- Kept fresh traffic visible through brief timestamp alignment gaps using degraded or short-lived retained geometry, without feeding unaligned positions into closure history.
+- Added 6/8/10/12/15-contact ambiguous-formation performance coverage and exposed closure benchmark tables in GitHub Actions summaries.
+- Added conservative closure regression limits for steady closure, step response, outlier recovery, alignment loss, vector disagreement and source transitions; preserved recency weighting and position-preferred source selection.
+- Expanded throttled formation diagnostics with ranked candidate alternatives, generation and revocation details, and disconnect/reconnect ownership events.
+
 ## 0.14.12 - 2026-09-28
 
 - Fixed MSFS traffic closure to use smoothed position-based range changes, with velocity-based startup fallback and diagnostics for comparing both calculations.

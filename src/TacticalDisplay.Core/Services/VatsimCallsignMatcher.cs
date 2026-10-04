@@ -33,6 +33,38 @@ public static class VatsimCallsignMatcher
     // to a current VATSIM pilot. Interpolation handles the normal update gap.
     private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(20);
 
+    /// <summary>Measures the existing safe assignment search without exposing internal candidate types.</summary>
+    public static VatsimAssignmentSearchMetrics MeasureAssignmentSearch(
+        int contactCount,
+        int pilotCount,
+        Func<int, int, double?> candidateScore)
+    {
+        ArgumentNullException.ThrowIfNull(candidateScore);
+        var candidates = new List<MatchCandidate>();
+        for (var contactIndex = 0; contactIndex < contactCount; contactIndex++)
+        {
+            for (var pilotIndex = 0; pilotIndex < pilotCount; pilotIndex++)
+            {
+                if (candidateScore(contactIndex, pilotIndex) is double score)
+                {
+                    candidates.Add(new MatchCandidate(contactIndex, pilotIndex, score));
+                }
+            }
+        }
+
+        var timer = System.Diagnostics.Stopwatch.StartNew();
+        var result = FindBestAssignment(candidates, out var relaxedColumns);
+        timer.Stop();
+        var (componentContactCount, componentPilotCount) = GetLargestComponentSize(candidates);
+        return new VatsimAssignmentSearchMetrics(
+            candidates.Count,
+            componentContactCount,
+            componentPilotCount,
+            timer.Elapsed,
+            result.Select(candidate => (candidate.ContactIndex, candidate.PilotIndex)).ToArray(),
+            relaxedColumns);
+    }
+
     public static TrafficSnapshot EnrichSnapshot(
         TrafficSnapshot snapshot,
         IReadOnlyList<VatsimPilotCandidate> pilots,
@@ -342,8 +374,16 @@ public static class VatsimCallsignMatcher
     private static IReadOnlyList<MatchCandidate> FindBestAssignment(
         IReadOnlyList<MatchCandidate> candidates,
         double minScoreMargin = MinBestScoreMargin,
+        double unmatchedPenalty = DirectMatchUnmatchedPenalty) =>
+        FindBestAssignment(candidates, out _, minScoreMargin, unmatchedPenalty);
+
+    private static IReadOnlyList<MatchCandidate> FindBestAssignment(
+        IReadOnlyList<MatchCandidate> candidates,
+        out long relaxedColumns,
+        double minScoreMargin = MinBestScoreMargin,
         double unmatchedPenalty = DirectMatchUnmatchedPenalty)
     {
+        relaxedColumns = 0;
         if (candidates.Count == 0)
         {
             return [];
@@ -383,60 +423,177 @@ public static class VatsimCallsignMatcher
                 .Order()
                 .Select(contactIndex => candidatesByContact[contactIndex])
                 .ToArray();
-            var usedPilots = new HashSet<int>();
-            var current = new Dictionary<int, MatchCandidate>();
-            var bestScore = double.PositiveInfinity;
-            Dictionary<int, MatchCandidate>? commonPairs = null;
-            Search(0, 0, updateBestScore: true);
-
-            Search(0, 0, updateBestScore: false);
-            if (commonPairs is not null) stableAssignments.AddRange(commonPairs.Values);
-
-            void Search(int contactOffset, double score, bool updateBestScore)
+            var bestScore = FindMinimum(componentCandidates, unmatchedPenalty, -1, -1, ref relaxedColumns);
+            foreach (var options in componentCandidates)
             {
-                if (contactOffset == componentCandidates.Length)
+                var contactIndex = options[0].ContactIndex;
+                var plausibleCandidates = new List<MatchCandidate>();
+                foreach (var candidate in options)
                 {
-                    if (updateBestScore)
+                    if (FindMinimum(componentCandidates, unmatchedPenalty, contactIndex, candidate.PilotIndex, ref relaxedColumns)
+                        <= bestScore + plausibleSolutionMargin)
                     {
-                        bestScore = System.Math.Min(bestScore, score);
-                        return;
+                        plausibleCandidates.Add(candidate);
                     }
-
-                    if (score > bestScore + plausibleSolutionMargin) return;
-                    if (commonPairs is null)
-                    {
-                        commonPairs = new Dictionary<int, MatchCandidate>(current);
-                        return;
-                    }
-
-                    foreach (var contact in commonPairs.Keys.ToArray())
-                    {
-                        if (!current.TryGetValue(contact, out var currentPair) ||
-                            currentPair.PilotIndex != commonPairs[contact].PilotIndex)
-                        {
-                            commonPairs.Remove(contact);
-                        }
-                    }
-
-                    return;
                 }
-
-                foreach (var candidate in componentCandidates[contactOffset])
+                var unmatchedIsPlausible = FindMinimum(componentCandidates, unmatchedPenalty, contactIndex, -1, ref relaxedColumns)
+                    <= bestScore + plausibleSolutionMargin;
+                if (!unmatchedIsPlausible && plausibleCandidates.Count == 1)
                 {
-                    if (!usedPilots.Add(candidate.PilotIndex)) continue;
-                    current[candidate.ContactIndex] = candidate;
-                    var edgeCost = candidate.Score - unmatchedPenalty;
-                    Search(contactOffset + 1, score + edgeCost, updateBestScore);
-                    current.Remove(candidate.ContactIndex);
-                    usedPilots.Remove(candidate.PilotIndex);
+                    stableAssignments.Add(plausibleCandidates[0]);
                 }
-
-                // Unmatched is a first-class alternative with zero incremental cost.
-                Search(contactOffset + 1, score, updateBestScore);
             }
         }
 
         return stableAssignments;
+    }
+
+    private static double FindMinimum(
+        IReadOnlyList<MatchCandidate[]> componentCandidates,
+        double unmatchedPenalty,
+        int forcedContactIndex,
+        int forcedPilotIndex,
+        ref long relaxedColumns)
+    {
+        var forcedCost = 0.0;
+        var rows = new List<MatchCandidate[]>();
+        foreach (var options in componentCandidates)
+        {
+            if (options[0].ContactIndex != forcedContactIndex)
+            {
+                rows.Add(options);
+                continue;
+            }
+
+            if (forcedPilotIndex >= 0)
+            {
+                var forced = options.FirstOrDefault(candidate => candidate.PilotIndex == forcedPilotIndex);
+                if (forced is null) return double.PositiveInfinity;
+                forcedCost = forced.Score - unmatchedPenalty;
+            }
+        }
+
+        if (rows.Count == 0) return forcedCost;
+        var pilotIndexes = componentCandidates.SelectMany(options => options)
+            .Select(candidate => candidate.PilotIndex)
+            .Distinct()
+            .Where(pilotIndex => pilotIndex != forcedPilotIndex)
+            .Order()
+            .ToArray();
+        var rowCount = rows.Count;
+        var columnCount = pilotIndexes.Length + rowCount;
+        var costs = new double[rowCount, columnCount];
+        for (var row = 0; row < rowCount; row++)
+        {
+            for (var column = 0; column < pilotIndexes.Length; column++)
+            {
+                var candidate = rows[row].FirstOrDefault(option => option.PilotIndex == pilotIndexes[column]);
+                costs[row, column] = candidate is null ? 1e9 : candidate.Score - unmatchedPenalty;
+            }
+        }
+
+        // Rectangular Hungarian assignment. One zero-cost dummy column per contact
+        // represents the explicit unmatched alternative; candidate edges retain
+        // their original score-minus-unmatched-penalty objective.
+        var u = new double[rowCount + 1];
+        var v = new double[columnCount + 1];
+        var matching = new int[columnCount + 1];
+        var previousColumn = new int[columnCount + 1];
+        for (var row = 1; row <= rowCount; row++)
+        {
+            matching[0] = row;
+            var currentColumn = 0;
+            var minimumReducedCost = Enumerable.Repeat(double.PositiveInfinity, columnCount + 1).ToArray();
+            var usedColumns = new bool[columnCount + 1];
+            do
+            {
+                usedColumns[currentColumn] = true;
+                var currentRow = matching[currentColumn];
+                var delta = double.PositiveInfinity;
+                var nextColumn = 0;
+                for (var column = 1; column <= columnCount; column++)
+                {
+                    if (usedColumns[column]) continue;
+                    relaxedColumns++;
+                    var cost = column > pilotIndexes.Length ? 0 : costs[currentRow - 1, column - 1];
+                    var reducedCost = cost - u[currentRow] - v[column];
+                    if (reducedCost < minimumReducedCost[column])
+                    {
+                        minimumReducedCost[column] = reducedCost;
+                        previousColumn[column] = currentColumn;
+                    }
+
+                    if (minimumReducedCost[column] < delta)
+                    {
+                        delta = minimumReducedCost[column];
+                        nextColumn = column;
+                    }
+                }
+
+                for (var column = 0; column <= columnCount; column++)
+                {
+                    if (usedColumns[column])
+                    {
+                        u[matching[column]] += delta;
+                        v[column] -= delta;
+                    }
+                    else
+                    {
+                        minimumReducedCost[column] -= delta;
+                    }
+                }
+
+                currentColumn = nextColumn;
+            }
+            while (matching[currentColumn] != 0);
+
+            do
+            {
+                var nextColumn = previousColumn[currentColumn];
+                matching[currentColumn] = matching[nextColumn];
+                currentColumn = nextColumn;
+            }
+            while (currentColumn != 0);
+        }
+
+        return forcedCost - v[0];
+    }
+
+    private static (int Contacts, int Pilots) GetLargestComponentSize(IReadOnlyList<MatchCandidate> candidates)
+    {
+        var contactsByPilot = candidates.GroupBy(candidate => candidate.PilotIndex)
+            .ToDictionary(group => group.Key, group => group.Select(candidate => candidate.ContactIndex).Distinct().ToArray());
+        var pilotsByContact = candidates.GroupBy(candidate => candidate.ContactIndex)
+            .ToDictionary(group => group.Key, group => group.Select(candidate => candidate.PilotIndex).Distinct().ToArray());
+        var visitedContacts = new HashSet<int>();
+        var largestContacts = 0;
+        var largestPilots = 0;
+        foreach (var root in pilotsByContact.Keys)
+        {
+            if (visitedContacts.Contains(root)) continue;
+            var contacts = new HashSet<int>();
+            var pilots = new HashSet<int>();
+            var queue = new Queue<int>();
+            queue.Enqueue(root);
+            while (queue.TryDequeue(out var contact))
+            {
+                if (!contacts.Add(contact)) continue;
+                visitedContacts.Add(contact);
+                foreach (var pilot in pilotsByContact[contact])
+                {
+                    if (!pilots.Add(pilot)) continue;
+                    foreach (var neighbor in contactsByPilot[pilot]) queue.Enqueue(neighbor);
+                }
+            }
+
+            if (contacts.Count > largestContacts)
+            {
+                largestContacts = contacts.Count;
+                largestPilots = pilots.Count;
+            }
+        }
+
+        return (largestContacts, largestPilots);
     }
 
     private static IReadOnlyList<VatsimPilotCandidate> ExcludeOwnshipPilots(
@@ -699,6 +856,14 @@ public sealed record VatsimAssignmentDecision(
     bool StableAcrossPlausibleSolutions,
     double UnmatchedAlternativeCost,
     string AmbiguityReason);
+
+public sealed record VatsimAssignmentSearchMetrics(
+    int CandidateEdges,
+    int LargestComponentContactCount,
+    int LargestComponentPilotCount,
+    TimeSpan Elapsed,
+    IReadOnlyList<(int ContactIndex, int PilotIndex)> StablePairs,
+    long RelaxedColumns);
 
 public sealed record VatsimPilotCandidate(
     string Callsign,
