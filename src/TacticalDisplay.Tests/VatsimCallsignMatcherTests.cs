@@ -251,6 +251,117 @@ public sealed class VatsimCallsignMatcherTests
     }
 
     [Fact]
+    public void EnrichSnapshot_PreservesClearPairWhenSeparateFormationSubsetIsAmbiguous()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(new OwnshipState("OWN", 60, 24, 5000, 0, 250, now),
+            [new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now),
+             new TrafficContactState("T2", null, 60.5, 24.5, 5000, 90, 250, now),
+             new TrafficContactState("T3", null, 60.5, 24.5, 5000, 90, 250, now)], now);
+        var result = VatsimCallsignMatcher.EnrichSnapshot(snapshot,
+            [new VatsimPilotCandidate("FIN123", 60.1001, 24.1001, 5000, 250, 90),
+             new VatsimPilotCandidate("RETRO61", 60.5, 24.5, 5000, 250, 90),
+             new VatsimPilotCandidate("RETRO62", 60.5, 24.5, 5000, 250, 90)]);
+
+        Assert.Collection(result.Contacts,
+            contact => Assert.Equal("FIN123", contact.Callsign),
+            contact => Assert.Null(contact.Callsign),
+            contact => Assert.Null(contact.Callsign));
+    }
+
+    [Fact]
+    public void InspectCurrentAssignment_ReportsStablePairAndLocalAmbiguityComponent()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var contacts = new[]
+        {
+            new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now),
+            new TrafficContactState("T2", null, 60.5, 24.5, 5000, 90, 250, now),
+            new TrafficContactState("T3", null, 60.5, 24.5, 5000, 90, 250, now)
+        };
+        var pilots = new[]
+        {
+            new VatsimPilotCandidate("FIN123", 60.1001, 24.1001, 5000, 250, 90),
+            new VatsimPilotCandidate("RETRO61", 60.5, 24.5, 5000, 250, 90),
+            new VatsimPilotCandidate("RETRO62", 60.5, 24.5, 5000, 250, 90)
+        };
+
+        var diagnostics = VatsimCallsignMatcher.InspectCurrentAssignment(contacts, pilots);
+        Assert.True(diagnostics["T1"].StableAcrossPlausibleSolutions);
+        Assert.Equal("FIN123", diagnostics["T1"].Callsign);
+        Assert.False(diagnostics["T2"].StableAcrossPlausibleSolutions);
+        Assert.Equal(diagnostics["T2"].ComponentId, diagnostics["T3"].ComponentId);
+        Assert.Equal(2, diagnostics["T2"].ComponentContactCount);
+        Assert.True(diagnostics["T2"].UnmatchedAlternativeCost > 0);
+    }
+
+    [Fact]
+    public void EnrichSnapshot_AmbiguousComponentDoesNotSuppressIndependentClearGroup()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(new OwnshipState("OWN", 60, 24, 5000, 0, 250, now),
+            [new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now),
+             new TrafficContactState("T2", null, 60.1, 24.1, 5000, 90, 250, now),
+             new TrafficContactState("T3", null, 61.0, 24.0, 5000, 90, 250, now),
+             new TrafficContactState("T4", null, 61.02, 24.0, 6000, 90, 250, now)], now);
+        var result = VatsimCallsignMatcher.EnrichSnapshot(snapshot,
+            [new VatsimPilotCandidate("VIPER1", 60.1, 24.1, 5000, 250, 90),
+             new VatsimPilotCandidate("VIPER2", 60.1, 24.1, 5000, 250, 90),
+             new VatsimPilotCandidate("RETRO1", 61.0, 24.0, 5000, 250, 90),
+             new VatsimPilotCandidate("RETRO2", 61.02, 24.0, 6000, 250, 90)]);
+
+        Assert.Null(result.Contacts[0].Callsign);
+        Assert.Null(result.Contacts[1].Callsign);
+        Assert.Equal("RETRO1", result.Contacts[2].Callsign);
+        Assert.Equal("RETRO2", result.Contacts[3].Callsign);
+    }
+
+    [Fact]
+    public void EnrichSnapshot_UnmatchedAlternativeRejectsWeakEdgeWithoutSuppressingStrongPair()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(new OwnshipState("OWN", 60, 24, 5000, 0, 250, now),
+            [new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now),
+             new TrafficContactState("T2", null, 61.0, 24.0, 5000, 90, 250, now)], now);
+        var result = VatsimCallsignMatcher.EnrichSnapshot(snapshot,
+            [new VatsimPilotCandidate("FIN123", 60.1001, 24.1001, 5000, 250, 90),
+             new VatsimPilotCandidate("WEAK1", 61.023, 24.0, 5000, 250, 90)]);
+
+        Assert.Equal("FIN123", result.Contacts[0].Callsign);
+        Assert.Null(result.Contacts[1].Callsign);
+    }
+
+    [Fact]
+    public void EnrichSnapshot_FormationCanBecomeDistinctWithoutArbitraryIntermediatePermutation()
+    {
+        var now = DateTimeOffset.UtcNow;
+        TrafficSnapshot CreateSnapshot(bool distinct) => new(
+            new OwnshipState("OWN", 60, 24, 5000, 0, 250, now),
+            distinct
+                ? [new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now),
+                   new TrafficContactState("T2", null, 60.12, 24.1, 5000, 90, 250, now),
+                   new TrafficContactState("T3", null, 60.14, 24.1, 5000, 90, 250, now)]
+                : [new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now),
+                   new TrafficContactState("T2", null, 60.1, 24.1, 5000, 90, 250, now),
+                   new TrafficContactState("T3", null, 60.1, 24.1, 5000, 90, 250, now)], now);
+        var pilots = new[]
+        {
+            new VatsimPilotCandidate("RETRO61", 60.1, 24.1, 5000, 250, 90),
+            new VatsimPilotCandidate("RETRO62", 60.12, 24.1, 5000, 250, 90),
+            new VatsimPilotCandidate("RETRO63", 60.14, 24.1, 5000, 250, 90)
+        };
+
+        var ambiguous = VatsimCallsignMatcher.EnrichSnapshot(CreateSnapshot(false), pilots);
+        Assert.All(ambiguous.Contacts, contact => Assert.Null(contact.Callsign));
+        var distinguishable = VatsimCallsignMatcher.EnrichSnapshot(CreateSnapshot(true), pilots);
+        Assert.Collection(distinguishable.Contacts,
+            contact => Assert.Equal("RETRO61", contact.Callsign),
+            contact => Assert.Equal("RETRO62", contact.Callsign),
+            contact => Assert.Equal("RETRO63", contact.Callsign));
+        Assert.Equal(3, distinguishable.Contacts.Select(contact => contact.Callsign).Distinct().Count());
+    }
+
+    [Fact]
     public void EnrichSnapshotFromHistory_MatchesAgainstVatsimTimestamp()
     {
         var now = DateTimeOffset.UtcNow;

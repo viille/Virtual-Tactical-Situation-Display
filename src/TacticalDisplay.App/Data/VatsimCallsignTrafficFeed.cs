@@ -558,6 +558,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         IReadOnlyList<VatsimPilotCandidate> allPilots,
         VatsimOwnshipIdentity? identity)
     {
+        var assignmentDiagnostics = VatsimCallsignMatcher.InspectCurrentAssignment(raw.Contacts, candidates);
         foreach (var contact in raw.Contacts.Take(12))
         {
             var key = ContactIdentityKey(contact);
@@ -592,12 +593,18 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                 ? $"cid={identity?.Cid ?? "n/a"};callsign={identity?.Callsign ?? "n/a"}"
                 : "none";
             var margin = secondScore.HasValue ? secondScore.Value - candidateScore : double.NaN;
+            assignmentDiagnostics.TryGetValue(contact.Id, out var assignment);
             var line = $"Callsign pipeline | contact={key} proposed={proposedCallsign ?? "---"} candidateScore={candidateScore:0.000} " +
                 $"secondBestScore={secondScore?.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} margin={margin:0.000} source={source} " +
+                $"assignmentComponent={assignment?.ComponentId.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "---"} " +
+                $"assignmentComponentContacts={assignment?.ComponentContactCount.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? "---"} " +
+                $"currentAssignmentStable={assignment?.StableAcrossPlausibleSolutions.ToString() ?? "unknown"} " +
+                $"unmatchedAlternativeCost={assignment?.UnmatchedAlternativeCost.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} " +
+                $"ambiguityReason={assignment?.AmbiguityReason ?? "not-in-current-candidate-graph"} " +
                 $"confirmation={(state?.Confirmed == true ? "confirmed" : "pending")} previousConfirmed={state?.PreviousConfirmedCallsign ?? "---"} " +
                 $"confirmed={state?.ConfirmedCallsign ?? "---"} ownership={ownership} published={publishedCallsign ?? "---"} rejectReason={reason} " +
                 $"ownshipExcluded={ownExcluded} ownshipReason={ownshipReason} historicalCandidate={historical.Callsign ?? "---"} " +
-                $"ambiguityReason={(reason.Contains("ambiguous", StringComparison.Ordinal) ? "assignment-score-margin" : "none")}";
+                $"decision={(publishedCallsign is null ? "rejected-or-unresolved" : "accepted-and-published")}";
             DataSourceDebugLog.ThrottledDebug(LogSource, $"callsign-pipeline-{key}", TimeSpan.FromSeconds(5), () => line);
         }
     }

@@ -232,6 +232,78 @@ public static class VatsimCallsignMatcher
         return best ?? VatsimMatchDiagnostics.None;
     }
 
+    /// <summary>Returns compact current-position assignment decisions for diagnostics.</summary>
+    public static IReadOnlyDictionary<string, VatsimAssignmentDecision> InspectCurrentAssignment(
+        IReadOnlyList<TrafficContactState> contacts,
+        IReadOnlyList<VatsimPilotCandidate> pilots)
+    {
+        var candidates = new List<MatchCandidate>();
+        for (var contactIndex = 0; contactIndex < contacts.Count; contactIndex++)
+        {
+            if (!string.IsNullOrWhiteSpace(contacts[contactIndex].Callsign)) continue;
+            for (var pilotIndex = 0; pilotIndex < pilots.Count; pilotIndex++)
+            {
+                if (IsCandidate(contacts[contactIndex], pilots[pilotIndex], out var score))
+                {
+                    candidates.Add(new MatchCandidate(contactIndex, pilotIndex, score));
+                }
+            }
+        }
+
+        var stablePairs = FindBestAssignment(candidates).ToDictionary(pair => pair.ContactIndex);
+        var candidatesByContact = candidates.GroupBy(pair => pair.ContactIndex)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+        var candidatesByPilot = candidates.GroupBy(pair => pair.PilotIndex)
+            .ToDictionary(group => group.Key, group => group.Select(pair => pair.ContactIndex).Distinct().ToArray());
+        var componentByContact = new Dictionary<int, int>();
+        var componentSizeByContact = new Dictionary<int, int>();
+        foreach (var root in candidatesByContact.Keys.Order())
+        {
+            if (componentByContact.ContainsKey(root)) continue;
+            var componentContacts = new HashSet<int>();
+            var componentPilots = new HashSet<int>();
+            var queue = new Queue<int>();
+            queue.Enqueue(root);
+            while (queue.TryDequeue(out var contactIndex))
+            {
+                if (!componentContacts.Add(contactIndex)) continue;
+                foreach (var edge in candidatesByContact[contactIndex])
+                {
+                    if (!componentPilots.Add(edge.PilotIndex)) continue;
+                    foreach (var neighbor in candidatesByPilot[edge.PilotIndex]) queue.Enqueue(neighbor);
+                }
+            }
+
+            var componentId = componentContacts.Min();
+            foreach (var contactIndex in componentContacts)
+            {
+                componentByContact[contactIndex] = componentId;
+                componentSizeByContact[contactIndex] = componentContacts.Count;
+            }
+        }
+
+        var decisions = new Dictionary<string, VatsimAssignmentDecision>(StringComparer.OrdinalIgnoreCase);
+        for (var index = 0; index < contacts.Count; index++)
+        {
+            candidatesByContact.TryGetValue(index, out var options);
+            var hasStablePair = stablePairs.TryGetValue(index, out var pair);
+            var bestScore = options?.Min(candidate => candidate.Score);
+            var unmatchedAlternativeCost = bestScore.HasValue ? DirectMatchUnmatchedPenalty - bestScore.Value : 0;
+            var reason = hasStablePair ? "stable-across-plausible-solutions" : options is null ? "no-valid-candidate" :
+                unmatchedAlternativeCost < MinBestScoreMargin ? "unmatched-is-plausible" :
+                options.Length > 1 ? "multiple-pilot-alternatives" : "global-assignment-conflict";
+            decisions[contacts[index].Id] = new VatsimAssignmentDecision(
+                hasStablePair && pair is not null ? pilots[pair.PilotIndex].Callsign.Trim().ToUpperInvariant() : null,
+                componentByContact.GetValueOrDefault(index, -1),
+                componentSizeByContact.GetValueOrDefault(index),
+                hasStablePair,
+                unmatchedAlternativeCost,
+                reason);
+        }
+
+        return decisions;
+    }
+
     public static VatsimMatchDiagnostics InspectMatch(
         TrafficContactState contact,
         VatsimPilotCandidate pilot) =>
@@ -279,65 +351,92 @@ public static class VatsimCallsignMatcher
 
         var candidatesByContact = candidates
             .GroupBy(static candidate => candidate.ContactIndex)
-            .OrderBy(static group => group.Key)
-            .Select(static group => group.OrderBy(static candidate => candidate.Score).ToList())
-            .ToList();
-        if (candidatesByContact.Count == 1 &&
-            candidatesByContact[0].Count > 1 &&
-            candidatesByContact[0][1].Score - candidatesByContact[0][0].Score < minScoreMargin)
+            .ToDictionary(static group => group.Key, static group => group.OrderBy(candidate => candidate.Score).ToArray());
+        var candidatesByPilot = candidates
+            .GroupBy(static candidate => candidate.PilotIndex)
+            .ToDictionary(static group => group.Key, static group => group.Select(candidate => candidate.ContactIndex).Distinct().ToArray());
+        var unvisitedContacts = candidatesByContact.Keys.ToHashSet();
+        var stableAssignments = new List<MatchCandidate>();
+        var plausibleSolutionMargin = System.Math.Max(minScoreMargin, MinGlobalAssignmentMargin);
+
+        while (unvisitedContacts.Count > 0)
         {
-            return [];
-        }
-
-        var current = new List<MatchCandidate>();
-        var usedPilots = new HashSet<int>();
-        List<MatchCandidate> best = [];
-        var bestScore = double.MaxValue;
-        var ambiguous = false;
-
-        Search(0, 0);
-        return ambiguous ? [] : best;
-
-        void Search(int groupIndex, double score)
-        {
-            if (groupIndex >= candidatesByContact.Count)
+            var componentContacts = new HashSet<int>();
+            var componentPilots = new HashSet<int>();
+            var pendingContacts = new Queue<int>();
+            pendingContacts.Enqueue(unvisitedContacts.First());
+            while (pendingContacts.TryDequeue(out var contactIndex))
             {
-                if (score < bestScore)
+                if (!componentContacts.Add(contactIndex)) continue;
+                unvisitedContacts.Remove(contactIndex);
+                foreach (var candidate in candidatesByContact[contactIndex])
                 {
-                    if (best.Count == current.Count && best.Count > 0 && bestScore - score < MinGlobalAssignmentMargin)
+                    if (!componentPilots.Add(candidate.PilotIndex)) continue;
+                    foreach (var neighboringContact in candidatesByPilot[candidate.PilotIndex])
                     {
-                        ambiguous = true;
+                        if (!componentContacts.Contains(neighboringContact)) pendingContacts.Enqueue(neighboringContact);
                     }
-                    else
-                    {
-                        ambiguous = false;
-                    }
-                    best = [.. current];
-                    bestScore = score;
                 }
-                else if (best.Count == current.Count && score - bestScore < MinGlobalAssignmentMargin)
-                {
-                    ambiguous = true;
-                }
-
-                return;
             }
 
-            foreach (var candidate in candidatesByContact[groupIndex])
+            var componentCandidates = componentContacts
+                .Order()
+                .Select(contactIndex => candidatesByContact[contactIndex])
+                .ToArray();
+            var usedPilots = new HashSet<int>();
+            var current = new Dictionary<int, MatchCandidate>();
+            var bestScore = double.PositiveInfinity;
+            Dictionary<int, MatchCandidate>? commonPairs = null;
+            Search(0, 0, updateBestScore: true);
+
+            Search(0, 0, updateBestScore: false);
+            if (commonPairs is not null) stableAssignments.AddRange(commonPairs.Values);
+
+            void Search(int contactOffset, double score, bool updateBestScore)
             {
-                if (!usedPilots.Add(candidate.PilotIndex))
+                if (contactOffset == componentCandidates.Length)
                 {
-                    continue;
+                    if (updateBestScore)
+                    {
+                        bestScore = System.Math.Min(bestScore, score);
+                        return;
+                    }
+
+                    if (score > bestScore + plausibleSolutionMargin) return;
+                    if (commonPairs is null)
+                    {
+                        commonPairs = new Dictionary<int, MatchCandidate>(current);
+                        return;
+                    }
+
+                    foreach (var contact in commonPairs.Keys.ToArray())
+                    {
+                        if (!current.TryGetValue(contact, out var currentPair) ||
+                            currentPair.PilotIndex != commonPairs[contact].PilotIndex)
+                        {
+                            commonPairs.Remove(contact);
+                        }
+                    }
+
+                    return;
                 }
 
-                current.Add(candidate);
-                Search(groupIndex + 1, score + candidate.Score - unmatchedPenalty);
-                current.RemoveAt(current.Count - 1);
-                usedPilots.Remove(candidate.PilotIndex);
-            }
+                foreach (var candidate in componentCandidates[contactOffset])
+                {
+                    if (!usedPilots.Add(candidate.PilotIndex)) continue;
+                    current[candidate.ContactIndex] = candidate;
+                    var edgeCost = candidate.Score - unmatchedPenalty;
+                    Search(contactOffset + 1, score + edgeCost, updateBestScore);
+                    current.Remove(candidate.ContactIndex);
+                    usedPilots.Remove(candidate.PilotIndex);
+                }
 
-            Search(groupIndex + 1, score);
+                // Unmatched is a first-class alternative with zero incremental cost.
+                Search(contactOffset + 1, score, updateBestScore);
+            }
         }
+
+        return stableAssignments;
     }
 
     private static IReadOnlyList<VatsimPilotCandidate> ExcludeOwnshipPilots(
@@ -592,6 +691,14 @@ public static class VatsimCallsignMatcher
         contact.SpeedKt.Value >= MinAirborneSpeedForMotionCheckKt &&
         pilot.GroundspeedKt >= MinAirborneSpeedForMotionCheckKt;
 }
+
+public sealed record VatsimAssignmentDecision(
+    string? Callsign,
+    int ComponentId,
+    int ComponentContactCount,
+    bool StableAcrossPlausibleSolutions,
+    double UnmatchedAlternativeCost,
+    string AmbiguityReason);
 
 public sealed record VatsimPilotCandidate(
     string Callsign,

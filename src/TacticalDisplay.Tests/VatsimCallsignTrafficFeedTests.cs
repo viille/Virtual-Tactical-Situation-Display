@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http;
 using System.Text;
+using System.Collections.Concurrent;
 using TacticalDisplay.App.Data;
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
@@ -85,9 +86,58 @@ public sealed class VatsimCallsignTrafficFeedTests
         await feed.DisposeAsync();
     }
 
+    [Fact]
+    public async Task Enrichment_FormationBecomingAmbiguousRevokesUnsupportedAssignmentsAfterRetention()
+    {
+        var inner = new ManualTrafficFeed();
+        var settings = new TacticalDisplaySettings { VatsimDataFeedUrl = "https://unit.test/feed.json" };
+        var feed = new VatsimCallsignTrafficFeed(inner, settings, () => null,
+            new HttpClient(new JsonHandler("""
+                {"general":{},"pilots":[{"callsign":"RETRO61","latitude":60.1,"longitude":24,"altitude":5000,"groundspeed":250,"heading":90},{"callsign":"RETRO62","latitude":60.12,"longitude":24,"altitude":5000,"groundspeed":250,"heading":90}]}
+                """)));
+        var published = new ConcurrentQueue<TrafficSnapshot>();
+        using var signal = new SemaphoreSlim(0);
+        feed.SnapshotReceived += (_, snapshot) =>
+        {
+            published.Enqueue(snapshot);
+            signal.Release();
+        };
+
+        var start = DateTimeOffset.UtcNow;
+        inner.Publish(FormationSnapshot(start, 60.1, 60.12));
+        await signal.WaitAsync(TimeSpan.FromSeconds(5));
+        var initial = published.Last();
+        Assert.Equal("RETRO61", initial.Contacts[0].Callsign);
+        Assert.Equal("RETRO62", initial.Contacts[1].Callsign);
+
+        inner.Publish(FormationSnapshot(start.AddSeconds(1), 60.11, 60.11));
+        await signal.WaitAsync(TimeSpan.FromSeconds(5));
+        var ambiguous = published.Last();
+        Assert.All(ambiguous.Contacts, contact => Assert.Null(contact.Callsign));
+
+        inner.Publish(FormationSnapshot(start.AddSeconds(16), 60.11, 60.11));
+        await signal.WaitAsync(TimeSpan.FromSeconds(5));
+        var expired = published.Last();
+        Assert.All(expired.Contacts, contact =>
+        {
+            Assert.Null(contact.Callsign);
+            Assert.True(contact.CallsignRevoked);
+        });
+        Assert.All(published, snapshot => Assert.Equal(
+            snapshot.Contacts.Where(contact => contact.Callsign is not null)
+                .Select(contact => contact.Callsign!.Trim().ToUpperInvariant()).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
+            snapshot.Contacts.Count(contact => contact.Callsign is not null)));
+        await feed.DisposeAsync();
+    }
+
     private static TrafficSnapshot Snapshot(DateTimeOffset timestamp, string? callsign) =>
         new(new OwnshipState("OWN", 60, 24, 5000, 90, 250, timestamp),
             [new TrafficContactState("T1", callsign, 60.1, 24, 5000, 180, 250, timestamp)], timestamp);
+
+    private static TrafficSnapshot FormationSnapshot(DateTimeOffset timestamp, double firstLatitude, double secondLatitude) =>
+        new(new OwnshipState("OWN", 60, 24, 5000, 0, 250, timestamp),
+            [new TrafficContactState("T1", null, firstLatitude, 24, 5000, 90, 250, timestamp),
+             new TrafficContactState("T2", null, secondLatitude, 24, 5000, 90, 250, timestamp)], timestamp);
 
     private sealed class ManualTrafficFeed : ITrafficDataFeed
     {

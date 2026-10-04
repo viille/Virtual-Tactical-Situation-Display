@@ -11,6 +11,8 @@ public sealed class TrafficRepository
     private static readonly TimeSpan RelativeRangeHistoryWindow = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan MinimumPositionClosureWindow = TimeSpan.FromSeconds(1.5);
     private static readonly TimeSpan MaximumPositionClosureGap = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan MaximumOwnshipInterpolationGap = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan MaximumRetainedDisplayGeometryAge = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan ContactIdentityGap = TimeSpan.FromSeconds(10);
     private const double MaximumPlausibleTargetGroundSpeedKt = 2000;
     private const double MaximumPlausibleClosureKt = 3000;
@@ -57,7 +59,7 @@ public sealed class TrafficRepository
 
             if (!_contacts.TryGetValue(contact.Id, out var tracked) || tracked.Generation != contact.Generation)
             {
-                tracked = new TrackedContact(contact, snapshot.Ownship, Classify(contact, classification), _ownshipHistory);
+                tracked = new TrackedContact(contact, snapshot.Ownship, Classify(contact, classification), _ownshipHistory, snapshot.Timestamp);
                 _contacts[contact.Id] = tracked;
             }
 
@@ -208,10 +210,18 @@ public sealed class TrafficRepository
     {
         private readonly List<RelativeRangePoint> _relativeRangeHistory = [];
         private OwnshipState? _alignedOwnship;
+        private OwnshipState? _lastValidDisplayOwnship;
+        private TrafficContactState? _lastValidDisplayContact;
+        private DateTimeOffset? _lastValidDisplayTimestamp;
         private bool _hasAlignedCurrentPosition;
         private DateTimeOffset? _positionSourceTransitionStartedAt;
 
-        public TrackedContact(TrafficContactState current, OwnshipState ownship, TargetCategory category, IReadOnlyList<OwnshipState>? ownshipHistory = null)
+        public TrackedContact(
+            TrafficContactState current,
+            OwnshipState ownship,
+            TargetCategory category,
+            IReadOnlyList<OwnshipState>? ownshipHistory = null,
+            DateTimeOffset? snapshotTimestamp = null)
         {
             LastKnownCallsign = string.IsNullOrWhiteSpace(current.Callsign)
                 ? null
@@ -226,19 +236,26 @@ public sealed class TrafficRepository
             var alignedOwnship = AlignOwnship(ownshipHistory ?? [ownship], current.Timestamp);
             _alignedOwnship = alignedOwnship;
             _hasAlignedCurrentPosition = alignedOwnship is not null;
-            OwnshipSampleAgeSeconds = System.Math.Max(0, (current.Timestamp - ownship.Timestamp).TotalSeconds);
-            TargetSampleAgeSeconds = System.Math.Max(0, (ownship.Timestamp - current.Timestamp).TotalSeconds);
+            var observationTimestamp = snapshotTimestamp ?? ownship.Timestamp;
+            OwnshipSampleAgeSeconds = System.Math.Max(0, (observationTimestamp - ownship.Timestamp).TotalSeconds);
+            TargetSampleAgeSeconds = System.Math.Max(0, (observationTimestamp - current.Timestamp).TotalSeconds);
             TimestampSkewSeconds = (ownship.Timestamp - current.Timestamp).TotalSeconds;
             AlignmentMethod = GetAlignmentMethod(ownshipHistory ?? [ownship], current.Timestamp);
+            SetDisplayGeometryOwnship(current, ownshipHistory ?? [ownship], current.Timestamp, alignedOwnship, observationTimestamp);
             if (alignedOwnship is not null)
             {
                 RelativeRangeNm = GeoMath.DistanceNm(alignedOwnship.LatitudeDeg, alignedOwnship.LongitudeDeg, current.LatitudeDeg, current.LongitudeDeg);
                 _relativeRangeHistory.Add(new RelativeRangePoint(RelativeRangeNm.Value, current.Timestamp));
+                RangeSampleAccepted = true;
+                RangeSampleDecision = "accepted-aligned";
             }
+            else RangeSampleDecision = "rejected-alignment-unavailable";
         }
 
         public TrafficContactState Current { get; private set; }
         public OwnshipState? AlignedOwnshipForCurrent => _alignedOwnship;
+        public OwnshipState? DisplayOwnshipForCurrent { get; private set; }
+        public TrafficContactState? DisplayContactForCurrent { get; private set; }
         public string? LastKnownCallsign { get; private set; }
         public TargetCategory Category { get; private set; }
         public bool IsStale { get; set; }
@@ -254,23 +271,50 @@ public sealed class TrafficRepository
         public double TargetSampleAgeSeconds { get; private set; }
         public double TimestampSkewSeconds { get; private set; }
         public string AlignmentMethod { get; private set; } = "unavailable";
+        public string DisplayGeometryMode { get; private set; } = "unavailable";
+        public bool RangeSampleAccepted { get; private set; }
+        public string RangeSampleDecision { get; private set; } = "not-evaluated";
         public int RegressionSampleCount { get; private set; }
         public double RegressionWindowSeconds { get; private set; }
         public double RegressionDataSpanSeconds { get; private set; }
         public double LargestSampleGapSeconds { get; private set; }
         public double RegressionResidualRmsNm { get; private set; }
         public int RegressionOutliersRemoved { get; private set; }
-        public double ClosureConfidence => ClosureSource == "vector" ? VectorConfidence :
+        public double ClosureQualityScore => ClosureSource == "vector" ? VectorQualityScore :
             ClosureSource == "vector-position-transition"
-                ? System.Math.Max(PositionConfidence, VectorConfidence)
-                : PositionConfidence;
+                ? System.Math.Max(PositionQualityScore, VectorQualityScore)
+                : PositionQualityScore;
         public double? ClosureDisagreementKt => PositionClosureKt.HasValue && VectorClosureKt.HasValue
             ? System.Math.Abs(PositionClosureKt.Value - VectorClosureKt.Value)
             : null;
-        public double PositionConfidence => !PositionClosureKt.HasValue ? 0 :
-            System.Math.Clamp(RegressionWindowSeconds / RelativeRangeHistoryWindow.TotalSeconds, 0, 1) /
-            (1 + RegressionResidualRmsNm * 20 + LargestSampleGapSeconds * 0.1);
-        public double VectorConfidence => VectorClosureKt.HasValue && _alignedOwnship is not null ? 0.6 : 0;
+        /// <summary>Diagnostic quality score from 0 to 1; this is not a statistical probability.</summary>
+        public double PositionQualityScore => !PositionClosureKt.HasValue ? 0 :
+            System.Math.Clamp(RegressionDataSpanSeconds / 2.0, 0, 1) *
+            System.Math.Clamp((RegressionSampleCount - 2) / 4.0, 0, 1) *
+            System.Math.Clamp(1 - System.Math.Max(0, LargestSampleGapSeconds - 0.5) / 2.5, 0, 1) *
+            1 / (1 + RegressionResidualRmsNm * 25) *
+            (RegressionOutliersRemoved > 0 ? 0.6 : 1) *
+            AlignmentQuality(AlignmentMethod);
+
+        /// <summary>Diagnostic quality score from 0 to 1 based on track source and time alignment.</summary>
+        public double VectorQualityScore
+        {
+            get
+            {
+                if (!VectorClosureKt.HasValue || _alignedOwnship is null) return 0;
+                var ownshipTrackQuality = _alignedOwnship.GroundTrackDeg.HasValue ? 1.0 : 0.65;
+                var targetTrackQuality = Current.GroundTrackDeg.HasValue ? 1.0 : 0.65;
+                return ownshipTrackQuality * targetTrackQuality * AlignmentQuality(AlignmentMethod);
+            }
+        }
+
+        private static double AlignmentQuality(string method) => method switch
+        {
+            "exact" => 1.0,
+            "interpolation" => 0.95,
+            "extrapolation" => 0.8,
+            _ => 0
+        };
 
         public void Update(TrafficContactState update, OwnshipState ownship, int trailLength, TargetCategory category, IReadOnlyList<OwnshipState> ownshipHistory, DateTimeOffset snapshotTimestamp)
         {
@@ -292,10 +336,9 @@ public sealed class TrafficRepository
             TargetSampleAgeSeconds = System.Math.Max(0, (snapshotTimestamp - update.Timestamp).TotalSeconds);
             TimestampSkewSeconds = (ownship.Timestamp - update.Timestamp).TotalSeconds;
             AlignmentMethod = GetAlignmentMethod(ownshipHistory, update.Timestamp);
+            SetDisplayGeometryOwnship(update, ownshipHistory, update.Timestamp, alignedOwnship, snapshotTimestamp);
             var rangeNm = alignedOwnship is null
-                ? ((ownship.Timestamp - update.Timestamp).Duration() <= TimeSpan.FromSeconds(0.75)
-                    ? GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, update.LatitudeDeg, update.LongitudeDeg)
-                    : (double?)null)
+                ? (double?)null
                 : GeoMath.DistanceNm(alignedOwnship.LatitudeDeg, alignedOwnship.LongitudeDeg, update.LatitudeDeg, update.LongitudeDeg);
             var identityReset = gap > ContactIdentityGap;
             var jumpReset = IsImplausibleTargetPositionJump(update, gap);
@@ -326,6 +369,13 @@ public sealed class TrafficRepository
             if (rangeNm.HasValue)
             {
                 _relativeRangeHistory.Add(new RelativeRangePoint(rangeNm.Value, update.Timestamp));
+                RangeSampleAccepted = true;
+                RangeSampleDecision = "accepted-aligned";
+            }
+            else
+            {
+                RangeSampleAccepted = false;
+                RangeSampleDecision = "rejected-alignment-unavailable";
             }
             _relativeRangeHistory.RemoveAll(point => update.Timestamp - point.Timestamp > RelativeRangeHistoryWindow);
         }
@@ -508,14 +558,64 @@ public sealed class TrafficRepository
             var ordered = history.OrderBy(sample => sample.Timestamp).ToArray();
             var before = ordered.LastOrDefault(sample => sample.Timestamp < timestamp);
             var after = ordered.FirstOrDefault(sample => sample.Timestamp > timestamp);
-            if (before is not null && after is not null) return "interpolation";
-            var nearest = before ?? after;
+            if (before is not null && after is not null && after.Timestamp - before.Timestamp <= MaximumOwnshipInterpolationGap)
+            {
+                return before.Timestamp == after.Timestamp ? "exact" : "interpolation";
+            }
+            var nearest = new[] { before, after }.Where(sample => sample is not null)
+                .OrderBy(sample => (sample!.Timestamp - timestamp).Duration()).FirstOrDefault();
             if (nearest is null) return "unavailable";
             var skew = (timestamp - nearest.Timestamp).Duration();
             if (skew <= TimeSpan.FromMilliseconds(100)) return "exact";
             return skew <= TimeSpan.FromMilliseconds(500) && nearest.SpeedKt.HasValue
                 ? "extrapolation"
                 : "unavailable";
+        }
+
+        private void SetDisplayGeometryOwnship(
+            TrafficContactState contact,
+            IReadOnlyList<OwnshipState> history,
+            DateTimeOffset targetTimestamp,
+            OwnshipState? alignedOwnship,
+            DateTimeOffset snapshotTimestamp)
+        {
+            if (alignedOwnship is not null)
+            {
+                DisplayOwnshipForCurrent = alignedOwnship;
+                DisplayContactForCurrent = contact;
+                DisplayGeometryMode = AlignmentMethod;
+                _lastValidDisplayOwnship = alignedOwnship;
+                _lastValidDisplayContact = contact;
+                _lastValidDisplayTimestamp = targetTimestamp;
+                return;
+            }
+
+            var latest = history.OrderByDescending(sample => sample.Timestamp).FirstOrDefault();
+            if (latest is not null &&
+                (latest.Timestamp - targetTimestamp).Duration() <= TimeSpan.FromSeconds(1) &&
+                (snapshotTimestamp - latest.Timestamp).TotalSeconds <= 1 &&
+                (snapshotTimestamp - targetTimestamp).TotalSeconds <= 1)
+            {
+                DisplayOwnshipForCurrent = latest;
+                DisplayContactForCurrent = contact;
+                DisplayGeometryMode = "degraded-latest-ownship";
+                return;
+            }
+
+            if (_lastValidDisplayOwnship is not null && _lastValidDisplayContact is not null &&
+                _lastValidDisplayTimestamp.HasValue &&
+                snapshotTimestamp - _lastValidDisplayTimestamp.Value <= MaximumRetainedDisplayGeometryAge &&
+                snapshotTimestamp >= _lastValidDisplayTimestamp.Value)
+            {
+                DisplayOwnshipForCurrent = _lastValidDisplayOwnship;
+                DisplayContactForCurrent = _lastValidDisplayContact;
+                DisplayGeometryMode = "retained-last-valid";
+                return;
+            }
+
+            DisplayOwnshipForCurrent = null;
+            DisplayContactForCurrent = null;
+            DisplayGeometryMode = "unavailable";
         }
 
         private static double? FitWeightedRangeSlope(IReadOnlyList<RelativeRangePoint> points, DateTimeOffset latest)
@@ -622,7 +722,7 @@ public sealed class TrafficRepository
         var ordered = history.OrderBy(sample => sample.Timestamp).ToArray();
         var before = ordered.LastOrDefault(sample => sample.Timestamp <= targetTime);
         var after = ordered.FirstOrDefault(sample => sample.Timestamp >= targetTime);
-        if (before is not null && after is not null)
+        if (before is not null && after is not null && after.Timestamp - before.Timestamp <= MaximumOwnshipInterpolationGap)
         {
             var span = (after.Timestamp - before.Timestamp).TotalSeconds;
             if (span == 0) return before;
@@ -644,7 +744,8 @@ public sealed class TrafficRepository
             };
         }
 
-        var nearest = before ?? after;
+        var nearest = new[] { before, after }.Where(sample => sample is not null)
+            .OrderBy(sample => (sample!.Timestamp - targetTime).Duration()).FirstOrDefault();
         if (nearest is null)
         {
             return null;

@@ -12,8 +12,9 @@ public sealed class TacticalComputationEngine
         TacticalDisplaySettings settings)
     {
         var contact = tracked.Current;
-        var alignedOwnship = tracked.AlignedOwnshipForCurrent;
-        if (alignedOwnship is null)
+        var geometryContact = tracked.DisplayContactForCurrent ?? contact;
+        var displayOwnship = tracked.DisplayOwnshipForCurrent;
+        if (displayOwnship is null)
         {
             return null;
         }
@@ -22,15 +23,15 @@ public sealed class TacticalComputationEngine
             return null;
         }
 
-        var rangeNm = GeoMath.DistanceNm(alignedOwnship.LatitudeDeg, alignedOwnship.LongitudeDeg, contact.LatitudeDeg, contact.LongitudeDeg);
+        var rangeNm = GeoMath.DistanceNm(displayOwnship.LatitudeDeg, displayOwnship.LongitudeDeg, geometryContact.LatitudeDeg, geometryContact.LongitudeDeg);
         if (rangeNm > settings.SelectedRangeNm)
         {
             return null;
         }
 
-        var relAltFt = contact.AltitudeFt - alignedOwnship.AltitudeFt;
-        var trueBearing = GeoMath.InitialBearingDeg(alignedOwnship.LatitudeDeg, alignedOwnship.LongitudeDeg, contact.LatitudeDeg, contact.LongitudeDeg);
-        var relativeBearing = GeoMath.SignedRelativeBearingDeg(alignedOwnship.HeadingDeg, trueBearing);
+        var relAltFt = geometryContact.AltitudeFt - displayOwnship.AltitudeFt;
+        var trueBearing = GeoMath.InitialBearingDeg(displayOwnship.LatitudeDeg, displayOwnship.LongitudeDeg, geometryContact.LatitudeDeg, geometryContact.LongitudeDeg);
+        var relativeBearing = GeoMath.SignedRelativeBearingDeg(displayOwnship.HeadingDeg, trueBearing);
         var category = tracked.IsStale ? TargetCategory.Stale : tracked.Category;
         if (!PassCategoryFilter(category, settings.CategoryFilter))
         {
