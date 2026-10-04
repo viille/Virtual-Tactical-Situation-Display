@@ -18,26 +18,41 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     private const double StrongSwitchMaxDistanceNm = 0.75;
     private const double StrongSwitchMaxAltitudeDeltaFt = 400;
     private static readonly TimeSpan SnapshotHistoryRetention = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan ConfirmedCallsignEvidenceRetention = TimeSpan.FromSeconds(15);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     private readonly ITrafficDataFeed _inner;
     private readonly TacticalDisplaySettings _settings;
     private readonly HttpClient _httpClient;
+    private readonly Func<VatsimOwnshipIdentity?> _getOwnshipIdentity;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private readonly object _historyLock = new();
+    private readonly object _pendingSnapshotLock = new();
     private readonly Queue<TrafficSnapshot> _snapshotHistory = new();
     private readonly Dictionary<string, CallsignConfirmation> _callsignConfirmations = new(StringComparer.OrdinalIgnoreCase);
+    private readonly CallsignPublicationOwnership _callSignOwnership = new();
+    private readonly object _publicationLock = new();
     private IReadOnlyList<VatsimPilotCandidate> _cachedPilots = [];
     private bool _hasPilotFeedSnapshot;
     private DateTimeOffset _lastRefreshAt = DateTimeOffset.MinValue;
-    private int _isEnriching;
+    private bool _isEnriching;
+    private TrafficSnapshot? _pendingSnapshot;
+    private long _connectionEpoch;
+    private long _lastObservedConnectionEpoch;
+    private string _lastIdentityKey = string.Empty;
+    private VatsimOwnshipIdentity? _effectiveOwnshipIdentity;
 
-    public VatsimCallsignTrafficFeed(ITrafficDataFeed inner, TacticalDisplaySettings settings)
+    public VatsimCallsignTrafficFeed(
+        ITrafficDataFeed inner,
+        TacticalDisplaySettings settings,
+        Func<VatsimOwnshipIdentity?>? getOwnshipIdentity = null,
+        HttpClient? httpClient = null)
     {
         _inner = inner;
         _settings = settings;
-        _httpClient = new HttpClient
+        _getOwnshipIdentity = getOwnshipIdentity ?? (() => new VatsimOwnshipIdentity(null, settings.OwnCallsign));
+        _httpClient = httpClient ?? new HttpClient
         {
             Timeout = TimeSpan.FromSeconds(6)
         };
@@ -67,32 +82,113 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         _httpClient.Dispose();
     }
 
-    private void OnInnerConnectionChanged(object? sender, bool connected) =>
+    private void OnInnerConnectionChanged(object? sender, bool connected)
+    {
+        if (!connected)
+        {
+            lock (_pendingSnapshotLock)
+            {
+                _connectionEpoch++;
+                _pendingSnapshot = null;
+            }
+
+            lock (_publicationLock) _callSignOwnership.Clear();
+        }
+
         ConnectionChanged?.Invoke(sender, connected);
+    }
 
     private void OnInnerSnapshotReceived(object? sender, TrafficSnapshot snapshot)
     {
         RememberSnapshot(snapshot);
-        if (Interlocked.Exchange(ref _isEnriching, 1) == 1)
+        lock (_pendingSnapshotLock)
         {
-            SnapshotReceived?.Invoke(this, snapshot);
-            return;
+            _pendingSnapshot = snapshot;
+            if (_isEnriching) return;
+            _isEnriching = true;
         }
 
-        _ = EnrichAndPublishAsync(snapshot);
+        _ = EnrichPendingSnapshotsAsync();
     }
 
-    private async Task EnrichAndPublishAsync(TrafficSnapshot snapshot)
+    private async Task EnrichPendingSnapshotsAsync()
     {
+        while (true)
+        {
+            TrafficSnapshot? snapshot;
+            lock (_pendingSnapshotLock)
+            {
+                snapshot = _pendingSnapshot;
+                _pendingSnapshot = null;
+                if (snapshot is null)
+                {
+                    _isEnriching = false;
+                    return;
+                }
+            }
+
+            await EnrichAndPublishOneAsync(snapshot).ConfigureAwait(false);
+        }
+    }
+
+    private async Task EnrichAndPublishOneAsync(TrafficSnapshot snapshot)
+    {
+        long connectionEpoch;
+        lock (_pendingSnapshotLock) connectionEpoch = _connectionEpoch;
+        if (connectionEpoch != _lastObservedConnectionEpoch)
+        {
+            _callsignConfirmations.Clear();
+            _lastObservedConnectionEpoch = connectionEpoch;
+        }
+
         try
         {
             var pilots = await GetPilotsAsync(CancellationToken.None).ConfigureAwait(false);
+            if (connectionEpoch != GetConnectionEpoch())
+            {
+                _callsignConfirmations.Clear();
+                return;
+            }
+            if (HasPendingSnapshot()) return;
             var history = GetSnapshotHistory();
+            var identity = _getOwnshipIdentity();
+            var ownPilot = !string.IsNullOrWhiteSpace(identity?.Cid)
+                ? pilots.FirstOrDefault(pilot => string.Equals(pilot.Cid, identity.Cid, StringComparison.OrdinalIgnoreCase))
+                : null;
+            if (ownPilot is not null && string.IsNullOrWhiteSpace(identity?.Callsign))
+            {
+                identity = identity! with { Callsign = ownPilot.Callsign };
+            }
+            ResetIdentityStateIfChanged(identity);
+            var allPilots = pilots;
+            pilots = ExcludeOwnshipPilots(pilots, identity);
             LogCallsignMatchDiagnostics(snapshot, history, pilots);
-            var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, history, pilots);
-            enriched = ConfirmCallsignMatches(snapshot, enriched, history, pilots);
-            LogEnrichmentSummary(snapshot, enriched, pilots);
-            SnapshotReceived?.Invoke(this, enriched);
+            var proposed = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, history, pilots, identity);
+            var confirmationStateBeforeSnapshot = new Dictionary<string, CallsignConfirmation>(_callsignConfirmations, StringComparer.OrdinalIgnoreCase);
+            var confirmed = ConfirmCallsignMatches(snapshot, proposed, history, pilots);
+            TrafficSnapshot published;
+            lock (_pendingSnapshotLock)
+            {
+                if (_pendingSnapshot is not null)
+                {
+                    _callsignConfirmations.Clear();
+                    foreach (var pair in confirmationStateBeforeSnapshot) _callsignConfirmations[pair.Key] = pair.Value;
+                    return;
+                }
+
+                if (connectionEpoch != _connectionEpoch)
+                {
+                    _callsignConfirmations.Clear();
+                    _lastObservedConnectionEpoch = _connectionEpoch;
+                    return;
+                }
+
+                published = ReconcilePublication(confirmed, identity);
+                SnapshotReceived?.Invoke(this, published);
+            }
+
+            LogCallsignPipelineDiagnostics(snapshot, proposed, confirmed, published, history, pilots, allPilots, identity);
+            LogEnrichmentSummary(snapshot, published, pilots);
         }
         catch (Exception ex)
         {
@@ -101,11 +197,74 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                 "callsign-enrichment-failed",
                 TimeSpan.FromSeconds(30),
                 () => $"Callsign lookup failed; publishing simulator snapshot unchanged | error={ex.Message}");
-            SnapshotReceived?.Invoke(this, snapshot);
+            lock (_pendingSnapshotLock)
+            {
+                if (_pendingSnapshot is null && connectionEpoch == _connectionEpoch)
+                {
+                    SnapshotReceived?.Invoke(this, ReconcilePublication(snapshot, GetPublicationIdentity()));
+                }
+                else if (connectionEpoch != _connectionEpoch)
+                {
+                    _callsignConfirmations.Clear();
+                    _lastObservedConnectionEpoch = _connectionEpoch;
+                }
+            }
         }
-        finally
+    }
+
+    private bool HasPendingSnapshot()
+    {
+        lock (_pendingSnapshotLock) return _pendingSnapshot is not null;
+    }
+
+    private long GetConnectionEpoch()
+    {
+        lock (_pendingSnapshotLock) return _connectionEpoch;
+    }
+
+    private static IReadOnlyList<VatsimPilotCandidate> ExcludeOwnshipPilots(
+        IReadOnlyList<VatsimPilotCandidate> pilots,
+        VatsimOwnshipIdentity? identity) => identity is null ? pilots : pilots.Where(pilot =>
+            !(!string.IsNullOrWhiteSpace(identity.Cid)
+                ? string.Equals(pilot.Cid, identity.Cid, StringComparison.OrdinalIgnoreCase)
+                : !string.IsNullOrWhiteSpace(identity.Callsign) && string.Equals(pilot.Callsign, identity.Callsign, StringComparison.OrdinalIgnoreCase))).ToArray();
+
+    private void ResetIdentityStateIfChanged(VatsimOwnshipIdentity? identity)
+    {
+        var identityKey = $"{identity?.Cid}|{identity?.Callsign}";
+        if (string.Equals(identityKey, _lastIdentityKey, StringComparison.OrdinalIgnoreCase))
         {
-            Interlocked.Exchange(ref _isEnriching, 0);
+            return;
+        }
+
+        _callsignConfirmations.Clear();
+        lock (_publicationLock)
+        {
+            _callSignOwnership.Clear();
+            _lastIdentityKey = identityKey;
+            _effectiveOwnshipIdentity = identity;
+        }
+    }
+
+    private VatsimOwnshipIdentity? GetPublicationIdentity()
+    {
+        var configured = _getOwnshipIdentity();
+        lock (_publicationLock)
+        {
+            return !string.IsNullOrWhiteSpace(configured?.Cid) &&
+                string.Equals(configured.Cid, _effectiveOwnshipIdentity?.Cid, StringComparison.OrdinalIgnoreCase) &&
+                string.IsNullOrWhiteSpace(configured.Callsign) &&
+                !string.IsNullOrWhiteSpace(_effectiveOwnshipIdentity?.Callsign)
+                ? _effectiveOwnshipIdentity
+                : configured;
+        }
+    }
+
+    private TrafficSnapshot ReconcilePublication(TrafficSnapshot snapshot, VatsimOwnshipIdentity? identity)
+    {
+        lock (_publicationLock)
+        {
+            return _callSignOwnership.Reconcile(snapshot, identity?.Callsign, ConfirmedCallsignEvidenceRetention);
         }
     }
 
@@ -145,7 +304,8 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                     pilot.Altitude,
                     pilot.Groundspeed,
                     pilot.Heading,
-                    pilot.LastUpdated ?? feed.General?.UpdateTimestamp))
+                    pilot.LastUpdated ?? feed.General?.UpdateTimestamp,
+                    ReadCid(pilot.Cid)))
                 .ToList() ?? [];
             _hasPilotFeedSnapshot = true;
             _lastRefreshAt = now;
@@ -192,7 +352,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         IReadOnlyList<VatsimPilotCandidate> pilots)
     {
         var activeContactIds = enriched.Contacts
-            .Select(static contact => contact.Id)
+            .Select(ContactIdentityKey)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var contactId in _callsignConfirmations.Keys.Except(activeContactIds, StringComparer.OrdinalIgnoreCase).ToList())
         {
@@ -215,10 +375,27 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         {
             var originalContact = pair.First;
             var enrichedContact = pair.Second;
-            if (!string.IsNullOrWhiteSpace(originalContact.Callsign) ||
-                string.IsNullOrWhiteSpace(enrichedContact.Callsign))
+            if (!string.IsNullOrWhiteSpace(originalContact.Callsign))
             {
                 confirmedContacts.Add(enrichedContact);
+                continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(enrichedContact.Callsign))
+            {
+                var contactIdentity = ContactIdentityKey(enrichedContact);
+                if (_callsignConfirmations.TryGetValue(contactIdentity, out var previous) &&
+                    previous.ConfirmedCallsign is not null && previous.LastObservationTime.HasValue &&
+                    original.Timestamp - previous.LastObservationTime.Value > ConfirmedCallsignEvidenceRetention)
+                {
+                    _callsignConfirmations.Remove(contactIdentity);
+                    confirmedContacts.Add(enrichedContact with { Callsign = null, CallsignRevoked = true });
+                }
+                else
+                {
+                    confirmedContacts.Add(enrichedContact);
+                }
+
                 continue;
             }
 
@@ -247,7 +424,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
                 continue;
             }
             var confirmation = UpdateCallsignConfirmation(
-                enrichedContact.Id,
+                ContactIdentityKey(enrichedContact),
                 callsign,
                 pilotUpdateTime,
                 originalContact.Timestamp,
@@ -342,6 +519,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             LastPilotUpdateTime = pilotUpdateTime ?? confirmation.LastPilotUpdateTime,
             LastObservationTime = observationTime,
             CandidateFirstObservationTime = firstObservationTime,
+            PreviousConfirmedCallsign = confirmation.ConfirmedCallsign,
             ConfirmedCallsign = confirmedCallsign,
             Confirmed = confirmedCallsign is not null
         };
@@ -354,6 +532,63 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         diagnostics.DistanceNm <= StrongSwitchMaxDistanceNm &&
         diagnostics.AltitudeDeltaFt <= StrongSwitchMaxAltitudeDeltaFt;
 
+    private static string ContactIdentityKey(TrafficContactState contact) =>
+        $"{contact.Id}@{contact.Generation}";
+
+    private void LogCallsignPipelineDiagnostics(
+        TrafficSnapshot raw,
+        TrafficSnapshot proposed,
+        TrafficSnapshot confirmed,
+        TrafficSnapshot published,
+        IReadOnlyList<TrafficSnapshot> history,
+        IReadOnlyList<VatsimPilotCandidate> candidates,
+        IReadOnlyList<VatsimPilotCandidate> allPilots,
+        VatsimOwnshipIdentity? identity)
+    {
+        foreach (var contact in raw.Contacts.Take(12))
+        {
+            var key = ContactIdentityKey(contact);
+            _callsignConfirmations.TryGetValue(key, out var state);
+            var proposedCallsign = proposed.Contacts.FirstOrDefault(item => ContactIdentityKey(item) == key)?.Callsign;
+            var confirmedCallsign = confirmed.Contacts.FirstOrDefault(item => ContactIdentityKey(item) == key)?.Callsign;
+            var publishedCallsign = published.Contacts.FirstOrDefault(item => ContactIdentityKey(item) == key)?.Callsign;
+            var ranked = candidates.Select(pilot => VatsimCallsignMatcher.InspectMatch(contact, pilot))
+                .OrderBy(match => match.Score).ToArray();
+            var best = ranked.FirstOrDefault() ?? VatsimMatchDiagnostics.None;
+            var historical = VatsimCallsignMatcher.InspectBestHistoricalMatch(contact, history, candidates);
+            var proposedPilot = proposedCallsign is null ? null : candidates.FirstOrDefault(pilot =>
+                string.Equals(pilot.Callsign, proposedCallsign, StringComparison.OrdinalIgnoreCase));
+            var proposedDiagnostic = proposedPilot is null
+                ? VatsimMatchDiagnostics.None
+                : VatsimCallsignMatcher.InspectMatch(contact, proposedPilot);
+            var secondScore = proposedCallsign is null
+                ? ranked.Skip(1).Select(match => (double?)match.Score).FirstOrDefault()
+                : ranked.Where(match => !string.Equals(match.Callsign, proposedCallsign, StringComparison.OrdinalIgnoreCase))
+                    .Select(match => (double?)match.Score).FirstOrDefault();
+            var candidateScore = proposedCallsign is null ? best.Score : proposedDiagnostic.Score;
+            var source = proposedCallsign is null ? "none" :
+                proposedDiagnostic.IsMatch ? (proposedDiagnostic.IsFallback ? "fallback" : "current") : "historical";
+            var ownership = publishedCallsign is not null ? "published-owner" :
+                confirmedCallsign is not null ? "blocked-or-revoked" : "unowned";
+            var reason = publishedCallsign is not null ? "accepted" :
+                proposedCallsign is null && best.IsMatch ? "ambiguous-or-assignment-conflict" :
+                proposedCallsign is null ? best.RejectReason ?? "no-candidate" :
+                confirmedCallsign is null ? "awaiting-confirmation" : "ownership-or-publication-rejected";
+            var ownExcluded = allPilots.Count - candidates.Count;
+            var ownshipReason = ownExcluded > 0
+                ? $"cid={identity?.Cid ?? "n/a"};callsign={identity?.Callsign ?? "n/a"}"
+                : "none";
+            var margin = secondScore.HasValue ? secondScore.Value - candidateScore : double.NaN;
+            var line = $"Callsign pipeline | contact={key} proposed={proposedCallsign ?? "---"} candidateScore={candidateScore:0.000} " +
+                $"secondBestScore={secondScore?.ToString("0.000", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} margin={margin:0.000} source={source} " +
+                $"confirmation={(state?.Confirmed == true ? "confirmed" : "pending")} previousConfirmed={state?.PreviousConfirmedCallsign ?? "---"} " +
+                $"confirmed={state?.ConfirmedCallsign ?? "---"} ownership={ownership} published={publishedCallsign ?? "---"} rejectReason={reason} " +
+                $"ownshipExcluded={ownExcluded} ownshipReason={ownshipReason} historicalCandidate={historical.Callsign ?? "---"} " +
+                $"ambiguityReason={(reason.Contains("ambiguous", StringComparison.Ordinal) ? "assignment-score-margin" : "none")}";
+            DataSourceDebugLog.ThrottledDebug(LogSource, $"callsign-pipeline-{key}", TimeSpan.FromSeconds(5), () => line);
+        }
+    }
+
     private Uri GetFeedUri()
     {
         if (Uri.TryCreate(_settings.VatsimDataFeedUrl, UriKind.Absolute, out var uri) &&
@@ -364,6 +599,13 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 
         return new Uri("https://data.vatsim.net/v3/vatsim-data.json");
     }
+
+    private static string? ReadCid(JsonElement? cid) => cid?.ValueKind switch
+    {
+        JsonValueKind.String => cid.Value.GetString(),
+        JsonValueKind.Number => cid.Value.GetRawText(),
+        _ => null
+    };
 
     private static void LogEnrichmentSummary(
         TrafficSnapshot original,
@@ -458,7 +700,9 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         int Groundspeed,
         int Heading,
         [property: JsonPropertyName("last_updated")]
-        DateTimeOffset? LastUpdated);
+        DateTimeOffset? LastUpdated,
+        [property: JsonPropertyName("cid")]
+        JsonElement? Cid);
 
     private sealed record CallsignConfirmation(
         string CandidateCallsign,
@@ -467,5 +711,6 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         DateTimeOffset? LastObservationTime,
         string? ConfirmedCallsign,
         bool Confirmed,
-        DateTimeOffset? CandidateFirstObservationTime);
+        DateTimeOffset? CandidateFirstObservationTime,
+        string? PreviousConfirmedCallsign = null);
 }

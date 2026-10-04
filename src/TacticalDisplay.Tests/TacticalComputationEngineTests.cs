@@ -58,6 +58,19 @@ public sealed class TacticalComputationEngineTests
     }
 
     [Fact]
+    public void Compute_UsesGroundTrackRatherThanNoseHeadingForVelocityClosure()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var ownship = new OwnshipState("OWN", 0, 0, 5000, 0, 300, now, GroundTrackDeg: 90);
+        var contact = new TrafficContactState("T1", "TRACK1", 0, 1, 5000, 180, 250, now, GroundTrackDeg: 270);
+        var tracked = new TrafficRepository.TrackedContact(contact, ownship, TargetCategory.Unknown);
+        var result = new TacticalComputationEngine().Compute(ownship, ownship, tracked,
+            new TacticalDisplaySettings { SelectedRangeNm = 100 });
+        Assert.NotNull(result);
+        Assert.InRange(result!.ClosureKt!.Value, 549.9, 550.1);
+    }
+
+    [Fact]
     public void Compute_UsesCallsignAsDisplayNameWhenAvailable()
     {
         var engine = new TacticalComputationEngine();

@@ -982,6 +982,12 @@
                                       IsChecked="{Binding VatsimCallsignLookupEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                       Foreground="#9AFAD7"
                                       Margin="4,8,4,0" />
+                            <TextBlock Text="Own VATSIM callsign (fallback without CID)"
+                                       Foreground="#7CB9A9"
+                                       Margin="4,8,4,0" />
+                            <TextBox Text="{Binding OwnCallsign, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="Used to exclude your active VATSIM pilot when no signed-in CID is available"
+                                     Margin="4,4,4,0" />
                         </StackPanel>
                     </GroupBox>
 

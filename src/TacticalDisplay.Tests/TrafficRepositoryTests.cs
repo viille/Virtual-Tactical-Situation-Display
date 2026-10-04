@@ -82,6 +82,35 @@ public sealed class TrafficRepositoryTests
     }
 
     [Fact]
+    public void Closure_TransitionsFromVectorToPositionWithoutAnInstantaneousJump()
+    {
+        var repository = new TrafficRepository();
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var start = DateTimeOffset.UtcNow;
+        double? ReadClosure(double second)
+        {
+            var timestamp = start.AddSeconds(second);
+            var ownship = new OwnshipState("OWN", 0, 0, 5000, 90, 300, timestamp);
+            var target = new TrafficContactState("T1", "BLEND1", 0, 10.0 / 60.0, 5000, 270, 200, timestamp);
+            repository.ApplySnapshot(new TrafficSnapshot(ownship, [target], timestamp), classification, settings);
+            return repository.BuildPicture(settings).Targets.Single().ClosureKt;
+        }
+
+        _ = ReadClosure(0);
+        _ = ReadClosure(0.5);
+        _ = ReadClosure(1);
+        var transitionStart = ReadClosure(1.5);
+        Assert.InRange(transitionStart!.Value, 499, 501);
+        Assert.Equal("vector-position-transition", repository.GetTrackedContact("T1")!.ClosureSource);
+        var transition = ReadClosure(2);
+        Assert.InRange(transition!.Value, 320, 345);
+        var final = ReadClosure(3);
+        Assert.InRange(final!.Value, -0.01, 0.01);
+        Assert.Equal("position", repository.GetTrackedContact("T1")!.ClosureSource);
+    }
+
+    [Fact]
     public void Closure_SmoothsRangeJitterWithRegression()
     {
         var repository = new TrafficRepository();
@@ -130,7 +159,7 @@ public sealed class TrafficRepositoryTests
 
         var tracked = repository.GetTrackedContact("T1")!;
         var target = Assert.Single(repository.BuildPicture(settings).Targets);
-        Assert.InRange(target.ClosureKt!.Value, 330, 350);
+        Assert.InRange(target.ClosureKt!.Value, 450, 510);
         const double equalWeightClosureKt = 300;
         Assert.True(
             System.Math.Abs(500 - target.ClosureKt.Value) < System.Math.Abs(500 - equalWeightClosureKt),
@@ -433,6 +462,92 @@ public sealed class TrafficRepositoryTests
         var picture = repository.BuildPicture(settings);
 
         Assert.Equal("FIN123", picture.Targets.Single().DisplayName);
+    }
+
+    [Fact]
+    public void ApplySnapshot_ExplicitCallsignRevocationClearsLastKnownValue()
+    {
+        var repository = new TrafficRepository();
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var now = DateTimeOffset.UtcNow;
+        var ownship = new OwnshipState("OWN", 60, 24, 5000, 0, 250, now);
+        repository.ApplySnapshot(new TrafficSnapshot(ownship,
+            [new TrafficContactState("T1", "FIN123", 60.1, 24, 5000, 180, 250, now)], now), classification, settings);
+        var later = now.AddSeconds(1);
+        repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = later },
+            [new TrafficContactState("T1", null, 60.1, 24, 5000, 180, 250, later, CallsignRevoked: true)], later), classification, settings);
+        Assert.Null(repository.GetTrackedContact("T1")!.LastKnownCallsign);
+        Assert.Equal("T1", Assert.Single(repository.BuildPicture(settings).Targets).DisplayName);
+    }
+
+    [Fact]
+    public void ApplySnapshot_ReusedObjectGenerationDoesNotInheritCallsignOrClosureHistory()
+    {
+        var repository = new TrafficRepository();
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var now = DateTimeOffset.UtcNow;
+        var ownship = new OwnshipState("OWN", 60, 24, 5000, 0, 250, now);
+        repository.ApplySnapshot(new TrafficSnapshot(ownship,
+            [new TrafficContactState("T1", "FIN123", 60.1, 24, 5000, 180, 250, now, Generation: 11)], now), classification, settings);
+        var later = now.AddSeconds(1);
+        repository.ApplySnapshot(new TrafficSnapshot(ownship with { Timestamp = later },
+            [new TrafficContactState("T1", null, 60.2, 24, 5000, 180, 250, later, Generation: 12)], later), classification, settings);
+        var tracked = repository.GetTrackedContact("T1")!;
+        Assert.Null(tracked.LastKnownCallsign);
+        Assert.Single(tracked.History);
+        Assert.Equal(12, tracked.Generation);
+    }
+
+    [Fact]
+    public void Closure_AlignsAsynchronousOwnshipAndTargetEpochs()
+    {
+        var repository = new TrafficRepository();
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var start = DateTimeOffset.UtcNow;
+        OwnshipState OwnAt(double second)
+        {
+            var timestamp = start.AddSeconds(second);
+            return new OwnshipState("OWN", 0, 300 * second / 3600.0 / 60.0, 5000, 90, 300, timestamp);
+        }
+
+        repository.ApplySnapshot(new TrafficSnapshot(OwnAt(0), [], start), classification, settings);
+        var targetTimes = new[] { 0.2, 1.8, 2.2, 3.8, 4.2 };
+        var ownTimes = new[] { 1.0, 2.0, 3.0, 4.0, 5.0 };
+        for (var index = 0; index < targetTimes.Length; index++)
+        {
+            var targetTime = targetTimes[index];
+            var ownTime = ownTimes[index];
+            var ownship = OwnAt(ownTime);
+            var ownLongitudeAtTarget = 300 * targetTime / 3600.0 / 60.0;
+            var rangeNm = 10 - 100 * targetTime / 3600.0;
+            var contact = new TrafficContactState("T1", "ASYNC1", 0,
+                ownLongitudeAtTarget + rangeNm / 60.0, 5000, 270, 250, start.AddSeconds(targetTime));
+            repository.ApplySnapshot(new TrafficSnapshot(ownship, [contact], ownship.Timestamp), classification, settings);
+        }
+
+        var closure = Assert.Single(repository.BuildPicture(settings).Targets).ClosureKt;
+        Assert.NotNull(closure);
+        Assert.InRange(closure!.Value, 98, 102);
+    }
+
+    [Fact]
+    public void Closure_DoesNotPublishGeometryWhenTimestampSkewExceedsAlignmentLimit()
+    {
+        var repository = new TrafficRepository();
+        var settings = new TacticalDisplaySettings();
+        var classification = new ClassificationConfig();
+        var start = DateTimeOffset.UtcNow;
+        var ownship = new OwnshipState("OWN", 60, 24, 5000, 90, 250, start);
+        var contact = new TrafficContactState("T1", "STALE1", 60.1, 24, 5000, 180, 250, start.AddSeconds(2));
+        repository.ApplySnapshot(new TrafficSnapshot(ownship, [contact], contact.Timestamp), classification, settings);
+        var tracked = repository.GetTrackedContact("T1")!;
+        Assert.Equal("unavailable", tracked.AlignmentMethod);
+        Assert.Null(tracked.RelativeRangeNm);
+        Assert.Null(tracked.PositionClosureKt);
+        Assert.Empty(repository.BuildPicture(settings).Targets);
     }
 
     [Fact]

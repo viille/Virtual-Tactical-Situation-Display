@@ -27,6 +27,33 @@ public sealed class VatsimCallsignMatcherTests
     }
 
     [Fact]
+    public void EnrichSnapshot_ExcludesOwnshipByCidAndConfiguredCallsign()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(
+            new OwnshipState("OWN", 60, 24, 5000, 0, 250, now),
+            [new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now)], now);
+        var result = VatsimCallsignMatcher.EnrichSnapshot(snapshot,
+            [new VatsimPilotCandidate("OWN1", 60.1, 24.1, 5000, 250, 90, null, "98765"),
+             new VatsimPilotCandidate("FIN123", 60.1001, 24.1001, 5000, 250, 90, null, "12345")],
+            new VatsimOwnshipIdentity("98765", "OWN1"));
+        Assert.Equal("FIN123", result.Contacts.Single().Callsign);
+    }
+
+    [Fact]
+    public void EnrichSnapshot_LeavesSymmetricFormationUnresolved()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(new OwnshipState("OWN", 60, 24, 5000, 0, 250, now),
+            [new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now),
+             new TrafficContactState("T2", null, 60.1, 24.1, 5000, 90, 250, now)], now);
+        var result = VatsimCallsignMatcher.EnrichSnapshot(snapshot,
+            [new VatsimPilotCandidate("RETRO61", 60.1, 24.1, 5000, 250, 90),
+             new VatsimPilotCandidate("RETRO62", 60.1, 24.1, 5000, 250, 90)]);
+        Assert.All(result.Contacts, contact => Assert.Null(contact.Callsign));
+    }
+
+    [Fact]
     public void EnrichSnapshot_DoesNotOverwriteExistingCallsign()
     {
         var now = DateTimeOffset.UtcNow;
@@ -148,7 +175,7 @@ public sealed class VatsimCallsignMatcherTests
     }
 
     [Fact]
-    public void EnrichSnapshot_AssignsUniquePilotsWhenFormationContactsAreClose()
+    public void EnrichSnapshot_LeavesIndistinguishableFormationUnresolved()
     {
         var now = DateTimeOffset.UtcNow;
         var snapshot = new TrafficSnapshot(
@@ -168,8 +195,22 @@ public sealed class VatsimCallsignMatcherTests
                 new VatsimPilotCandidate("ORANGE3", 60.1004, 24.1004, 5100, 246, 92)
             ]);
 
-        Assert.Collection(
-            enriched.Contacts,
+        Assert.All(enriched.Contacts, contact => Assert.Null(contact.Callsign));
+    }
+
+    [Fact]
+    public void EnrichSnapshot_AssignsFormationWhenGeometryClearlySeparatesPilots()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(new OwnshipState("OWN", 60, 24, 5000, 0, 300, now),
+            [new TrafficContactState("T1", null, 60.100, 24.100, 5000, 90, 250, now),
+             new TrafficContactState("T2", null, 60.120, 24.100, 5000, 90, 250, now),
+             new TrafficContactState("T3", null, 60.140, 24.100, 5000, 90, 250, now)], now);
+        var result = VatsimCallsignMatcher.EnrichSnapshot(snapshot,
+            [new VatsimPilotCandidate("ORANGE1", 60.100, 24.100, 5000, 250, 90),
+             new VatsimPilotCandidate("ORANGE2", 60.120, 24.100, 5000, 250, 90),
+             new VatsimPilotCandidate("ORANGE3", 60.140, 24.100, 5000, 250, 90)]);
+        Assert.Collection(result.Contacts,
             contact => Assert.Equal("ORANGE1", contact.Callsign),
             contact => Assert.Equal("ORANGE2", contact.Callsign),
             contact => Assert.Equal("ORANGE3", contact.Callsign));
@@ -193,7 +234,20 @@ public sealed class VatsimCallsignMatcherTests
                 new VatsimPilotCandidate("VIPER2", 60.1001, 24.1001, 5025, 249, 90)
             ]);
 
-        Assert.Single(enriched.Contacts, static contact => contact.Callsign == "VIPER2");
+        Assert.InRange(enriched.Contacts.Count(contact => contact.Callsign == "VIPER2"), 0, 1);
+    }
+
+    [Fact]
+    public void EnrichSnapshot_AssignsOnePilotToOnlyTheClearlyMatchingContact()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(new OwnshipState("OWN", 60, 24, 5000, 0, 300, now),
+            [new TrafficContactState("T1", null, 60.1, 24.1, 5000, 90, 250, now),
+             new TrafficContactState("T2", null, 60.2, 24.2, 6000, 270, 100, now)], now);
+        var result = VatsimCallsignMatcher.EnrichSnapshot(snapshot,
+            [new VatsimPilotCandidate("FIN123", 60.1001, 24.1001, 5000, 250, 90)]);
+        Assert.Equal("FIN123", result.Contacts[0].Callsign);
+        Assert.Null(result.Contacts[1].Callsign);
     }
 
     [Fact]

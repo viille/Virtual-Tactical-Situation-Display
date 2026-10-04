@@ -46,7 +46,9 @@ public sealed record OwnshipState(
     double HeadingDeg,
     double? SpeedKt,
     DateTimeOffset Timestamp,
-    double? MagneticVariationDeg = null);
+    double? MagneticVariationDeg = null,
+    double? GroundTrackDeg = null,
+    long SessionGeneration = 0);
 
 public sealed record TrafficContactState(
     string Id,
@@ -56,7 +58,10 @@ public sealed record TrafficContactState(
     double AltitudeFt,
     double? HeadingDeg,
     double? SpeedKt,
-    DateTimeOffset Timestamp);
+    DateTimeOffset Timestamp,
+    bool CallsignRevoked = false,
+    long Generation = 0,
+    double? GroundTrackDeg = null);
 
 public sealed record PositionHistoryPoint(
     double LatitudeDeg,

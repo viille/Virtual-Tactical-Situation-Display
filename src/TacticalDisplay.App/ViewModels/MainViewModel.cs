@@ -406,6 +406,19 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
     }
 
+    public string OwnCallsign
+    {
+        get => Settings.OwnCallsign;
+        set
+        {
+            var normalized = value?.Trim().ToUpperInvariant() ?? string.Empty;
+            if (string.Equals(Settings.OwnCallsign, normalized, StringComparison.Ordinal)) return;
+            Settings.OwnCallsign = normalized;
+            _configStore.SaveDisplaySettings(Settings);
+            Raise();
+        }
+    }
+
     public bool ShowSettings
     {
         get => _showSettings;
@@ -1632,7 +1645,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
 
         _repository.ApplySnapshot(snapshot, _classification, Settings);
-        if (_feed is SimConnectTrafficFeed)
+        if (DataSourceModes.IsMsfs(Settings.DataSourceMode))
         {
             LogMsfsClosureDiagnostics(snapshot);
         }
@@ -1655,7 +1668,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
                 "MSFS",
                 $"closure-{target.Id}",
                 TimeSpan.FromSeconds(3),
-                () => $"MSFS closure | objectId={target.Id} callsign={target.DisplayName} rangeNm={target.RangeNm:0.00} targetGsKt={target.SpeedKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} targetHdg={target.HeadingDeg?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} vectorClosureKt={tracked.VectorClosureKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} positionClosureKt={tracked.PositionClosureKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} selectedClosureKt={target.ClosureKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} source={tracked.ClosureSource}");
+                () => $"MSFS closure | objectId={target.Id}@{tracked.Generation} callsign={target.DisplayName} targetAgeSec={tracked.TargetSampleAgeSeconds:0.000} ownshipAgeSec={tracked.OwnshipSampleAgeSeconds:0.000} timestampSkewSec={tracked.TimestampSkewSeconds:0.000} alignment={tracked.AlignmentMethod} regressionSamples={tracked.RegressionSampleCount} regressionWindowSec={tracked.RegressionWindowSeconds:0.00} dataSpanSec={tracked.RegressionDataSpanSeconds:0.00} largestGapSec={tracked.LargestSampleGapSeconds:0.00} residualRmsNm={tracked.RegressionResidualRmsNm:0.0000} outliersRemoved={tracked.RegressionOutliersRemoved} rangeNm={target.RangeNm:0.00} vectorClosureKt={tracked.VectorClosureKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} vectorConfidence={tracked.VectorConfidence:0.00} positionClosureKt={tracked.PositionClosureKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} positionConfidence={tracked.PositionConfidence:0.00} disagreementKt={tracked.ClosureDisagreementKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} selectedClosureKt={target.ClosureKt?.ToString("0", System.Globalization.CultureInfo.InvariantCulture) ?? "---"} confidence={tracked.ClosureConfidence:0.00} source={tracked.ClosureSource}");
         }
     }
 

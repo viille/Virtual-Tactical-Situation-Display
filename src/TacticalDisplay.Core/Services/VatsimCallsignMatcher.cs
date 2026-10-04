@@ -26,19 +26,19 @@ public static class VatsimCallsignMatcher
     private const double MinFallbackScoreMargin = 1.5;
     private const double MinAirborneSpeedForMotionCheckKt = 40;
     private const double MinBestScoreMargin = 0.75;
-    private const double FormationMaxDistanceNm = 3.0;
-    private const double FormationMaxAltitudeDeltaFt = 1500;
-    private const double FormationMaxHeadingDeltaDeg = 60;
-    private const double FormationMaxSpeedDeltaKt = 150;
-    private const double SameCallsignGroupBonus = 0.35;
+    private const double MinGlobalAssignmentMargin = 0.25;
+    private const double DirectMatchUnmatchedPenalty = 1.5;
+    private const double FallbackMatchUnmatchedPenalty = 7.5;
     // Keep the historical match bounded so stale positions cannot be assigned
     // to a current VATSIM pilot. Interpolation handles the normal update gap.
     private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(20);
 
     public static TrafficSnapshot EnrichSnapshot(
         TrafficSnapshot snapshot,
-        IReadOnlyList<VatsimPilotCandidate> pilots)
+        IReadOnlyList<VatsimPilotCandidate> pilots,
+        VatsimOwnshipIdentity? ownshipIdentity = null)
     {
+        pilots = ExcludeOwnshipPilots(pilots, ownshipIdentity);
         if (pilots.Count == 0 || snapshot.Contacts.Count == 0)
         {
             return snapshot;
@@ -51,8 +51,10 @@ public static class VatsimCallsignMatcher
     public static TrafficSnapshot EnrichSnapshotFromHistory(
         TrafficSnapshot snapshot,
         IReadOnlyList<TrafficSnapshot> history,
-        IReadOnlyList<VatsimPilotCandidate> pilots)
+        IReadOnlyList<VatsimPilotCandidate> pilots,
+        VatsimOwnshipIdentity? ownshipIdentity = null)
     {
+        pilots = ExcludeOwnshipPilots(pilots, ownshipIdentity);
         if (pilots.Count == 0 || snapshot.Contacts.Count == 0)
         {
             return snapshot;
@@ -148,7 +150,7 @@ public static class VatsimCallsignMatcher
                     continue;
                 }
 
-                var historicalContact = FindHistoricalContact(contact.Id, history, lastUpdated);
+                var historicalContact = FindHistoricalContact(contact, history, lastUpdated);
                 if (historicalContact is not null && IsCandidate(historicalContact, pilot, out var score))
                 {
                     candidates.Add(new MatchCandidate(contactIndex, pilotIndex, score));
@@ -178,7 +180,7 @@ public static class VatsimCallsignMatcher
                     continue;
                 }
 
-                var historicalContact = FindHistoricalContact(contacts[contactIndex].Id, history, lastUpdated);
+                var historicalContact = FindHistoricalContact(contacts[contactIndex], history, lastUpdated);
                 if (historicalContact is not null &&
                     IsFallbackCandidate(historicalContact, pilots[pilotIndex], out var score))
                 {
@@ -187,7 +189,7 @@ public static class VatsimCallsignMatcher
             }
         }
 
-        foreach (var pair in BuildAssignedCallsigns(contacts, pilots, fallbackCandidates, MinFallbackScoreMargin))
+        foreach (var pair in BuildAssignedCallsigns(contacts, pilots, fallbackCandidates, MinFallbackScoreMargin, FallbackMatchUnmatchedPenalty))
         {
             assignments[pair.Key] = pair.Value;
         }
@@ -199,9 +201,10 @@ public static class VatsimCallsignMatcher
         IReadOnlyList<TrafficContactState> contacts,
         IReadOnlyList<VatsimPilotCandidate> pilots,
         IReadOnlyList<MatchCandidate> candidates,
-        double minScoreMargin = MinBestScoreMargin)
+        double minScoreMargin = MinBestScoreMargin,
+        double unmatchedPenalty = DirectMatchUnmatchedPenalty)
     {
-        var best = FindBestAssignment(contacts, pilots, candidates, minScoreMargin);
+        var best = FindBestAssignment(candidates, minScoreMargin, unmatchedPenalty);
         var assignments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var candidate in best)
         {
@@ -248,7 +251,7 @@ public static class VatsimCallsignMatcher
                 continue;
             }
 
-            var historicalContact = FindHistoricalContact(currentContact.Id, history, lastUpdated);
+            var historicalContact = FindHistoricalContact(currentContact, history, lastUpdated);
             if (historicalContact is null)
             {
                 continue;
@@ -265,10 +268,9 @@ public static class VatsimCallsignMatcher
     }
 
     private static IReadOnlyList<MatchCandidate> FindBestAssignment(
-        IReadOnlyList<TrafficContactState> contacts,
-        IReadOnlyList<VatsimPilotCandidate> pilots,
         IReadOnlyList<MatchCandidate> candidates,
-        double minScoreMargin = MinBestScoreMargin)
+        double minScoreMargin = MinBestScoreMargin,
+        double unmatchedPenalty = DirectMatchUnmatchedPenalty)
     {
         if (candidates.Count == 0)
         {
@@ -291,27 +293,33 @@ public static class VatsimCallsignMatcher
         var usedPilots = new HashSet<int>();
         List<MatchCandidate> best = [];
         var bestScore = double.MaxValue;
+        var ambiguous = false;
 
         Search(0, 0);
-        return best;
+        return ambiguous ? [] : best;
 
         void Search(int groupIndex, double score)
         {
             if (groupIndex >= candidatesByContact.Count)
             {
-                if (current.Count > best.Count ||
-                    (current.Count == best.Count && score < bestScore))
+                if (score < bestScore)
                 {
+                    if (best.Count == current.Count && best.Count > 0 && bestScore - score < MinGlobalAssignmentMargin)
+                    {
+                        ambiguous = true;
+                    }
+                    else
+                    {
+                        ambiguous = false;
+                    }
                     best = [.. current];
                     bestScore = score;
                 }
+                else if (best.Count == current.Count && score - bestScore < MinGlobalAssignmentMargin)
+                {
+                    ambiguous = true;
+                }
 
-                return;
-            }
-
-            var remaining = candidatesByContact.Count - groupIndex;
-            if (current.Count + remaining < best.Count)
-            {
                 return;
             }
 
@@ -323,7 +331,7 @@ public static class VatsimCallsignMatcher
                 }
 
                 current.Add(candidate);
-                Search(groupIndex + 1, score + candidate.Score - GetFormationGroupBonus(candidate, current, contacts, pilots));
+                Search(groupIndex + 1, score + candidate.Score - unmatchedPenalty);
                 current.RemoveAt(current.Count - 1);
                 usedPilots.Remove(candidate.PilotIndex);
             }
@@ -332,77 +340,13 @@ public static class VatsimCallsignMatcher
         }
     }
 
-    private static double GetFormationGroupBonus(
-        MatchCandidate candidate,
-        IReadOnlyList<MatchCandidate> assigned,
-        IReadOnlyList<TrafficContactState> contacts,
-        IReadOnlyList<VatsimPilotCandidate> pilots)
-    {
-        var candidateContact = contacts[candidate.ContactIndex];
-        var candidatePilot = pilots[candidate.PilotIndex];
-        var candidateGroup = GetCallsignGroup(candidatePilot.Callsign);
-        if (candidateGroup is null)
-        {
-            return 0;
-        }
-
-        foreach (var existing in assigned)
-        {
-            if (existing.ContactIndex == candidate.ContactIndex)
-            {
-                continue;
-            }
-
-            var existingPilot = pilots[existing.PilotIndex];
-            if (!string.Equals(candidateGroup, GetCallsignGroup(existingPilot.Callsign), StringComparison.OrdinalIgnoreCase) ||
-                !AreFormationNeighbors(candidateContact, contacts[existing.ContactIndex]))
-            {
-                continue;
-            }
-
-            return SameCallsignGroupBonus;
-        }
-
-        return 0;
-    }
-
-    private static bool AreFormationNeighbors(
-        TrafficContactState first,
-        TrafficContactState second)
-    {
-        if (GeoMath.DistanceNm(
-                first.LatitudeDeg,
-                first.LongitudeDeg,
-                second.LatitudeDeg,
-                second.LongitudeDeg) > FormationMaxDistanceNm ||
-            System.Math.Abs(first.AltitudeFt - second.AltitudeFt) > FormationMaxAltitudeDeltaFt)
-        {
-            return false;
-        }
-
-        if (first.HeadingDeg.HasValue && second.HeadingDeg.HasValue &&
-            System.Math.Abs(GeoMath.SignedRelativeBearingDeg(first.HeadingDeg.Value, second.HeadingDeg.Value)) > FormationMaxHeadingDeltaDeg)
-        {
-            return false;
-        }
-
-        return !first.SpeedKt.HasValue || !second.SpeedKt.HasValue ||
-            System.Math.Abs(first.SpeedKt.Value - second.SpeedKt.Value) <= FormationMaxSpeedDeltaKt;
-    }
-
-    private static string? GetCallsignGroup(string callsign)
-    {
-        var normalized = callsign.Trim().ToUpperInvariant();
-        var suffixStart = normalized.Length;
-        while (suffixStart > 0 && char.IsDigit(normalized[suffixStart - 1]))
-        {
-            suffixStart--;
-        }
-
-        return suffixStart == 0 || suffixStart == normalized.Length
-            ? null
-            : normalized[..suffixStart];
-    }
+    private static IReadOnlyList<VatsimPilotCandidate> ExcludeOwnshipPilots(
+        IReadOnlyList<VatsimPilotCandidate> pilots,
+        VatsimOwnshipIdentity? ownshipIdentity) =>
+        ownshipIdentity is null ? pilots : pilots.Where(pilot =>
+            !(!string.IsNullOrWhiteSpace(ownshipIdentity.Cid)
+                ? string.Equals(pilot.Cid, ownshipIdentity.Cid, StringComparison.OrdinalIgnoreCase)
+                : !string.IsNullOrWhiteSpace(ownshipIdentity.Callsign) && string.Equals(pilot.Callsign, ownshipIdentity.Callsign, StringComparison.OrdinalIgnoreCase))).ToArray();
 
     private static int FindPilotIndexByCallsign(IReadOnlyList<VatsimPilotCandidate> pilots, string callsign)
     {
@@ -434,14 +378,16 @@ public static class VatsimCallsignMatcher
     }
 
     private static TrafficContactState? FindHistoricalContact(
-        string contactId,
+        TrafficContactState currentContact,
         IReadOnlyList<TrafficSnapshot> history,
         DateTimeOffset targetTime)
     {
         var samples = new List<TrafficContactState>();
         foreach (var snapshot in history)
         {
-            var contact = snapshot.Contacts.FirstOrDefault(item => string.Equals(item.Id, contactId, StringComparison.OrdinalIgnoreCase));
+            var contact = snapshot.Contacts.FirstOrDefault(item =>
+                string.Equals(item.Id, currentContact.Id, StringComparison.OrdinalIgnoreCase) &&
+                item.Generation == currentContact.Generation);
             if (contact is not null)
             {
                 samples.Add(contact);
@@ -507,6 +453,9 @@ public static class VatsimCallsignMatcher
         DateTimeOffset timestamp)
     {
         fraction = System.Math.Clamp(fraction, 0, 1);
+        var distance = GeoMath.DistanceNm(before.LatitudeDeg, before.LongitudeDeg, after.LatitudeDeg, after.LongitudeDeg);
+        var track = GeoMath.InitialBearingDeg(before.LatitudeDeg, before.LongitudeDeg, after.LatitudeDeg, after.LongitudeDeg);
+        var position = GeoMath.DestinationPoint(before.LatitudeDeg, before.LongitudeDeg, track, distance * fraction);
         double? heading = before.HeadingDeg.HasValue && after.HeadingDeg.HasValue
             ? GeoMath.NormalizeDegrees(before.HeadingDeg.Value +
                 (GeoMath.SignedRelativeBearingDeg(before.HeadingDeg.Value, after.HeadingDeg.Value) * fraction))
@@ -518,12 +467,16 @@ public static class VatsimCallsignMatcher
         return new TrafficContactState(
             before.Id,
             before.Callsign ?? after.Callsign,
-            before.LatitudeDeg + ((after.LatitudeDeg - before.LatitudeDeg) * fraction),
-            before.LongitudeDeg + ((after.LongitudeDeg - before.LongitudeDeg) * fraction),
+            position.latitudeDeg,
+            position.longitudeDeg,
             before.AltitudeFt + ((after.AltitudeFt - before.AltitudeFt) * fraction),
             heading,
             speed,
-            timestamp);
+            timestamp,
+            Generation: before.Generation,
+            GroundTrackDeg: before.GroundTrackDeg.HasValue && after.GroundTrackDeg.HasValue
+                ? GeoMath.NormalizeDegrees(before.GroundTrackDeg.Value + GeoMath.SignedRelativeBearingDeg(before.GroundTrackDeg.Value, after.GroundTrackDeg.Value) * fraction)
+                : null);
     }
 
     private static bool IsCandidate(TrafficContactState contact, VatsimPilotCandidate pilot, out double score)
@@ -555,7 +508,9 @@ public static class VatsimCallsignMatcher
         var speedPenalty = contact.SpeedKt.HasValue
             ? System.Math.Abs(contact.SpeedKt.Value - pilot.GroundspeedKt)
             : 0;
-        var score = distanceNm + altitudeDeltaFt / 1000.0 + headingPenalty / 180.0 + speedPenalty / 360.0;
+        var reliableMotion = ShouldCheckMotion(contact, pilot);
+        var score = distanceNm + altitudeDeltaFt / 1000.0 +
+            (reliableMotion ? headingPenalty / 180.0 + speedPenalty / 360.0 : 0);
 
         if (distanceNm > MaxMatchDistanceNm)
         {
@@ -567,7 +522,7 @@ public static class VatsimCallsignMatcher
             return new VatsimMatchDiagnostics(false, pilot.Callsign, distanceNm, altitudeDeltaFt, score, "altitude");
         }
 
-        if (ShouldCheckMotion(contact, pilot))
+        if (reliableMotion)
         {
             if (headingPenalty > MaxMatchHeadingDeltaDeg)
             {
@@ -607,12 +562,14 @@ public static class VatsimCallsignMatcher
         var speedDeltaKt = hasSpeed
             ? System.Math.Abs(contact.SpeedKt!.Value - pilot.GroundspeedKt)
             : 0;
-        var score = distanceNm + altitudeDeltaFt / 1000.0 + headingDeltaDeg / 90.0 + speedDeltaKt / 180.0;
         var hasReliableMotion = ShouldCheckMotion(contact, pilot);
+        var score = distanceNm + altitudeDeltaFt / 1000.0 +
+            (hasReliableMotion ? headingDeltaDeg / 90.0 + speedDeltaKt / 180.0 : 0);
         var isNearPositionMatch = distanceNm <= NearFallbackMaxDistanceNm &&
             altitudeDeltaFt <= NearFallbackMaxAltitudeDeltaFt &&
-            (!hasHeading || headingDeltaDeg <= MaxMatchHeadingDeltaDeg) &&
-            (!hasSpeed || speedDeltaKt <= MaxMatchSpeedDeltaKt);
+            (!hasReliableMotion ||
+                ((!hasHeading || headingDeltaDeg <= MaxMatchHeadingDeltaDeg) &&
+                 (!hasSpeed || speedDeltaKt <= MaxMatchSpeedDeltaKt)));
         var isMatch = (hasReliableMotion &&
             distanceNm <= FallbackMaxDistanceNm &&
             altitudeDeltaFt <= FallbackMaxAltitudeDeltaFt &&
@@ -643,7 +600,10 @@ public sealed record VatsimPilotCandidate(
     int AltitudeFt,
     int GroundspeedKt,
     int HeadingDeg,
-    DateTimeOffset? LastUpdated = null);
+    DateTimeOffset? LastUpdated = null,
+    string? Cid = null);
+
+public sealed record VatsimOwnshipIdentity(string? Cid = null, string? Callsign = null);
 
 public sealed record VatsimMatchDiagnostics(
     bool IsMatch,

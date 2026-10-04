@@ -25,6 +25,10 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
     private bool _isRunning;
     private OwnshipState? _latestOwnship;
     private readonly Dictionary<uint, TrafficContactState> _latestTraffic = [];
+    private readonly Dictionary<uint, TrafficContactState> _lastTrafficIdentitySamples = [];
+    private readonly Dictionary<uint, long> _contactGenerations = [];
+    private long _nextContactGeneration;
+    private long _sessionGeneration;
     private readonly Dictionary<uint, int> _ghostHitCounts = [];
     private readonly HashSet<uint> _suppressedTrafficIds = [];
     private DateTimeOffset _lastOwnshipSampleAt = DateTimeOffset.MinValue;
@@ -137,6 +141,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         {
             DataSourceDebugLog.Info(LogSource, "SimConnect session opened");
             ResetSessionTrafficState();
+            api.SubscribeToSystemEvent(simHandle, (uint)SystemEventId.ObjectAdded, "ObjectAdded");
+            api.SubscribeToSystemEvent(simHandle, (uint)SystemEventId.ObjectRemoved, "ObjectRemoved");
             ConfigureDataDefinitions(api, simHandle);
             SetConnected(true);
 
@@ -223,12 +229,14 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "GPS GROUND TRUE HEADING", "degrees", (uint)SimConnectDataType.Float64, 0, 4);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "GROUND VELOCITY", "knots", (uint)SimConnectDataType.Float64, 0, 5);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "MAGVAR", "degrees", (uint)SimConnectDataType.Float64, 0, 6);
+        api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "GPS GROUND TRUE TRACK", "degrees", (uint)SimConnectDataType.Float64, 0, 7);
 
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE LATITUDE", "degrees", (uint)SimConnectDataType.Float64, 0, 11);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE LONGITUDE", "degrees", (uint)SimConnectDataType.Float64, 0, 12);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE ALTITUDE", "feet", (uint)SimConnectDataType.Float64, 0, 13);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE HEADING DEGREES TRUE", "degrees", (uint)SimConnectDataType.Float64, 0, 14);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "GROUND VELOCITY", "knots", (uint)SimConnectDataType.Float64, 0, 15);
+        api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "GPS GROUND TRUE TRACK", "degrees", (uint)SimConnectDataType.Float64, 0, 16);
     }
 
     private bool DrainDispatch(NativeSimConnectApi api, IntPtr simHandle)
@@ -253,6 +261,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                         LogSource,
                         $"SimConnect exception received; recycling session | exception={exception.dwException} sendId={exception.dwSendID} index={exception.dwIndex}");
                     return false;
+                case SimConnectRecvId.EventObjectAddRemove:
+                    HandleObjectAddRemove(pData);
+                    break;
                 case SimConnectRecvId.SimobjectData:
                 case SimConnectRecvId.SimobjectDataByType:
                     HandleSimobjectData(pData);
@@ -261,6 +272,21 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         }
 
         return true;
+    }
+
+    private void HandleObjectAddRemove(IntPtr pData)
+    {
+        var recv = Marshal.PtrToStructure<SimConnectRecvEventObjectAddRemove>(pData);
+        if (recv.ObjectType != (uint)SimObjectType.Aircraft) return;
+        var objectId = recv.Data;
+        lock (_stateLock)
+        {
+            _latestTraffic.Remove(objectId);
+            _contactGenerations.Remove(objectId);
+            _lastTrafficIdentitySamples.Remove(objectId);
+            _ghostHitCounts.Remove(objectId);
+            _suppressedTrafficIds.Remove(objectId);
+        }
     }
 
     private void HandleSimobjectData(IntPtr pData)
@@ -285,7 +311,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     trueHeading,
                     ownshipRaw.SpeedKt,
                     now,
-                    ownshipRaw.MagneticVariationDeg);
+                    ownshipRaw.MagneticVariationDeg,
+                    GeoMath.NormalizeDegrees(ownshipRaw.GroundTrackDeg),
+                    _sessionGeneration);
             }
 
             DataSourceDebugLog.ThrottledDebug(
@@ -315,6 +343,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     if (hits >= 2)
                     {
                         _suppressedTrafficIds.Add(recv.dwObjectID);
+                        _contactGenerations.Remove(recv.dwObjectID);
+                        _lastTrafficIdentitySamples.Remove(recv.dwObjectID);
                         DataSourceDebugLog.Debug(LogSource, $"Suppressing likely ownship ghost target | objectId={recv.dwObjectID}");
                     }
                     _latestTraffic.Remove(recv.dwObjectID);
@@ -332,6 +362,20 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 _ghostHitCounts.Remove(recv.dwObjectID);
                 _lastTrafficSampleAt = now;
                 _hasReceivedTrafficThisSession = true;
+                var generationChanged = !_contactGenerations.TryGetValue(recv.dwObjectID, out var generation);
+                if (_lastTrafficIdentitySamples.TryGetValue(recv.dwObjectID, out var priorContact))
+                {
+                    var gap = now - priorContact.Timestamp;
+                    var jumpNm = GeoMath.DistanceNm(priorContact.LatitudeDeg, priorContact.LongitudeDeg, trafficRaw.Latitude, trafficRaw.Longitude);
+                    generationChanged = gap > TimeSpan.FromSeconds(10) ||
+                        (gap > TimeSpan.Zero && jumpNm / gap.TotalHours > 2000);
+                }
+
+                if (generationChanged)
+                {
+                    generation = ++_nextContactGeneration;
+                    _contactGenerations[recv.dwObjectID] = generation;
+                }
                 _latestTraffic[recv.dwObjectID] = new TrafficContactState(
                     recv.dwObjectID.ToString(),
                     null,
@@ -340,7 +384,11 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     trafficRaw.AltitudeFt,
                     GeoMath.NormalizeDegrees(trafficRaw.HeadingDeg),
                     trafficRaw.SpeedKt,
-                    now);
+                    now,
+                    false,
+                    generation,
+                    GeoMath.NormalizeDegrees(trafficRaw.GroundTrackDeg));
+                _lastTrafficIdentitySamples[recv.dwObjectID] = _latestTraffic[recv.dwObjectID];
             }
 
             DataSourceDebugLog.ThrottledDebug(
@@ -357,6 +405,10 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         {
             _latestOwnship = null;
             _latestTraffic.Clear();
+            _lastTrafficIdentitySamples.Clear();
+            _contactGenerations.Clear();
+            _nextContactGeneration++;
+            _sessionGeneration++;
             _ghostHitCounts.Clear();
             _suppressedTrafficIds.Clear();
             _lastOwnshipSampleAt = DateTimeOffset.MinValue;
@@ -700,6 +752,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         public SimConnectRequestDataOnSimObjectDelegate RequestDataOnSimObject { get; }
         public SimConnectRequestDataOnSimObjectTypeDelegate RequestDataOnSimObjectType { get; }
         public SimConnectGetNextDispatchDelegate GetNextDispatch { get; }
+        public SimConnectSubscribeToSystemEventDelegate SubscribeToSystemEvent { get; }
 
         private NativeSimConnectApi(
             IntPtr libHandle,
@@ -708,7 +761,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             SimConnectAddToDataDefinitionDelegate addToDef,
             SimConnectRequestDataOnSimObjectDelegate requestOnObject,
             SimConnectRequestDataOnSimObjectTypeDelegate requestByType,
-            SimConnectGetNextDispatchDelegate getNextDispatch)
+            SimConnectGetNextDispatchDelegate getNextDispatch,
+            SimConnectSubscribeToSystemEventDelegate subscribeToSystemEvent)
         {
             _libHandle = libHandle;
             Open = open;
@@ -717,6 +771,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             RequestDataOnSimObject = requestOnObject;
             RequestDataOnSimObjectType = requestByType;
             GetNextDispatch = getNextDispatch;
+            SubscribeToSystemEvent = subscribeToSystemEvent;
         }
 
         public static NativeSimConnectApi? TryCreate(string dllPath)
@@ -730,7 +785,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                 var requestOnObject = GetDelegate<SimConnectRequestDataOnSimObjectDelegate>(handle, "SimConnect_RequestDataOnSimObject");
                 var requestByType = GetDelegate<SimConnectRequestDataOnSimObjectTypeDelegate>(handle, "SimConnect_RequestDataOnSimObjectType");
                 var getNextDispatch = GetDelegate<SimConnectGetNextDispatchDelegate>(handle, "SimConnect_GetNextDispatch");
-                return new NativeSimConnectApi(handle, open, close, addToDef, requestOnObject, requestByType, getNextDispatch);
+                var subscribeToSystemEvent = GetDelegate<SimConnectSubscribeToSystemEventDelegate>(handle, "SimConnect_SubscribeToSystemEvent");
+                return new NativeSimConnectApi(handle, open, close, addToDef, requestOnObject, requestByType, getNextDispatch, subscribeToSystemEvent);
             }
             catch (Exception ex)
             {
@@ -802,6 +858,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         out IntPtr ppData,
         out uint pcbData);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Ansi)]
+    private delegate int SimConnectSubscribeToSystemEventDelegate(IntPtr hSimConnect, uint EventID, string SystemEventName);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct SimConnectRecv
     {
@@ -837,6 +896,18 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         public uint dwIndex;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SimConnectRecvEventObjectAddRemove
+    {
+        public uint Size;
+        public uint Version;
+        public uint Id;
+        public uint GroupId;
+        public uint EventId;
+        public uint Data;
+        public uint ObjectType;
+    }
+
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
     private struct OwnshipRaw
     {
@@ -846,6 +917,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         public double HeadingDeg;
         public double SpeedKt;
         public double MagneticVariationDeg;
+        public double GroundTrackDeg;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -856,6 +928,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         public double AltitudeFt;
         public double HeadingDeg;
         public double SpeedKt;
+        public double GroundTrackDeg;
     }
 
     private enum SimConnectRecvId : uint
@@ -870,6 +943,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         EventFrame = 7,
         SimobjectData = 8,
         SimobjectDataByType = 9
+    }
+
+    private enum SystemEventId : uint
+    {
+        ObjectAdded = 500,
+        ObjectRemoved = 501
     }
 
     private enum SimConnectPeriod : uint

@@ -11,6 +11,7 @@ public sealed class TacticalDisplaySettings
     public bool EnableVatsimCallsignLookup { get; set; } = true;
     public string VatsimDataFeedUrl { get; set; } = "https://data.vatsim.net/v3/vatsim-data.json";
     public double VatsimCallsignRefreshSeconds { get; set; } = 15;
+    public string OwnCallsign { get; set; } = string.Empty;
     public bool EnableDiagnosticTelemetry { get; set; }
     public bool DiagnosticTelemetryConsentAsked { get; set; }
     public bool EnableDataSourceDebugLogging { get; set; }
