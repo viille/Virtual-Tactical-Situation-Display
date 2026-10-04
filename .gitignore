@@ -25,6 +25,7 @@ out/
 *.tmp
 *.temp
 .devnote
+AGENTS.md
 .mapbox
 monitor-memory.ps1
 
