@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.13 - 2026-10-05
 
 - Kept clearly supported callsign assignments when another formation component is ambiguous; weak matches now compete with an unmatched result.
 - Replaced exponential callsign assignment enumeration with a polynomial cost-minimization search while preserving unmatched alternatives and stable pairs across plausible assignments.
