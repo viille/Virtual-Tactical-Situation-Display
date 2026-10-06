@@ -263,9 +263,9 @@ public sealed class TacticalLinkClient : IAsyncDisposable
                     SetState(TacticalLinkConnectionState.Degraded);
                     if (_reconnectTask is null || _reconnectTask.IsCompleted)
                     {
-                    _reconnectCts?.Dispose();
-                    _reconnectCts = CancellationTokenSource.CreateLinkedTokenSource(_applicationToken);
-                    _reconnectTask = ReconnectLoopAsync(_reconnectCts.Token);
+                        _reconnectCts?.Dispose();
+                        _reconnectCts = CancellationTokenSource.CreateLinkedTokenSource(_applicationToken);
+                        _reconnectTask = ReconnectLoopAsync(_reconnectCts.Token);
                     }
                 }
                 else SetState(TacticalLinkConnectionState.Disconnected);
