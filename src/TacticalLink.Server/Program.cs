@@ -35,7 +35,8 @@ app.Map("/v1", async (HttpContext context, TacticalLinkHub hub) =>
 });
 app.Run();
 
-public sealed record AuthenticatedParticipant(string ParticipantId, string UserId, string VatsimCid, string Callsign, DateTimeOffset ExpiresAt);
+public sealed record AuthenticatedParticipant(string UserId, string VatsimCid, string Callsign, DateTimeOffset ExpiresAt);
+public sealed record ParticipantIdentity(string ParticipantId, string UserId, string VatsimCid, string Callsign, DateTimeOffset ExpiresAt);
 
 public static class TacticalJwtValidator
 {
@@ -69,14 +70,13 @@ public static class TacticalJwtValidator
 
             string Claim(string name) => root.TryGetProperty(name, out var value) ? value.GetString() ?? "" : "";
             var userId = Claim("user_id");
-            var participantId = Claim("participant_id");
             var cid = Claim("vatsim_cid");
             var callsign = Claim("callsign");
-            if (string.IsNullOrWhiteSpace(userId) || Claim("sub") != userId || participantId != userId ||
-                string.IsNullOrWhiteSpace(cid) || !Guid.TryParse(participantId, out _) ||
+            if (string.IsNullOrWhiteSpace(userId) || Claim("sub") != userId ||
+                string.IsNullOrWhiteSpace(cid) ||
                 string.IsNullOrWhiteSpace(callsign) || callsign.Length > 16)
                 throw new UnauthorizedAccessException();
-            return new(participantId, userId, cid, callsign, DateTimeOffset.FromUnixTimeSeconds(root.GetProperty("exp").GetInt64()));
+            return new(userId, cid, callsign, DateTimeOffset.FromUnixTimeSeconds(root.GetProperty("exp").GetInt64()));
         }
         catch (UnauthorizedAccessException) { throw; }
         catch (Exception ex) when (ex is JsonException or FormatException or CryptographicException or KeyNotFoundException or InvalidOperationException or ArgumentException)
@@ -101,6 +101,7 @@ public sealed class TacticalLinkHub
     private static readonly HashSet<string> AllowedTankerStates = ["Off", "Available", "Busy", "Unavailable"];
     private readonly ConcurrentDictionary<string, PeerConnection> _peers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, long> _generations = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, (string ParticipantId, DateTimeOffset ExpiresAt)> _publicIdentities = new(StringComparer.Ordinal);
     private readonly IPeerInterestResolver _interestResolver;
     private readonly TimeSpan _reconnectGrace = TimeSpan.FromSeconds(12);
     private readonly double _defaultRadiusNm = ReadRadius();
@@ -108,24 +109,41 @@ public sealed class TacticalLinkHub
     private readonly TimeSpan _telemetryStaleAfter = TimeSpan.FromSeconds(8);
     private readonly SemaphoreSlim _interestLock = new(1, 1);
     private int _interestDirty;
+    private long _telemetryFramesIn, _telemetryFramesOut, _droppedTelemetryFrames, _rateLimitEvents, _reconnects, _authRefreshFailures;
+    private int _nearbyPeerRelations;
+    private readonly ConcurrentDictionary<string, System.Threading.RateLimiting.TokenBucketRateLimiter> _telemetryLimiters = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, System.Threading.RateLimiting.TokenBucketRateLimiter> _controlLimiters = new(StringComparer.Ordinal);
+    private string GetPublicId(string userId)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (_publicIdentities.TryGetValue(userId, out var existing) && existing.ExpiresAt > now)
+            return existing.ParticipantId;
+        var id = "tl_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+        _publicIdentities[userId] = (id, now + _reconnectGrace);
+        return id;
+    }
 
     public TacticalLinkHub(IPeerInterestResolver interestResolver)
     {
         _interestResolver = interestResolver;
         _ = Task.Run(InterestRefreshLoopAsync);
         _ = Task.Run(TelemetryExpiryLoopAsync);
+        _ = Task.Run(MetricsLogLoopAsync);
     }
 
     public async Task RunPeerAsync(WebSocket socket, AuthenticatedParticipant identity, CancellationToken cancellationToken)
     {
-        var generation = _generations.AddOrUpdate(identity.ParticipantId, 1, static (_, current) => current + 1);
-        var peer = _peers.AddOrUpdate(identity.ParticipantId,
-            _ => new PeerConnection(identity, generation, socket),
+        var publicId = GetPublicId(identity.UserId);
+        var authenticatedIdentity = new ParticipantIdentity(publicId, identity.UserId, identity.VatsimCid, identity.Callsign, identity.ExpiresAt);
+        var generation = _generations.AddOrUpdate(publicId, 1, static (_, current) => current + 1);
+        if (generation > 1) Interlocked.Increment(ref _reconnects);
+        var peer = _peers.AddOrUpdate(publicId,
+            _ => new PeerConnection(authenticatedIdentity, generation, socket),
             (_, old) =>
             {
                 old.CancelGrace();
                 old.TryClose(WebSocketCloseStatus.EndpointUnavailable, "reconnected");
-                var resumed = old.Resume(identity, generation, socket);
+                var resumed = old.Resume(authenticatedIdentity, generation, socket);
                 old.Dispose();
                 return resumed;
             });
@@ -162,11 +180,25 @@ public sealed class TacticalLinkHub
                 {
                     result = await socket.ReceiveAsync(buffer, cancellationToken);
                     if (result.MessageType == WebSocketMessageType.Close) return;
-                    if (result.MessageType != WebSocketMessageType.Text) throw new WebSocketException("Text protocol required.");
+                    if (result.MessageType != WebSocketMessageType.Text)
+                    {
+                        peer.TrySend(new { type = "ERROR", code = "INVALID_MESSAGE", message = "Text protocol required." });
+                        peer.TryClose(WebSocketCloseStatus.InvalidMessageType, "text protocol required");
+                        return;
+                    }
                     message.Write(buffer, 0, result.Count);
-                    if (message.Length > 128 * 1024) throw new WebSocketException("Message limit exceeded.");
+                    if (message.Length > 128 * 1024)
+                    {
+                        peer.TrySend(new { type = "ERROR", code = "INVALID_MESSAGE", message = "Message size limit exceeded." });
+                        peer.TryClose(WebSocketCloseStatus.MessageTooBig, "message limit exceeded");
+                        return;
+                    }
                 } while (!result.EndOfMessage);
-                await HandleMessageAsync(peer, generation, Encoding.UTF8.GetString(message.ToArray()), cancellationToken);
+                try { await HandleMessageAsync(peer, generation, Encoding.UTF8.GetString(message.ToArray()), cancellationToken); }
+                catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException or OverflowException or ArgumentException)
+                {
+                    peer.TrySend(new { type = "ERROR", code = "INVALID_MESSAGE", message = "Malformed TacticalLink message." });
+                }
                 if (peer.IsSlow) return;
             }
         }
@@ -174,11 +206,12 @@ public sealed class TacticalLinkHub
         catch (WebSocketException) { }
         finally
         {
-            if (_peers.TryGetValue(identity.ParticipantId, out var current) && current.Generation == generation)
+            if (_peers.TryGetValue(publicId, out var current) && current.Generation == generation)
             {
                 current.MarkDisconnected();
-                if (current.ExplicitlyDisconnected) RemoveIfGeneration(identity.ParticipantId, generation);
-                else current.StartGrace(_reconnectGrace, () => RemoveIfGeneration(identity.ParticipantId, generation));
+                if (current.ExplicitlyDisconnected) RemoveIfGeneration(publicId, generation);
+                else current.StartGrace(_reconnectGrace, () => RemoveIfGeneration(publicId, generation));
+                _publicIdentities[identity.UserId] = (publicId, DateTimeOffset.UtcNow + _reconnectGrace);
             }
         }
     }
@@ -188,7 +221,39 @@ public sealed class TacticalLinkHub
         if (!IsCurrentGeneration(peer, generation)) return;
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
-        var type = root.GetProperty("type").GetString();
+        if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("type", out var typeNode) || typeNode.ValueKind != JsonValueKind.String)
+        {
+            peer.TrySend(new { type = "ERROR", code = "INVALID_MESSAGE", message = "A message type is required." });
+            return;
+        }
+        if (!root.TryGetProperty("protocolVersion", out var version) || version.ValueKind != JsonValueKind.Number || version.GetInt32() != TacticalLinkProtocol.Version)
+        {
+            peer.TrySend(new { type = "ERROR", code = "UNSUPPORTED_PROTOCOL_VERSION", message = "Unsupported TacticalLink protocol version." });
+            peer.TryClose(WebSocketCloseStatus.ProtocolError, "unsupported protocol version");
+            return;
+        }
+        var type = typeNode.GetString();
+        var isTelemetryMessage = type == "TELEMETRY";
+        var limiters = isTelemetryMessage ? _telemetryLimiters : _controlLimiters;
+        var limiter = limiters.GetOrAdd(peer.Identity.ParticipantId, _ => new System.Threading.RateLimiting.TokenBucketRateLimiter(new System.Threading.RateLimiting.TokenBucketRateLimiterOptions
+        {
+            TokenLimit = isTelemetryMessage ? 50 : 20,
+            TokensPerPeriod = isTelemetryMessage ? 45 : 15,
+            ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+            AutoReplenishment = true,
+            QueueLimit = 0,
+            QueueProcessingOrder = System.Threading.RateLimiting.QueueProcessingOrder.OldestFirst
+        }));
+        using var permit = limiter.AttemptAcquire();
+        if (!permit.IsAcquired)
+        {
+            Interlocked.Increment(ref _rateLimitEvents);
+            if (isTelemetryMessage) Interlocked.Increment(ref _droppedTelemetryFrames);
+            peer.RateLimitViolations++;
+            if (peer.RateLimitViolations >= 5) peer.TryClose(WebSocketCloseStatus.PolicyViolation, "rate limit exceeded");
+            return;
+        }
+        peer.RateLimitViolations = System.Math.Max(0, peer.RateLimitViolations - 1);
         switch (type)
         {
             case "CONNECT":
@@ -208,6 +273,7 @@ public sealed class TacticalLinkHub
                 if (telemetry is null || !IsValidTelemetry(telemetry) || telemetry.Sequence <= peer.LastSequence ||
                     telemetry.SampleTimestampUtc > DateTimeOffset.UtcNow.AddSeconds(5) || telemetry.SampleTimestampUtc < DateTimeOffset.UtcNow.AddSeconds(-10)) return;
                 peer.LastSequence = telemetry.Sequence;
+                Interlocked.Increment(ref _telemetryFramesIn);
                 peer.Telemetry = telemetry;
                 peer.LastTelemetryReceivedAt = DateTimeOffset.UtcNow;
                 if (!IsCurrentGeneration(peer, generation)) return;
@@ -215,7 +281,12 @@ public sealed class TacticalLinkHub
                 await BroadcastTelemetryAsync(peer, cancellationToken);
                 break;
             case "INTEREST_UPDATE":
-                var requested = root.TryGetProperty("radiusNm", out var radius) ? radius.GetDouble() : _defaultRadiusNm;
+                var requested = root.TryGetProperty("radiusNm", out var radius) && radius.ValueKind == JsonValueKind.Number ? radius.GetDouble() : _defaultRadiusNm;
+                if (!double.IsFinite(requested) || requested is < 1 or > 1000)
+                {
+                    peer.TrySend(new { type = "ERROR", code = "INVALID_MESSAGE", message = "Invalid interest radius." });
+                    break;
+                }
                 peer.InterestRadiusNm = System.Math.Clamp(requested, 1, _maxRadiusNm);
                 await RefreshInterestAsync(cancellationToken);
                 break;
@@ -229,9 +300,9 @@ public sealed class TacticalLinkHub
                     try
                     {
                         var refreshed = TacticalJwtValidator.Validate("Bearer " + jwt);
-                        if (refreshed.ParticipantId == peer.Identity.ParticipantId && refreshed.UserId == peer.Identity.UserId)
+                        if (refreshed.UserId == peer.Identity.UserId && refreshed.VatsimCid == peer.Identity.VatsimCid)
                         {
-                            peer.UpdateIdentity(refreshed);
+                            peer.UpdateIdentity(new ParticipantIdentity(peer.Identity.ParticipantId, refreshed.UserId, refreshed.VatsimCid, refreshed.Callsign, refreshed.ExpiresAt));
                             peer.TrySend(new { type = "AUTH_REFRESHED", callsign = refreshed.Callsign, expiresAt = refreshed.ExpiresAt });
                             await RefreshInterestAsync(cancellationToken);
                         }
@@ -284,6 +355,7 @@ public sealed class TacticalLinkHub
                     }
                 }
                 recipient.NearbyParticipantIds = nearby;
+                Interlocked.Exchange(ref _nearbyPeerRelations, _peers.Values.Sum(value => value.NearbyParticipantIds.Count));
                 if (recipient.IsSlow) recipient.TryClose(WebSocketCloseStatus.PolicyViolation, "slow client");
             }
         }
@@ -321,6 +393,13 @@ public sealed class TacticalLinkHub
         }
     }
 
+    private async Task MetricsLogLoopAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMinutes(1));
+        while (await timer.WaitForNextTickAsync())
+            Console.WriteLine(JsonSerializer.Serialize(new { eventName = "tactical_link_metrics", activeConnections = _peers.Values.Count(peer => peer.IsConnected), nearbyPeerRelations = Volatile.Read(ref _nearbyPeerRelations), telemetryFramesIn = Interlocked.Read(ref _telemetryFramesIn), telemetryFramesOut = Interlocked.Read(ref _telemetryFramesOut), droppedTelemetryFrames = Interlocked.Read(ref _droppedTelemetryFrames), rateLimitEvents = Interlocked.Read(ref _rateLimitEvents), reconnects = Interlocked.Read(ref _reconnects), authRefreshFailures = Interlocked.Read(ref _authRefreshFailures) }));
+    }
+
     private async Task BroadcastTelemetryAsync(PeerConnection source, CancellationToken cancellationToken)
     {
         var payload = new { type = "TELEMETRY", participantId = source.Identity.ParticipantId, telemetry = source.Telemetry };
@@ -328,6 +407,7 @@ public sealed class TacticalLinkHub
         {
             if (peer.OutboundCount >= 112) peer.TryClose(WebSocketCloseStatus.PolicyViolation, "slow client");
             else peer.TrySendTelemetry(source.Identity.ParticipantId, payload);
+            Interlocked.Increment(ref _telemetryFramesOut);
         }
         await Task.CompletedTask;
         _ = cancellationToken;
@@ -385,8 +465,8 @@ public sealed class TacticalLinkHub
         private readonly Dictionary<string, string> _latestTelemetry = new(StringComparer.Ordinal);
         private readonly SemaphoreSlim _wakeWriter = new(0);
         private volatile bool _disposed;
-        public PeerConnection(AuthenticatedParticipant identity, long generation, WebSocket socket) { Identity = identity; Generation = generation; _socket = socket; IsConnected = true; Capabilities = ["identity", "telemetry"]; }
-        public AuthenticatedParticipant Identity { get; private set; }
+        public PeerConnection(ParticipantIdentity identity, long generation, WebSocket socket) { Identity = identity; Generation = generation; _socket = socket; IsConnected = true; Capabilities = ["identity", "telemetry"]; }
+        public ParticipantIdentity Identity { get; private set; }
         public long Generation { get; }
         public bool IsConnected { get; set; }
         public bool InReconnectGrace { get; set; }
@@ -394,6 +474,7 @@ public sealed class TacticalLinkHub
         public TacticalTelemetry? Telemetry { get; set; }
         public DateTimeOffset LastTelemetryReceivedAt { get; set; }
         public long LastSequence { get; set; }
+        public int RateLimitViolations { get; set; }
         public double InterestRadiusNm { get; set; } = 200;
         public HashSet<string> NearbyParticipantIds { get; set; } = new(StringComparer.Ordinal);
         public Dictionary<string, string> PeerIdentityVersions { get; set; } = new(StringComparer.Ordinal);
@@ -401,13 +482,16 @@ public sealed class TacticalLinkHub
         public Dictionary<string, string> OperationalStates { get; private set; } = [];
         public int OutboundCount { get { lock (_telemetryGate) return _outbound.Reader.Count + _latestTelemetry.Count; } }
         public bool IsSlow => OutboundCount > 112;
-        public PeerConnection Resume(AuthenticatedParticipant identity, long generation, WebSocket socket)
+        private bool _closeAfterDrain;
+        private WebSocketCloseStatus _closeStatus = WebSocketCloseStatus.NormalClosure;
+        private string _closeReason = "closed";
+        public PeerConnection Resume(ParticipantIdentity identity, long generation, WebSocket socket)
         {
             return new PeerConnection(identity, generation, socket)
             {
                 Telemetry = Telemetry,
                 LastTelemetryReceivedAt = LastTelemetryReceivedAt,
-                LastSequence = LastSequence,
+                LastSequence = 0,
                 InterestRadiusNm = InterestRadiusNm,
                 NearbyParticipantIds = new HashSet<string>(NearbyParticipantIds, StringComparer.Ordinal),
                 PeerIdentityVersions = new Dictionary<string, string>(PeerIdentityVersions, StringComparer.Ordinal),
@@ -434,7 +518,13 @@ public sealed class TacticalLinkHub
                         }
                     }
                     var bytes = Encoding.UTF8.GetBytes(json);
-                    if (_socket.State == WebSocketState.Open) await _socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
+                    if (_socket.State == WebSocketState.Open || _socket.State == WebSocketState.CloseReceived)
+                        await _socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken);
+                    if (_closeAfterDrain && _outbound.Reader.Count == 0)
+                    {
+                        await _socket.CloseOutputAsync(_closeStatus, _closeReason, CancellationToken.None);
+                        return;
+                    }
                 }
             }
             catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or ObjectDisposedException) { }
@@ -443,7 +533,7 @@ public sealed class TacticalLinkHub
         public bool TrySend(object value)
         {
             if (_disposed) return false;
-            var json = JsonSerializer.Serialize(value, JsonOptions);
+            var json = SerializeVersioned(value);
             if (!_outbound.Writer.TryWrite(json)) return false;
             _wakeWriter.Release();
             return true;
@@ -452,7 +542,7 @@ public sealed class TacticalLinkHub
         public void TrySendTelemetry(string participantId, object value)
         {
             if (_disposed) return;
-            var json = JsonSerializer.Serialize(value, JsonOptions);
+            var json = SerializeVersioned(value);
             lock (_telemetryGate)
             {
                 if (_disposed) return;
@@ -460,6 +550,13 @@ public sealed class TacticalLinkHub
                 _latestTelemetry[participantId] = json;
                 if (isNew) _wakeWriter.Release();
             }
+        }
+
+        private static string SerializeVersioned(object value)
+        {
+            var payload = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(value, JsonOptions), JsonOptions)!;
+            payload["protocolVersion"] = JsonSerializer.SerializeToElement(TacticalLinkProtocol.Version);
+            return JsonSerializer.Serialize(payload, JsonOptions);
         }
 
         public void RemoveTelemetry(string participantId)
@@ -485,7 +582,7 @@ public sealed class TacticalLinkHub
         }
 
         public void MarkDisconnected() { IsConnected = false; InReconnectGrace = true; }
-        public void UpdateIdentity(AuthenticatedParticipant identity) => Identity = identity;
+        public void UpdateIdentity(ParticipantIdentity identity) => Identity = identity;
         public void StartGrace(TimeSpan gracePeriod, Action expire)
         {
             _graceCts?.Cancel(); _graceCts?.Dispose(); _graceCts = new CancellationTokenSource();
@@ -495,7 +592,11 @@ public sealed class TacticalLinkHub
         public void CancelGrace() { _graceCts?.Cancel(); _graceCts?.Dispose(); _graceCts = null; }
         public void TryClose(WebSocketCloseStatus status, string reason)
         {
-            try { if (_socket.State == WebSocketState.Open) _ = _socket.CloseAsync(status, reason, CancellationToken.None); } catch { }
+            if (_socket.State != WebSocketState.Open) return;
+            _closeAfterDrain = true;
+            _closeStatus = status;
+            _closeReason = reason;
+            try { if (_wakeWriter.CurrentCount == 0) _wakeWriter.Release(); } catch (SemaphoreFullException) { }
         }
         public void Dispose()
         {

@@ -172,6 +172,11 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             ResetIdentityStateIfChanged(identity);
             var allPilots = pilots;
             pilots = ExcludeOwnshipPilots(pilots, identity);
+            var reservedCallsigns = snapshot.Contacts
+                .Where(contact => contact.Source == TrackSource.TacticalLink && !string.IsNullOrWhiteSpace(contact.Callsign))
+                .Select(contact => contact.Callsign!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            pilots = pilots.Where(pilot => !reservedCallsigns.Contains(pilot.Callsign)).ToArray();
             LogCallsignMatchDiagnostics(snapshot, history, pilots);
             var proposed = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, history, pilots, identity);
             var confirmationStateBeforeSnapshot = new Dictionary<string, CallsignConfirmation>(_callsignConfirmations, StringComparer.OrdinalIgnoreCase);

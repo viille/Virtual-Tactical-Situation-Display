@@ -17,12 +17,6 @@ public sealed class TacticalDisplaySettings
     public int TacticalLinkTelemetryRateHz { get; set; } = 10;
     public double TacticalLinkInterestRadiusNm { get; set; } = 200;
     public bool TacticalLinkDebugDiagnostics { get; set; }
-    [System.Text.Json.Serialization.JsonIgnore]
-    public bool TacticalLinkConnected { get; set; }
-    [System.Text.Json.Serialization.JsonIgnore]
-    public double EffectivePollRateHz => TacticalLinkConnected
-        ? System.Math.Max(PollRateHz, TacticalLinkTelemetryRateHz)
-        : PollRateHz;
     public bool EnableDiagnosticTelemetry { get; set; }
     public bool DiagnosticTelemetryConsentAsked { get; set; }
     public bool EnableDataSourceDebugLogging { get; set; }

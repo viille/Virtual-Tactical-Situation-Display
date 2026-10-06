@@ -1,4 +1,4 @@
-link.vtsd.app {
+{$TACTICAL_LINK_HOST:link.vtsd.app} {
     encode zstd gzip
     reverse_proxy tactical-link:8080
 }

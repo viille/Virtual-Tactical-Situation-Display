@@ -33,8 +33,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private bool _showTacticalLinkMenu;
     private string _tacticalLinkMessage = "TacticalLink is disconnected.";
     private bool _tankerAvailable;
-    private static readonly HashSet<string> TankerAircraftTypes = ["KC135", "KC10", "KC46", "A330MRTT", "IL78"];
-    private static readonly HashSet<string> ReceiverAircraftTypes = ["F16C", "F16D", "F18C", "F18E", "F18F", "F35A", "F35B", "F35C", "F22A", "A10A", "A10C", "MIR2000", "EF2000", "GRIPEN", "C130J", "C17", "A400M"];
+    private readonly IAircraftCapabilityResolver _aircraftCapabilities = new StaticAircraftCapabilityResolver();
+    private readonly DispatcherTimer _tacticalTelemetryTimer;
+    private OwnshipState? _latestOwnship;
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _airspaceTimer;
     private readonly CancellationTokenSource _runCts = new();
@@ -148,6 +149,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             UpdateSimConnectCheckingTimeout();
         };
         _renderTimer.Start();
+        _tacticalTelemetryTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1000.0 / Settings.TacticalLinkTelemetryRateHz) };
+        _tacticalTelemetryTimer.Tick += (_, _) => PublishLatestTacticalTelemetry();
+        _tacticalTelemetryTimer.Start();
         _ = _feed.StartAsync(_runCts.Token);
         _airspaceTimer = new DispatcherTimer { Interval = TimeSpan.FromMinutes(5) };
         _airspaceTimer.Tick += (_, _) => _ = LoadAirspacesAsync();
@@ -486,6 +490,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             var normalized = value >= 20 ? 20 : 10;
             if (Settings.TacticalLinkTelemetryRateHz == normalized) return;
             Settings.TacticalLinkTelemetryRateHz = normalized;
+            _tacticalTelemetryTimer.Interval = TimeSpan.FromMilliseconds(1000.0 / normalized);
             _configStore.SaveDisplaySettings(Settings);
             Raise();
         }
@@ -554,8 +559,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         return new TacticalLinkPeerDisplay(peer.Callsign, peer.AircraftType ?? "Aircraft", range is { } nm ? $"{nm:0} NM" : "--- NM", peer.StatusText);
     }).ToArray();
     public string TankerButtonText => _tankerAvailable ? "LEAVE TANKER MODE" : "JOIN AS TANKER";
-    public bool IsTankerCapable => TankerAircraftTypes.Contains(NormalizeAircraftType(Settings.OwnAircraftType));
-    public bool IsTankerReceiverCapable => ReceiverAircraftTypes.Contains(NormalizeAircraftType(Settings.OwnAircraftType));
+    public bool IsTankerCapable => _aircraftCapabilities.Resolve(Settings.OwnAircraftType).CanTanker;
+    public bool IsTankerReceiverCapable => _aircraftCapabilities.Resolve(Settings.OwnAircraftType).CanReceive;
     public bool CanOfferTanker => IsTankerCapable && IsTacticalLinkConnected;
     public bool IsTacticalLinkConnected => _tacticalLink.ConnectionState == TacticalLinkConnectionState.Connected;
 
@@ -871,6 +876,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         try
         {
             _renderTimer.Stop();
+            _tacticalTelemetryTimer.Stop();
             _airspaceTimer.Stop();
             _runCts.Cancel();
             await _tacticalLink.DisposeAsync();
@@ -1789,8 +1795,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
 
         _repository.ApplySnapshot(snapshot, _classification, Settings);
-        if (DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode) && _feed.IsConnected)
-            _ = _tacticalLink.PublishTelemetryAsync(snapshot.Ownship, Settings.OwnAircraftType, _runCts.Token);
+        _latestOwnship = snapshot.Ownship;
         if (DataSourceModes.IsMsfs(Settings.DataSourceMode))
         {
             LogMsfsClosureDiagnostics(snapshot);
@@ -1806,7 +1811,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             Application.Current.Dispatcher.BeginInvoke(() => OnTacticalLinkStateChanged(sender, e));
             return;
         }
-        Settings.TacticalLinkConnected = IsTacticalLinkConnected;
         if (!IsTacticalLinkConnected) _repository.RemoveTacticalLinkContacts();
         Raise(nameof(TacticalLinkStatusText));
         Raise(nameof(TacticalLinkIdentityText));
@@ -1817,6 +1821,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(IsTacticalLinkConnected));
         Raise(nameof(TankerButtonText));
         Raise(nameof(CanOfferTanker));
+        if (!IsTacticalLinkConnected) _latestOwnship = null;
     }
 
     private void OnCloudAuthStateChanged(object? sender, AuthState state)
@@ -1884,8 +1889,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(IsTankerCapable));
     }
 
-    private static string NormalizeAircraftType(string? aircraftType) =>
-        new((aircraftType ?? string.Empty).Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
+    private void PublishLatestTacticalTelemetry()
+    {
+        if (!IsTacticalLinkConnected || !DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode) || !_feed.IsConnected || _latestOwnship is not { } ownship) return;
+        _ = _tacticalLink.PublishTelemetryAsync(ownship, Settings.OwnAircraftType, _runCts.Token);
+    }
 
     private void LogMsfsClosureDiagnostics(TrafficSnapshot snapshot)
     {

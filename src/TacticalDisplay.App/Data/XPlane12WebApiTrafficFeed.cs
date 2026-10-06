@@ -75,7 +75,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             return Task.CompletedTask;
         }
 
-        DataSourceDebugLog.Info(LogSource, $"Start requested | apiBaseUrl={GetBaseUri()} pollRateHz={_settings.EffectivePollRateHz:0.##}");
+        DataSourceDebugLog.Info(LogSource, $"Start requested | apiBaseUrl={GetBaseUri()} pollRateHz={_settings.PollRateHz:0.##}");
         _isRunning = true;
         _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _loopTask = Task.Run(() => RunAsync(_loopCts.Token), CancellationToken.None);
@@ -184,7 +184,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
 
     private async Task PollLoopAsync(CancellationToken cancellationToken)
     {
-        var pollMs = (int)Math.Clamp(1000.0 / Math.Max(_settings.EffectivePollRateHz, 1), 50, 1000);
+        var pollMs = (int)Math.Clamp(1000.0 / Math.Max(_settings.PollRateHz, 1), 100, 1000);
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(pollMs));
 
         while (await timer.WaitForNextTickAsync(cancellationToken))

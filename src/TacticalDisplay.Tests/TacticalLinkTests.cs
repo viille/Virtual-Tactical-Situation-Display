@@ -54,6 +54,41 @@ public sealed class TacticalLinkTests
         Assert.Single(remaining);
     }
 
+    [Theory]
+    [InlineData(0.2)]
+    [InlineData(0.5)]
+    [InlineData(0.8)]
+    public void TrafficDeduplicatorTimeAlignsMovingTracksWithinOneSecond(double skewSeconds)
+    {
+        var deduplicator = new TrafficDeduplicator();
+        var timestamp = DateTimeOffset.UtcNow;
+        var direct = Contact("tl:1", 60, 25, 25000, 300) with { Timestamp = timestamp.AddSeconds(skewSeconds), GroundTrackDeg = 90 };
+        var sim = Contact("sim:1", 60, 25, 25000, 300) with { Timestamp = timestamp, GroundTrackDeg = 90 };
+        var directPosition0 = TacticalDisplay.Core.Math.GeoMath.DestinationPoint(60, 25, 90, 300 * 0.514444 * skewSeconds / 1852.0);
+        direct = direct with { LatitudeDeg = directPosition0.latitudeDeg, LongitudeDeg = directPosition0.longitudeDeg };
+        for (var sample = 0; sample < 4; sample++)
+        {
+            var sampleTime = timestamp.AddSeconds(sample * 2);
+            var simPosition = TacticalDisplay.Core.Math.GeoMath.DestinationPoint(60, 25, 90, 300 * 0.514444 * sampleTime.Subtract(timestamp).TotalSeconds / 1852.0);
+            var directPosition = TacticalDisplay.Core.Math.GeoMath.DestinationPoint(60, 25, 90, 300 * 0.514444 * (sampleTime.Subtract(timestamp).TotalSeconds + skewSeconds) / 1852.0);
+            direct = direct with { Timestamp = sampleTime.AddSeconds(skewSeconds), LatitudeDeg = directPosition.latitudeDeg, LongitudeDeg = directPosition.longitudeDeg };
+            sim = sim with { Timestamp = sampleTime, LatitudeDeg = simPosition.latitudeDeg, LongitudeDeg = simPosition.longitudeDeg };
+            var remaining = deduplicator.SuppressDuplicates([sim with { Id = $"sim:{sample}" }], [direct]);
+            if (sample < 3) Assert.Single(remaining);
+            else Assert.Single(remaining);
+        }
+    }
+
+    [Fact]
+    public void DirectCallsSignAndTankerCapabilityDefaultsToOff()
+    {
+        var profile = new StaticAircraftCapabilityResolver().Resolve("KC-135");
+        Assert.True(profile.CanTanker);
+        var tanker = new TacticalPeer("tl_random", "VIPER11", "KC135", new HashSet<string> { "aar.tanker" },
+            new Dictionary<string, string> { ["tankerAvailability"] = "Off" }, Telemetry(60, 25), TimeSpan.Zero);
+        Assert.NotEqual("AAR AVAILABLE", tanker.StatusText);
+    }
+
     [Fact]
     public void InterestResolverHandlesHundredParticipantsAtTwentyHertzAcrossClusters()
     {

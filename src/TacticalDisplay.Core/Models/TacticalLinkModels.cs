@@ -1,5 +1,10 @@
 namespace TacticalDisplay.Core.Models;
 
+public static class TacticalLinkProtocol
+{
+    public const int Version = 1;
+}
+
 public enum TacticalLinkConnectionState { Disconnected, Connecting, Connected, Degraded }
 public enum TankerAvailability { Off, Available, Busy, Unavailable }
 public enum TrackSource { TacticalLink, SimConnectVatsim, SimConnect }
@@ -31,10 +36,13 @@ public sealed record TacticalPeer(
     TimeSpan? TelemetryAge,
     TacticalLinkConnectionState ConnectionState = TacticalLinkConnectionState.Connected)
 {
+    public TimeSpan? CurrentTelemetryAge => LatestTelemetry is { } telemetry
+        ? DateTimeOffset.UtcNow - telemetry.SampleTimestampUtc
+        : null;
     public string StatusText => Capabilities.Contains("aar.tanker") &&
         OperationalStates.TryGetValue("tankerAvailability", out var availability) && availability == "Available"
         ? "AAR AVAILABLE"
-        : TelemetryAge is { } age ? $"Updated {age.TotalSeconds:0}s ago" : "Telemetry unavailable";
+        : CurrentTelemetryAge is { } age ? $"Updated {System.Math.Max(0, age.TotalSeconds):0}s ago" : "Telemetry unavailable";
 }
 
 public sealed record TacticalLinkState(

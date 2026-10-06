@@ -62,7 +62,11 @@ public sealed record TrafficContactState(
     bool CallsignRevoked = false,
     long Generation = 0,
     double? GroundTrackDeg = null,
-    TrackSource Source = TrackSource.SimConnect);
+    TrackSource Source = TrackSource.SimConnect,
+    double? VelocityNorthMps = null,
+    double? VelocityEastMps = null,
+    double? VelocityDownMps = null,
+    string? AircraftType = null);
 
 public sealed record PositionHistoryPoint(
     double LatitudeDeg,

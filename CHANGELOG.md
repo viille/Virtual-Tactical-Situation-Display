@@ -7,6 +7,9 @@
 - Added a TAC menu and persistent connection indicator, direct peer traffic tracks, and conservative SimConnect duplicate suppression.
 - Prepared a tanker-capability profile field and availability protocol state; fuel transfer and AAR operations remain future work.
 - Added TacticalLink reconnect, 10/20 Hz telemetry, interest-radius and diagnostics settings; server expires stale simulator telemetry and clamps client interest to a configured maximum.
+- Reserved direct TacticalLink callsigns during VATSIM enrichment, aligned short-skew deduplication with motion, and separated network publishing cadence from simulator polling.
+- Added a versioned TacticalLink wire protocol, per-connection sequence reset, per-peer rate limits, malformed-message handling, random public participant IDs and structured operational counters.
+- Added expiring shared VATSIM identity caching and a Caddy TLS reverse proxy deployment alongside the internal TacticalLink service.
 
 ## 0.14.13 - 2026-10-05
 

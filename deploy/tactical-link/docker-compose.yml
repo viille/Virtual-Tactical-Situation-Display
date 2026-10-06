@@ -12,3 +12,30 @@ services:
       TACTICAL_LINK_MAX_INTEREST_RADIUS_NM: ${TACTICAL_LINK_MAX_INTEREST_RADIUS_NM:-500}
     expose:
       - "8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      - tactical-link
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Net.Http;
 using System.IO;
 using System.Text;
 using System.Text.Json;
@@ -71,14 +72,13 @@ public sealed class TacticalLinkClient : IAsyncDisposable
     private async Task ConnectCoreAsync(CancellationToken cancellationToken)
     {
         var token = await _cloud.CreateTacticalLinkTokenAsync(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(token.Token) || string.IsNullOrWhiteSpace(token.ParticipantId) || string.IsNullOrWhiteSpace(token.Callsign))
+        if (string.IsNullOrWhiteSpace(token.Token) || string.IsNullOrWhiteSpace(token.Callsign))
             throw new CloudApiException("VTSD Cloud did not return a complete TacticalLink identity.", errorCode: "TACTICAL_LINK_IDENTITY");
 
         var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"Bearer {token.Token}");
         _socket = socket;
         await socket.ConnectAsync(_serverUri, cancellationToken).ConfigureAwait(false);
-        _participantId = token.ParticipantId;
         _callsign = token.Callsign;
         _connectionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         SetState(TacticalLinkConnectionState.Connected);
@@ -86,12 +86,11 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         await SendAsync(new
         {
             type = "CONNECT",
-            participantId = token.ParticipantId,
             capabilities,
             operationalStates = _tankerCapable ? new { tankerAvailability = _tankerAvailable ? "Available" : "Off" } : null
         }, cancellationToken).ConfigureAwait(false);
         await SendAsync(new { type = "INTEREST_UPDATE", radiusNm = _interestRadiusNm }, cancellationToken).ConfigureAwait(false);
-        if (_debugDiagnostics) DataSourceDebugLog.Info("TacticalLink", $"Connected | participant={token.ParticipantId} interestRadiusNm={_interestRadiusNm:0}");
+        if (_debugDiagnostics) DataSourceDebugLog.Info("TacticalLink", $"Connected | callsign={token.Callsign} interestRadiusNm={_interestRadiusNm:0}");
         _receiveTask = ReceiveLoopAsync(socket, _connectionCts.Token);
         _ = AuthRefreshLoopAsync(_connectionCts.Token);
     }
@@ -140,7 +139,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         {
             var socket = _socket;
             if (socket is { State: WebSocketState.Open })
-                await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(telemetry, Json), WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
+                await socket.SendAsync(SerializeVersioned(telemetry), WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
         }
         finally { _sendLock.Release(); }
     }
@@ -304,19 +303,34 @@ public sealed class TacticalLinkClient : IAsyncDisposable
 
     private async Task AuthRefreshLoopAsync(CancellationToken cancellationToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(60));
-        try
+        var retryDelay = TimeSpan.FromSeconds(5);
+        while (!cancellationToken.IsCancellationRequested)
         {
-            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            try
             {
                 var token = await _cloud.CreateTacticalLinkTokenAsync(cancellationToken).ConfigureAwait(false);
                 await SendAsync(new { type = "AUTH_REFRESH", token = token.Token }, cancellationToken).ConfigureAwait(false);
+                retryDelay = TimeSpan.FromSeconds(5);
+                var remaining = token.ExpiresAt - DateTimeOffset.UtcNow;
+                var refreshIn = remaining - TimeSpan.FromSeconds(Random.Shared.Next(60, 91));
+                if (refreshIn < TimeSpan.FromSeconds(5)) refreshIn = TimeSpan.FromSeconds(5);
+                await Task.Delay(refreshIn, cancellationToken).ConfigureAwait(false);
             }
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
-        catch (Exception ex) when (ex is CloudApiException or WebSocketException or ObjectDisposedException)
-        {
-            DataSourceDebugLog.Warn("TacticalLink", $"Authentication refresh failed | {ex.Message}");
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+            catch (CloudApiException ex) when (ex.ErrorCode is "NO_ACTIVE_VATSIM_PILOT" or "UNAUTHORIZED" or "VATSIM_IDENTITY_REQUIRED" or "APP_SESSION_REQUIRED")
+            {
+                DataSourceDebugLog.Warn("TacticalLink", $"Authentication participation ended | {ex.ErrorCode}");
+                _explicitDisconnectRequested = true;
+                _connectionCts?.Cancel();
+                SetState(TacticalLinkConnectionState.Disconnected);
+                return;
+            }
+            catch (Exception ex) when (ex is CloudApiException or WebSocketException or ObjectDisposedException or HttpRequestException)
+            {
+                DataSourceDebugLog.Warn("TacticalLink", $"Authentication refresh failed; retrying | {ex.Message}");
+                await Task.Delay(retryDelay, cancellationToken).ConfigureAwait(false);
+                retryDelay = TimeSpan.FromSeconds(System.Math.Min(60, retryDelay.TotalSeconds * 2));
+            }
         }
     }
 
@@ -324,6 +338,13 @@ public sealed class TacticalLinkClient : IAsyncDisposable
     {
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
+        if (!root.TryGetProperty("protocolVersion", out var version) || version.GetInt32() != TacticalLinkProtocol.Version)
+        {
+            _explicitDisconnectRequested = true;
+            _connectionCts?.Cancel();
+            SetState(TacticalLinkConnectionState.Disconnected);
+            return;
+        }
         if (!root.TryGetProperty("type", out var typeNode)) return;
         var type = typeNode.GetString();
         var peerId = root.TryGetProperty("participantId", out var idNode) ? idNode.GetString() : null;
@@ -362,10 +383,17 @@ public sealed class TacticalLinkClient : IAsyncDisposable
     {
         var socket = _socket;
         if (socket is not { State: WebSocketState.Open }) return;
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(message, Json);
+        var bytes = SerializeVersioned(message);
         await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { await socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false); }
         finally { _sendLock.Release(); }
+    }
+
+    private static byte[] SerializeVersioned(object message)
+    {
+        var payload = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(message, Json), Json)!;
+        payload["protocolVersion"] = JsonSerializer.SerializeToElement(TacticalLinkProtocol.Version);
+        return JsonSerializer.SerializeToUtf8Bytes(payload, Json);
     }
 
     private void SetState(TacticalLinkConnectionState state)

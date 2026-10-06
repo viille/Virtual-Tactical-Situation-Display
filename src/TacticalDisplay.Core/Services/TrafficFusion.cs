@@ -34,7 +34,11 @@ public sealed class TrafficFusion
         telemetry.SampleTimestampUtc,
         Generation: 1,
         GroundTrackDeg: telemetry.GroundTrackDeg,
-        Source: TrackSource.TacticalLink);
+        Source: TrackSource.TacticalLink,
+        VelocityNorthMps: telemetry.VelocityNorthMps,
+        VelocityEastMps: telemetry.VelocityEastMps,
+        VelocityDownMps: telemetry.VelocityDownMps,
+        AircraftType: telemetry.AircraftType);
 }
 
 public sealed record TrafficFusionResult(
