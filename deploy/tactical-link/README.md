@@ -15,18 +15,18 @@ TACTICAL_LINK_INTEREST_RADIUS_NM=200
 TACTICAL_LINK_MAX_INTEREST_RADIUS_NM=500
 ```
 
-Set `TACTICAL_LINK_JWT_PRIVATE_KEY` and the same `TACTICAL_LINK_JWT_KEY_ID` in the VTSD Cloud deployment, with matching issuer and audience settings. The Cloud API issues 120 second tokens only after resolving the authenticated VATSIM CID against the live VATSIM pilot feed.
+Set `TACTICAL_LINK_JWT_PRIVATE_KEY` and the same `TACTICAL_LINK_JWT_KEY_ID` in the VTSD Cloud deployment, with matching issuer and audience settings. Cloud issues five-minute tokens only after resolving the authenticated VATSIM CID against the official VATSIM feed.
 
 ## Run behind Caddy
 
-Configure Caddy to use `deploy/tactical-link/Caddyfile` in the same Docker network as this service, then start the service:
+The compose file starts both the internal service and Caddy, with persistent certificate volumes and bounded JSON logs. Set `TACTICAL_LINK_HOST` if the public host differs from `link.vtsd.app`, then start them:
 
 ```sh
 docker compose -f deploy/tactical-link/docker-compose.yml up -d --build
 ```
 
-Expose HTTPS/WSS on `link.vtsd.app` through Caddy. The server listens only on the Docker network at port 8080. `/healthz` is a liveness check and does not expose participants.
+The server listens only on the Docker network at port 8080. `/healthz` is a liveness check and does not expose participants.
 
 ## Operational limits
 
-Interest defaults to 200 NM and clients may request a radius up to the separately configured safe maximum (1 to 1000 NM, default 500 NM). Reconnect grace is 12 seconds; identity is keyed by Cloud's user-bound participant ID and each replacement connection receives a higher generation. Outbound queues are bounded; telemetry coalesces to the newest unsent value per peer. Clients whose queues fill are disconnected. Automated in-process tests cover 50 and 100 participants at 20 frames per second; they are not a measurement of the target VPS. Measure on the 2 vCPU / 4 GB host before making capacity claims.
+Interest defaults to 200 NM and clients may request a radius up to the separately configured safe maximum (1 to 1000 NM, default 500 NM). Reconnect grace is 12 seconds; each authenticated session receives a random public participant ID, retained for reconnect grace, and replacement connections receive a higher generation. Outbound queues are bounded; telemetry coalesces to the newest unsent value per peer. Clients whose queues fill are disconnected. Automated in-process tests cover 50 and 100 participants at 20 frames per second; they are not a measurement of the target VPS. Measure on the 2 vCPU / 4 GB host before making capacity claims.
