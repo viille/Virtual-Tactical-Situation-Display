@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.15.0 - 2026-10-07
+
+- Added opt-in global TacticalLink presence and direct peer telemetry with spatial interest filtering and reconnect handling.
+- Added Cloud-issued short-lived identity tokens, per-peer protocol validation and rate limits, and direct callsign ownership safeguards.
+- Added configurable 10/20 Hz TacticalLink telemetry, capability status, diagnostics and deployment configuration.
+- Corrected 50- and 100-peer load tests to attempt 20 telemetry frames per second per peer.
+- AAR fuel transfer and dedicated high-rate ownship sampling remain future work.
+
 - Added the first global, opt-in TacticalLink protocol/server foundation with transient in-memory presence, spatial interest filtering, capability updates and direct peer telemetry.
 - Added VTSD Cloud active VATSIM callsign resolution and short-lived RS256 TacticalLink JWT issuance.
 - Added a TAC menu and persistent connection indicator, direct peer traffic tracks, and conservative SimConnect duplicate suppression.
