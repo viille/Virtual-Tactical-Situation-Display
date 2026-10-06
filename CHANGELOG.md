@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-## 0.15.1 - 2026-10-07
-
-- Restored the separate MFD bottom control bar while keeping connection and traffic details in the full-width window footer.
-
 ## 0.15.0 - 2026-10-07
 
 - Added opt-in global TacticalLink presence and direct peer telemetry with spatial interest filtering and reconnect handling.
@@ -13,6 +9,7 @@
 - Added configurable 10/20 Hz TacticalLink telemetry, capability status, diagnostics and deployment configuration.
 - Corrected 50- and 100-peer load tests to attempt 20 telemetry frames per second per peer.
 - Fixed the app footer so connection, traffic and version details fit across the full window width.
+- Restored the separate MFD bottom control bar while keeping connection and traffic details in the full-width window footer.
 - Fixed VTSD Cloud device-login completion to work with the Neon HTTP database driver.
 - AAR fuel transfer and dedicated high-rate ownship sampling remain future work.
 
