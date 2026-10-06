@@ -10,6 +10,7 @@
 - Reserved direct TacticalLink callsigns during VATSIM enrichment, aligned short-skew deduplication with motion, and separated network publishing cadence from simulator polling.
 - Added a versioned TacticalLink wire protocol, per-connection sequence reset, per-peer rate limits, malformed-message handling, random public participant IDs and structured operational counters.
 - Added expiring shared VATSIM identity caching and a Caddy TLS reverse proxy deployment alongside the internal TacticalLink service.
+- TODO for future AAR work: evaluate a dedicated high-rate ownship sampling path for fresh 20 Hz AAR telemetry while keeping normal simulator traffic polling near 10 Hz.
 
 ## 0.14.13 - 2026-10-05
 

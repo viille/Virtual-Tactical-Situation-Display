@@ -292,15 +292,16 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
         {
             await Task.WhenAll(peers.Select(peer => peer.StartAsync()));
             var stopwatch = Stopwatch.StartNew();
+            var start = Stopwatch.GetTimestamp();
             for (var frame = 1; frame <= 20; frame++)
             {
                 await Task.WhenAll(peers.Select(peer => peer.PublishFrameAsync(frame + 1)));
-                await Task.Delay(100);
+                await WaitForNextFrameAsync(start, frame);
             }
             await Task.WhenAll(peers.Select(peer => peer.PingAndWaitAsync()));
             stopwatch.Stop();
             Assert.All(peers, peer => Assert.Equal(1, peer.PongCount));
-            output.WriteLine($"TacticalLink load sample | peers=50 framesPerPeer=20 rateHz=20 elapsedMs={stopwatch.Elapsed.TotalMilliseconds:0.0}");
+            output.WriteLine($"TacticalLink load sample | peers=50 framesPerPeer=20 targetRateHz=20 elapsedMs={stopwatch.Elapsed.TotalMilliseconds:0.0}");
         }
         finally
         {
@@ -320,21 +321,30 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
         {
             await Task.WhenAll(peers.Select(peer => peer.StartAsync()));
             var stopwatch = Stopwatch.StartNew();
+            var start = Stopwatch.GetTimestamp();
             for (var frame = 1; frame <= 20; frame++)
             {
                 await Task.WhenAll(peers.Select(peer => peer.PublishFrameAsync(frame + 1)));
-                await Task.Delay(100);
+                await WaitForNextFrameAsync(start, frame);
             }
             await Task.WhenAll(peers.Select(peer => peer.PingAndWaitAsync()));
             stopwatch.Stop();
             Assert.All(peers, peer => Assert.Equal(1, peer.PongCount));
-            output.WriteLine($"TacticalLink load sample | peers=100 framesPerPeer=20 rateHz=20 elapsedMs={stopwatch.Elapsed.TotalMilliseconds:0.0}");
+            output.WriteLine($"TacticalLink load sample | peers=100 framesPerPeer=20 targetRateHz=20 elapsedMs={stopwatch.Elapsed.TotalMilliseconds:0.0}");
         }
         finally
         {
             await Task.WhenAll(peers.Select(peer => peer.StopAsync()));
             foreach (var peer in peers) peer.Dispose();
         }
+    }
+
+    private static async Task WaitForNextFrameAsync(long startTimestamp, int frameNumber)
+    {
+        var targetElapsed = TimeSpan.FromMilliseconds(frameNumber * 50);
+        var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
+        if (elapsed < targetElapsed)
+            await Task.Delay(targetElapsed - elapsed);
     }
 
     private sealed class TestPeer : IDisposable
