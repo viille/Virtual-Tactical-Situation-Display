@@ -33,6 +33,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
             Assert.Equal(userId, identity.UserId);
             Assert.Equal("VIPER11", identity.Callsign);
             Assert.Equal("1234567", identity.VatsimCid);
+            Assert.Null(identity.AircraftType);
 
             var parts = token.Split('.');
             var tamperedSignature = (parts[2][0] == 'A' ? "B" : "A") + parts[2][1..];
@@ -46,6 +47,138 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
             Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_AUDIENCE", originalAudience);
             Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_KEY_ID", originalKeyId);
         }
+    }
+
+    [Fact]
+    public async Task AuthenticatedAircraftTypeControlsPublishedIdentityAndClientCannotGrantTankerCapability()
+    {
+        using var rsa = RSA.Create(2048);
+        var oldKey = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY");
+        var oldIssuer = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_ISSUER");
+        var oldAudience = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_AUDIENCE");
+        var oldKeyId = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_KEY_ID");
+        try
+        {
+            ConfigureJwt(rsa);
+            var identity = TacticalJwtValidator.Validate("Bearer " + CreateToken(rsa, Guid.NewGuid().ToString(), "test-key", "F35A"));
+            var hub = new TacticalLinkHub(new PeerInterestResolver());
+            using var aircraft = new TestPeer(hub, 60, 25, identity: identity);
+            using var observer = new TestPeer(hub, 60.1, 25);
+            await Task.WhenAll(aircraft.StartAsync(), observer.StartAsync());
+
+            using var connected = await aircraft.ReadTypeAsync("CONNECTED");
+            Assert.Equal("F35A", connected.RootElement.GetProperty("aircraftType").GetString());
+            var ownCapabilities = connected.RootElement.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray();
+            Assert.Contains("aar.receiver", ownCapabilities);
+            Assert.DoesNotContain("aar.tanker", ownCapabilities);
+
+            using var entered = await observer.ReadTypeAsync("PEER_ENTER");
+            Assert.Equal("F35A", entered.RootElement.GetProperty("aircraftType").GetString());
+            var peerCapabilities = entered.RootElement.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray();
+            Assert.Contains("aar.receiver", peerCapabilities);
+            Assert.DoesNotContain("aar.tanker", peerCapabilities);
+            Assert.DoesNotContain("aircraftType", entered.RootElement.GetProperty("telemetry").EnumerateObject().Select(property => property.Name));
+
+            await aircraft.SendAsync(new
+            {
+                type = "CAPABILITY_UPDATE",
+                capabilities = new[] { "identity", "telemetry", "aar.tanker" },
+                operationalStates = new { tankerAvailability = "Available" }
+            });
+            using var updated = await aircraft.ReadTypeAsync("CAPABILITY_UPDATED");
+            var updatedCapabilities = updated.RootElement.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray();
+            Assert.Contains("aar.receiver", updatedCapabilities);
+            Assert.DoesNotContain("aar.tanker", updatedCapabilities);
+            Assert.Empty(updated.RootElement.GetProperty("operationalStates").EnumerateObject());
+        }
+        finally { RestoreJwtEnvironment(oldKey, oldIssuer, oldAudience, oldKeyId); }
+    }
+
+    [Fact]
+    public async Task AuthenticatedPilotWithoutAircraftTypeCanStillConnectWithoutAircraftCapabilities()
+    {
+        using var rsa = RSA.Create(2048);
+        var oldKey = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY");
+        var oldIssuer = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_ISSUER");
+        var oldAudience = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_AUDIENCE");
+        var oldKeyId = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_KEY_ID");
+        try
+        {
+            ConfigureJwt(rsa);
+            var identity = TacticalJwtValidator.Validate("Bearer " + CreateToken(rsa, Guid.NewGuid().ToString(), "test-key"));
+            var hub = new TacticalLinkHub(new PeerInterestResolver());
+            using var aircraft = new TestPeer(hub, 60, 25, identity: identity);
+            await aircraft.StartAsync();
+            using var connected = await aircraft.ReadTypeAsync("CONNECTED");
+            Assert.Equal(JsonValueKind.Null, connected.RootElement.GetProperty("aircraftType").ValueKind);
+            var capabilities = connected.RootElement.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray();
+            Assert.Contains("identity", capabilities);
+            Assert.Contains("telemetry", capabilities);
+            Assert.DoesNotContain("aar.receiver", capabilities);
+            Assert.DoesNotContain("aar.tanker", capabilities);
+        }
+        finally { RestoreJwtEnvironment(oldKey, oldIssuer, oldAudience, oldKeyId); }
+    }
+
+    [Fact]
+    public async Task AuthRefreshUpdatesAircraftIdentityAndClearsTankerAvailabilityAfterDowngrade()
+    {
+        using var rsa = RSA.Create(2048);
+        var oldKey = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY");
+        var oldIssuer = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_ISSUER");
+        var oldAudience = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_AUDIENCE");
+        var oldKeyId = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_KEY_ID");
+        try
+        {
+            ConfigureJwt(rsa);
+            var userId = Guid.NewGuid().ToString();
+            var tankerIdentity = TacticalJwtValidator.Validate("Bearer " + CreateToken(rsa, userId, "test-key", "KC135"));
+            var hub = new TacticalLinkHub(new PeerInterestResolver());
+            using var tanker = new TestPeer(hub, 60, 25, identity: tankerIdentity);
+            using var observer = new TestPeer(hub, 60.1, 25);
+            await Task.WhenAll(tanker.StartAsync(), observer.StartAsync());
+            using var tankerEntered = await observer.ReadTypeAsync("PEER_ENTER");
+            var participantId = tankerEntered.RootElement.GetProperty("participantId").GetString();
+            Assert.Equal("KC135", tankerEntered.RootElement.GetProperty("aircraftType").GetString());
+            Assert.Contains("aar.tanker", tankerEntered.RootElement.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()));
+
+            await tanker.SendAsync(new { type = "CAPABILITY_UPDATE", operationalStates = new { tankerAvailability = "Available" } });
+            using var capabilityUpdate = await tanker.ReadTypeAsync("CAPABILITY_UPDATED");
+            Assert.Equal("Available", capabilityUpdate.RootElement.GetProperty("operationalStates").GetProperty("tankerAvailability").GetString());
+            using (var stateUpdate = await observer.ReadTypeAsync("PEER_UPDATE"))
+                Assert.Equal("Available", stateUpdate.RootElement.GetProperty("operationalStates").GetProperty("tankerAvailability").GetString());
+
+            var refreshedToken = CreateToken(rsa, userId, "test-key", "F35A");
+            await tanker.SendAsync(new { type = "AUTH_REFRESH", token = refreshedToken });
+            using var refreshed = await tanker.ReadTypeAsync("AUTH_REFRESHED");
+            Assert.Equal("F35A", refreshed.RootElement.GetProperty("aircraftType").GetString());
+            Assert.DoesNotContain("aar.tanker", refreshed.RootElement.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()));
+            Assert.Empty(refreshed.RootElement.GetProperty("operationalStates").EnumerateObject());
+
+            using var peerUpdate = await observer.ReadTypeAsync("PEER_UPDATE");
+            Assert.Equal(participantId, peerUpdate.RootElement.GetProperty("participantId").GetString());
+            Assert.Equal("F35A", peerUpdate.RootElement.GetProperty("aircraftType").GetString());
+            Assert.Contains("aar.receiver", peerUpdate.RootElement.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()));
+            Assert.DoesNotContain("aar.tanker", peerUpdate.RootElement.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()));
+            Assert.DoesNotContain(peerUpdate.RootElement.GetProperty("operationalStates").EnumerateObject(), property => property.Name == "tankerAvailability" && property.Value.GetString() == "Available");
+        }
+        finally { RestoreJwtEnvironment(oldKey, oldIssuer, oldAudience, oldKeyId); }
+    }
+
+    private static void ConfigureJwt(RSA rsa)
+    {
+        Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY", rsa.ExportSubjectPublicKeyInfoPem());
+        Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_ISSUER", "https://www.vtsd.app");
+        Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_AUDIENCE", "tactical-link");
+        Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_KEY_ID", "test-key");
+    }
+
+    private static void RestoreJwtEnvironment(string? key, string? issuer, string? audience, string? keyId)
+    {
+        Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY", key);
+        Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_ISSUER", issuer);
+        Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_AUDIENCE", audience);
+        Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_KEY_ID", keyId);
     }
 
     [Fact]
@@ -367,19 +500,21 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
         private readonly CancellationTokenSource _cts = new();
         private readonly TestWebSocket _socket = new();
         private Task? _runTask;
-        public TestPeer(TacticalLinkHub hub, double latitude, double longitude, string? participantId = null)
+        private readonly AuthenticatedParticipant? _identity;
+        public TestPeer(TacticalLinkHub hub, double latitude, double longitude, string? participantId = null, AuthenticatedParticipant? identity = null)
         {
             _hub = hub;
             _latitude = latitude;
             _longitude = longitude;
-            ParticipantId = participantId ?? Guid.NewGuid().ToString();
+            _identity = identity;
+            ParticipantId = identity?.UserId ?? participantId ?? Guid.NewGuid().ToString();
         }
         public string ParticipantId { get; }
         public int PongCount { get; private set; }
 
         public async Task StartAsync()
         {
-            var identity = new AuthenticatedParticipant(ParticipantId, "1234567", "TEST1", DateTimeOffset.UtcNow.AddMinutes(2));
+            var identity = _identity ?? new AuthenticatedParticipant(ParticipantId, "1234567", "TEST1", null, DateTimeOffset.UtcNow.AddMinutes(2));
             _runTask = _hub.RunPeerAsync(_socket, identity, _cts.Token);
             await SendAsync(new { type = "CONNECT", participantId = "ignored" });
             await Task.Delay(25);
@@ -407,7 +542,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
             headingDeg = 90,
             groundTrackDeg = 90,
             speedKt = 300,
-            aircraftType = "F35A"
+            aircraftType = "KC135"
         });
 
         public Task SendAsync(object message)
@@ -454,7 +589,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
         public void Dispose() { _cts.Cancel(); _cts.Dispose(); _socket.Dispose(); }
     }
 
-    private static string CreateToken(RSA rsa, string userId, string keyId)
+    private static string CreateToken(RSA rsa, string userId, string keyId, string? aircraftType = null)
     {
         var header = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new { alg = "RS256", typ = "JWT", kid = keyId }));
         var payload = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new
@@ -463,6 +598,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
             user_id = userId,
             vatsim_cid = "1234567",
             callsign = "VIPER11",
+            aircraft_type = aircraftType,
             iss = "https://www.vtsd.app",
             aud = "tactical-link",
             iat = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),

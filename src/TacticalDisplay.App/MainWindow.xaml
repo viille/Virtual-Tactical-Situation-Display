@@ -1054,11 +1054,9 @@
 
                     <GroupBox Header="TacticalLink" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
                         <StackPanel>
-                            <TextBlock Text="Aircraft type/profile" Foreground="#7CB9A9" />
-                            <TextBox Text="{Binding OwnAircraftType, UpdateSourceTrigger=PropertyChanged}"
-                                     ToolTip="Simulator aircraft ICAO type, for example KC135 or F35A"
-                                     Margin="0,4,0,0" />
-                            <TextBlock Text="Tanker availability is offered only for a recognized tanker type."
+                            <TextBlock Text="{Binding TacticalLinkIdentityText}" Foreground="#D9F2EC" />
+                            <TextBlock Text="{Binding TacticalLinkAircraftTypeText}" Foreground="#9AFAD7" Margin="0,4,0,0" />
+                            <TextBlock Text="Aircraft type and capabilities come from the active VATSIM identity."
                                        Foreground="#7CB9A9" TextWrapping="Wrap" Margin="0,4,0,0" />
                             <CheckBox Content="Reconnect automatically after network loss"
                                       IsChecked="{Binding TacticalLinkAutoReconnect, Mode=TwoWay}"

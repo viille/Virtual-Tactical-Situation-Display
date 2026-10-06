@@ -31,10 +31,9 @@ public sealed class TacticalLinkClient : IAsyncDisposable
     private CancellationTokenSource? _reconnectCts;
     private Task? _reconnectTask;
     private bool _explicitDisconnectRequested;
-    private bool _tankerCapable;
-    private bool _receiverCapable;
+    private HashSet<string> _localCapabilities = ["identity", "telemetry"];
+    private Dictionary<string, string> _localOperationalStates = [];
     private bool _autoReconnect = true;
-    private bool _tankerAvailable;
     private double _interestRadiusNm = 200;
     private bool _debugDiagnostics;
     private OwnshipState? _previousOwnship;
@@ -50,15 +49,17 @@ public sealed class TacticalLinkClient : IAsyncDisposable
     public IReadOnlyList<TacticalPeer> NearbyPeers { get { lock (_peerLock) return _peers.Values.ToArray(); } }
     public string? LocalParticipantId => _participantId;
     public string? LocalCallsign => _callsign;
+    public string? LocalAircraftType { get; private set; }
+    public IReadOnlySet<string> LocalCapabilities => _localCapabilities;
+    public IReadOnlyDictionary<string, string> LocalOperationalStates => _localOperationalStates;
+    public bool LocalTankerAvailable => _localOperationalStates.TryGetValue("tankerAvailability", out var state) && state == "Available";
     public event EventHandler? StateChanged;
 
-    public async Task ConnectAsync(CancellationToken cancellationToken, bool tankerCapable = false, bool receiverCapable = false, bool autoReconnect = true, double interestRadiusNm = 200, bool debugDiagnostics = false)
+    public async Task ConnectAsync(CancellationToken cancellationToken, bool autoReconnect = true, double interestRadiusNm = 200, bool debugDiagnostics = false)
     {
         if (ConnectionState is TacticalLinkConnectionState.Connected or TacticalLinkConnectionState.Connecting) return;
         _explicitDisconnectRequested = false;
         _applicationToken = cancellationToken;
-        _tankerCapable = tankerCapable;
-        _receiverCapable = receiverCapable;
         _autoReconnect = autoReconnect;
         _interestRadiusNm = System.Math.Clamp(interestRadiusNm, 10, 500);
         _debugDiagnostics = debugDiagnostics;
@@ -86,13 +87,8 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         _authExpiresAt = token.ExpiresAt;
         _connectionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         SetState(TacticalLinkConnectionState.Connected);
-        var capabilities = GetCapabilities();
-        await SendAsync(new
-        {
-            type = "CONNECT",
-            capabilities,
-            operationalStates = _tankerCapable ? new { tankerAvailability = _tankerAvailable ? "Available" : "Off" } : null
-        }, cancellationToken).ConfigureAwait(false);
+        LocalAircraftType = token.AircraftType;
+        await SendAsync(new { type = "CONNECT" }, cancellationToken).ConfigureAwait(false);
         await SendAsync(new { type = "INTEREST_UPDATE", radiusNm = _interestRadiusNm }, cancellationToken).ConfigureAwait(false);
         if (_debugDiagnostics) DataSourceDebugLog.Info("TacticalLink", $"Connected | callsign={token.Callsign} interestRadiusNm={_interestRadiusNm:0}");
         _receiveTask = ReceiveLoopAsync(socket, _connectionCts.Token);
@@ -100,7 +96,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         _ = AuthRefreshLoopAsync(_connectionCts.Token);
     }
 
-    public async Task PublishTelemetryAsync(OwnshipState ownship, string? aircraftType, CancellationToken cancellationToken)
+    public async Task PublishTelemetryAsync(OwnshipState ownship, CancellationToken cancellationToken)
     {
         if (ConnectionState != TacticalLinkConnectionState.Connected) return;
         var groundTrack = ownship.GroundTrackDeg ?? ownship.HeadingDeg;
@@ -136,8 +132,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
             verticalSpeedFpm,
             velocityNorthMps = horizontalSpeedMps is { } northSpeed ? northSpeed * System.Math.Cos(trackRadians) : (double?)null,
             velocityEastMps = horizontalSpeedMps is { } eastSpeed ? eastSpeed * System.Math.Sin(trackRadians) : (double?)null,
-            velocityDownMps = verticalSpeedFpm.HasValue ? -verticalSpeedFpm.Value * 0.00508 : (double?)null,
-            aircraftType = NormalizeAircraftType(aircraftType)
+            velocityDownMps = verticalSpeedFpm.HasValue ? -verticalSpeedFpm.Value * 0.00508 : (double?)null
         };
         if (!await _sendLock.WaitAsync(0, cancellationToken).ConfigureAwait(false)) return;
         try
@@ -149,23 +144,10 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         finally { _sendLock.Release(); }
     }
 
-    public async Task SetTankerAvailabilityAsync(bool available, bool tankerCapable, CancellationToken cancellationToken)
+    public async Task SetTankerAvailabilityAsync(bool available, CancellationToken cancellationToken)
     {
         if (ConnectionState != TacticalLinkConnectionState.Connected) return;
-        _tankerCapable = tankerCapable;
-        _tankerAvailable = available;
-        var capabilities = GetCapabilities();
-        await SendAsync(new { type = "CAPABILITY_UPDATE", capabilities, operationalStates = new { tankerAvailability = available ? "Available" : "Off" } }, cancellationToken).ConfigureAwait(false);
-    }
-
-    public async Task UpdateAircraftCapabilitiesAsync(bool tankerCapable, bool receiverCapable, CancellationToken cancellationToken)
-    {
-        _tankerCapable = tankerCapable;
-        _receiverCapable = receiverCapable;
-        if (!tankerCapable) _tankerAvailable = false;
-        if (ConnectionState != TacticalLinkConnectionState.Connected) return;
-        var states = tankerCapable ? new { tankerAvailability = _tankerAvailable ? "Available" : "Off" } : null;
-        await SendAsync(new { type = "CAPABILITY_UPDATE", capabilities = GetCapabilities(), operationalStates = states }, cancellationToken).ConfigureAwait(false);
+        await SendAsync(new { type = "CAPABILITY_UPDATE", operationalStates = new { tankerAvailability = available ? "Available" : "Off" } }, cancellationToken).ConfigureAwait(false);
     }
 
     public void SetAutoReconnect(bool enabled) => _autoReconnect = enabled;
@@ -176,11 +158,6 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         if (ConnectionState == TacticalLinkConnectionState.Connected)
             await SendAsync(new { type = "INTEREST_UPDATE", radiusNm = _interestRadiusNm }, cancellationToken).ConfigureAwait(false);
     }
-
-    private string[] GetCapabilities() => new[] { "identity", "telemetry" }
-        .Concat(_receiverCapable ? ["aar.receiver"] : [])
-        .Concat(_tankerCapable ? ["aar.tanker"] : [])
-        .ToArray();
 
     public async Task DisconnectAsync()
     {
@@ -209,10 +186,12 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         _reconnectCts = null;
         _reconnectTask = null;
         _receiveTask = null;
-        _tankerAvailable = false;
         lock (_peerLock) _peers.Clear();
         _participantId = null;
         _callsign = null;
+        LocalAircraftType = null;
+        _localCapabilities = ["identity", "telemetry"];
+        _localOperationalStates = [];
         SetState(TacticalLinkConnectionState.Disconnected);
     }
 
@@ -226,6 +205,9 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         _connectionCts?.Dispose();
         _connectionCts = null;
         _receiveTask = null;
+        LocalAircraftType = null;
+        _localCapabilities = ["identity", "telemetry"];
+        _localOperationalStates = [];
         _participantId = null;
         _callsign = null;
         lock (_peerLock) _peers.Clear();
@@ -388,12 +370,20 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         {
             _participantId = peerId ?? _participantId;
             if (root.TryGetProperty("callsign", out var callsign)) _callsign = callsign.GetString() ?? _callsign;
+            if (root.TryGetProperty("aircraftType", out var aircraftType)) LocalAircraftType = aircraftType.GetString();
+            UpdateLocalCapabilities(root);
         }
-        else if (type == "AUTH_REFRESHED" && root.TryGetProperty("callsign", out var refreshedCallsign))
+        else if (type == "AUTH_REFRESHED")
         {
-            _callsign = refreshedCallsign.GetString() ?? _callsign;
+            if (root.TryGetProperty("callsign", out var refreshedCallsign)) _callsign = refreshedCallsign.GetString() ?? _callsign;
+            if (root.TryGetProperty("aircraftType", out var aircraftType)) LocalAircraftType = aircraftType.GetString();
+            UpdateLocalCapabilities(root);
             if (root.TryGetProperty("expiresAt", out var expiresAt) && expiresAt.TryGetDateTimeOffset(out var refreshedExpiry))
                 _authExpiresAt = refreshedExpiry;
+        }
+        else if (type == "CAPABILITY_UPDATED")
+        {
+            UpdateLocalCapabilities(root);
         }
         else if (type == "ERROR" && root.TryGetProperty("code", out var codeNode) && codeNode.GetString() is "AUTH_REFRESH_REJECTED" or "IDENTITY_MISMATCH")
         {
@@ -430,17 +420,21 @@ public sealed class TacticalLinkClient : IAsyncDisposable
             lock (_peerLock) _peers.Clear();
             _participantId = null;
             _callsign = null;
+            LocalAircraftType = null;
+            _localCapabilities = ["identity", "telemetry"];
+            _localOperationalStates = [];
         }
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
 
-    private static string? NormalizeAircraftType(string? aircraftType)
+    private void UpdateLocalCapabilities(JsonElement root)
     {
-        var normalized = new string((aircraftType ?? string.Empty)
-            .Where(character => char.IsLetterOrDigit(character) || character is '-' or ' ')
-            .Take(32)
-            .ToArray()).Trim();
-        return normalized.Length == 0 ? null : normalized;
+        if (root.TryGetProperty("capabilities", out var capabilities) && capabilities.ValueKind == JsonValueKind.Array)
+            _localCapabilities = capabilities.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()!).ToHashSet(StringComparer.Ordinal);
+        if (root.TryGetProperty("operationalStates", out var states) && states.ValueKind == JsonValueKind.Object)
+            _localOperationalStates = JsonSerializer.Deserialize<Dictionary<string, string>>(states.GetRawText(), Json) ?? [];
+        else _localOperationalStates = [];
     }
 
     public async ValueTask DisposeAsync()
