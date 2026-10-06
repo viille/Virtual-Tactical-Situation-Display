@@ -22,9 +22,11 @@ public sealed class TacticalLinkClient : IAsyncDisposable
     private ClientWebSocket? _socket;
     private CancellationTokenSource? _connectionCts;
     private Task? _receiveTask;
+    private Task? _ageRefreshTask;
     private long _sequence;
     private string? _participantId;
     private string? _callsign;
+    private DateTimeOffset _authExpiresAt;
     private CancellationToken _applicationToken;
     private CancellationTokenSource? _reconnectCts;
     private Task? _reconnectTask;
@@ -80,6 +82,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         _socket = socket;
         await socket.ConnectAsync(_serverUri, cancellationToken).ConfigureAwait(false);
         _callsign = token.Callsign;
+        _authExpiresAt = token.ExpiresAt;
         _connectionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         SetState(TacticalLinkConnectionState.Connected);
         var capabilities = GetCapabilities();
@@ -92,6 +95,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         await SendAsync(new { type = "INTEREST_UPDATE", radiusNm = _interestRadiusNm }, cancellationToken).ConfigureAwait(false);
         if (_debugDiagnostics) DataSourceDebugLog.Info("TacticalLink", $"Connected | callsign={token.Callsign} interestRadiusNm={_interestRadiusNm:0}");
         _receiveTask = ReceiveLoopAsync(socket, _connectionCts.Token);
+        _ageRefreshTask = RefreshPeerAgeLoopAsync(_connectionCts.Token);
         _ = AuthRefreshLoopAsync(_connectionCts.Token);
     }
 
@@ -310,6 +314,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
             {
                 var token = await _cloud.CreateTacticalLinkTokenAsync(cancellationToken).ConfigureAwait(false);
                 await SendAsync(new { type = "AUTH_REFRESH", token = token.Token }, cancellationToken).ConfigureAwait(false);
+                _authExpiresAt = token.ExpiresAt;
                 retryDelay = TimeSpan.FromSeconds(5);
                 var remaining = token.ExpiresAt - DateTimeOffset.UtcNow;
                 var refreshIn = remaining - TimeSpan.FromSeconds(Random.Shared.Next(60, 91));
@@ -332,6 +337,17 @@ public sealed class TacticalLinkClient : IAsyncDisposable
                 retryDelay = TimeSpan.FromSeconds(System.Math.Min(60, retryDelay.TotalSeconds * 2));
             }
         }
+    }
+
+    private async Task RefreshPeerAgeLoopAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+                StateChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
 
     private void HandleMessage(string json)
@@ -364,7 +380,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
             {
                 lock (_peerLock)
                     if (_peers.TryGetValue(peerId, out var existing))
-                        _peers[peerId] = existing with { LatestTelemetry = telemetry, TelemetryAge = TimeSpan.Zero };
+                        _peers[peerId] = existing with { LatestTelemetry = telemetry, TelemetryAge = DateTimeOffset.UtcNow - telemetry.SampleTimestampUtc };
             }
         }
         else if (type == "CONNECTED")
@@ -375,6 +391,14 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         else if (type == "AUTH_REFRESHED" && root.TryGetProperty("callsign", out var refreshedCallsign))
         {
             _callsign = refreshedCallsign.GetString() ?? _callsign;
+            if (root.TryGetProperty("expiresAt", out var expiresAt) && expiresAt.TryGetDateTimeOffset(out var refreshedExpiry))
+                _authExpiresAt = refreshedExpiry;
+        }
+        else if (type == "ERROR" && root.TryGetProperty("code", out var codeNode) && codeNode.GetString() is "AUTH_REFRESH_REJECTED" or "IDENTITY_MISMATCH")
+        {
+            _explicitDisconnectRequested = true;
+            _connectionCts?.Cancel();
+            SetState(TacticalLinkConnectionState.Disconnected);
         }
         StateChanged?.Invoke(this, EventArgs.Empty);
     }

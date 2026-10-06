@@ -130,6 +130,28 @@ public sealed class VatsimCallsignTrafficFeedTests
         await feed.DisposeAsync();
     }
 
+    [Fact]
+    public async Task Enrichment_DirectTacticalCallsignIsReservedBeforeVatsimConfirmation()
+    {
+        var inner = new ManualTrafficFeed();
+        var settings = new TacticalDisplaySettings { VatsimDataFeedUrl = "https://unit.test/feed.json" };
+        var feed = new VatsimCallsignTrafficFeed(inner, settings, () => null,
+            new HttpClient(new JsonHandler("""{"general":{},"pilots":[{"callsign":"VIPER11","latitude":60.1,"longitude":24,"altitude":5000,"groundspeed":250,"heading":90,"cid":12345}]}""")));
+        var received = new TaskCompletionSource<TrafficSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+        feed.SnapshotReceived += (_, snapshot) => received.TrySetResult(snapshot);
+        var now = DateTimeOffset.UtcNow;
+        var snapshot = new TrafficSnapshot(new OwnshipState("OWN", 60, 24, 5000, 0, 250, now),
+        [
+            new TrafficContactState("sim:1", null, 60.1, 24, 5000, 90, 250, now),
+            new TrafficContactState("tactical:random", "VIPER11", 60.1, 24, 5000, 90, 250, now, Source: TrackSource.TacticalLink)
+        ], now);
+        inner.Publish(snapshot);
+        var published = await received.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        Assert.Equal("VIPER11", Assert.Single(published.Contacts, contact => contact.Source == TrackSource.TacticalLink).Callsign);
+        Assert.Null(Assert.Single(published.Contacts, contact => contact.Id == "sim:1").Callsign);
+        await feed.DisposeAsync();
+    }
+
     private static TrafficSnapshot Snapshot(DateTimeOffset timestamp, string? callsign) =>
         new(new OwnshipState("OWN", 60, 24, 5000, 90, 250, timestamp),
             [new TrafficContactState("T1", callsign, 60.1, 24, 5000, 180, 250, timestamp)], timestamp);
