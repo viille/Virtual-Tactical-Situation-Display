@@ -8,6 +8,8 @@
 - Added Cloud-issued short-lived identity tokens, per-peer protocol validation and rate limits, and direct callsign ownership safeguards.
 - Added configurable 10/20 Hz TacticalLink telemetry, capability status, diagnostics and deployment configuration.
 - Corrected 50- and 100-peer load tests to attempt 20 telemetry frames per second per peer.
+- Fixed the app footer so connection, traffic and version details fit across the full window width.
+- Fixed VTSD Cloud device-login completion to work with the Neon HTTP database driver.
 - AAR fuel transfer and dedicated high-rate ownship sampling remain future work.
 
 - Added the first global, opt-in TacticalLink protocol/server foundation with transient in-memory presence, spatial interest filtering, capability updates and direct peer telemetry.

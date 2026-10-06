@@ -350,7 +350,13 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
     {
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         while (hub.GetLifecycleCounts() != expected)
-            await Task.Delay(10, timeout.Token);
+        {
+            try { await Task.Delay(10, timeout.Token); }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                throw new Xunit.Sdk.XunitException($"Timed out waiting for lifecycle counts {expected}; actual counts: {hub.GetLifecycleCounts()}.");
+            }
+        }
     }
 
     private sealed class TestPeer : IDisposable

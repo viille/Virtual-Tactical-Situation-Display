@@ -169,7 +169,7 @@
 
         <Border x:Name="ScopeBorder"
                 Grid.Row="0"
-                Grid.RowSpan="3"
+                Grid.RowSpan="2"
                 Grid.Column="0"
                 Margin="0,0,10,0"
                 Background="Transparent"
@@ -185,7 +185,6 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="54" />
                         <RowDefinition Height="*" />
-                        <RowDefinition Height="78" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="68" />
@@ -239,84 +238,24 @@
                                 WindowChrome.IsHitTestVisibleInChrome="True"
                                 Style="{StaticResource MfdWindowButtonStyle}" />
                     </StackPanel>
-                    <Grid Grid.Row="2" Grid.Column="1">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="50" />
-                            <RowDefinition Height="*" />
-                        </Grid.RowDefinitions>
-                        <StackPanel Grid.Row="0"
-                                    Orientation="Horizontal"
-                                    HorizontalAlignment="Center"
-                                    VerticalAlignment="Top">
-                            <ToggleButton Content="WEB" IsChecked="{Binding WebServerEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource MfdToggleButtonStyle}" />
-                            <Border Style="{StaticResource MfdTickStyle}" />
-                            <ToggleButton Content="KNEE" Command="{Binding ToggleKneepadCommand}" IsChecked="{Binding ShowKneepad, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
-                            <Border Style="{StaticResource MfdTickStyle}" />
-                            <ToggleButton Content="TAC" Command="{Binding ToggleTacticalLinkMenuCommand}" IsChecked="{Binding ShowTacticalLinkMenu, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
-                            <Border Style="{StaticResource MfdTickStyle}" />
-                            <StackPanel VerticalAlignment="Center" Margin="10,0">
-                                <Button Content="&#x2191;" Command="{Binding IncreaseMapOverlayOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
-                                <Button Content="&#x2193;" Command="{Binding DecreaseMapOverlayOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
-                            </StackPanel>
-                            <Border Style="{StaticResource MfdTickStyle}" />
-                            <ToggleButton Content="SET" Command="{Binding ToggleSettingsCommand}" IsChecked="{Binding ShowSettings, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                    <StackPanel Grid.Row="0"
+                                Grid.Column="1"
+                                Orientation="Horizontal"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Top">
+                        <ToggleButton Content="WEB" IsChecked="{Binding WebServerEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdTickStyle}" />
+                        <ToggleButton Content="KNEE" Command="{Binding ToggleKneepadCommand}" IsChecked="{Binding ShowKneepad, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdTickStyle}" />
+                        <StackPanel VerticalAlignment="Center" Margin="10,0">
+                            <Button Content="&#x2191;" Command="{Binding IncreaseMapOverlayOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
+                            <Button Content="&#x2193;" Command="{Binding DecreaseMapOverlayOpacityCommand}" Style="{StaticResource MfdArrowButtonStyle}" />
                         </StackPanel>
-                        <StackPanel Grid.Row="1"
-                                    Orientation="Horizontal"
-                                    HorizontalAlignment="Center"
-                                    VerticalAlignment="Bottom"
-                                    Margin="0,4,0,2">
-                        <TextBlock Text="{Binding ConnectionText}"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
-                                   FontWeight="SemiBold"
-                                   Foreground="#9AFAD7"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Margin="8,0" />
-                            <TextBlock Text="{Binding TrafficText}"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
-                                   FontWeight="SemiBold"
-                                   Foreground="#9AFAD7"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Margin="8,0" />
-                            <TextBlock Text="{Binding SimulatorFooterText}"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
-                                   FontWeight="SemiBold"
-                                   Foreground="#9AFAD7"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Margin="8,0" />
-                            <TextBlock Text="{Binding WebDisplayText}"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
-                                   FontWeight="SemiBold"
-                                   Foreground="#9AFAD7"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Margin="8,0" />
-                            <TextBlock Text="{Binding TacticalLinkStatusText}"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
-                                   FontWeight="SemiBold"
-                                   Foreground="#9AFAD7"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Margin="8,0" />
-                            <TextBlock Text="{Binding AppVersionText}"
-                                   FontFamily="Consolas"
-                                   FontSize="12"
-                                   FontWeight="SemiBold"
-                                   Foreground="#8EA5AD"
-                                   HorizontalAlignment="Center"
-                                   VerticalAlignment="Center"
-                                   Margin="8,0" />
-                        </StackPanel>
-                    </Grid>
-
+                        <Border Style="{StaticResource MfdTickStyle}" />
+                        <ToggleButton Content="SET" Command="{Binding ToggleSettingsCommand}" IsChecked="{Binding ShowSettings, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                        <Border Style="{StaticResource MfdTickStyle}" />
+                        <ToggleButton Content="TAC" Command="{Binding ToggleTacticalLinkMenuCommand}" IsChecked="{Binding ShowTacticalLinkMenu, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
+                    </StackPanel>
                     <StackPanel Grid.Row="1" Grid.Column="0" VerticalAlignment="Center">
                         <Button Content="RNG +" Command="{Binding IncreaseRangeCommand}" Style="{StaticResource MfdSideButtonStyle}" />
                         <Border Style="{StaticResource MfdSideTickStyle}" />
@@ -931,9 +870,27 @@
             </Border>
         </Border>
 
+        <Border Grid.Row="2"
+                Grid.ColumnSpan="2"
+                Background="#071116"
+                BorderBrush="#3D5360"
+                BorderThickness="0,1,0,0"
+                Padding="4,3">
+            <StackPanel Orientation="Horizontal"
+                        HorizontalAlignment="Center"
+                        VerticalAlignment="Center">
+                <TextBlock Text="{Binding ConnectionText}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#9AFAD7" Margin="8,0" />
+                <TextBlock Text="{Binding TrafficText}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#9AFAD7" Margin="8,0" />
+                <TextBlock Text="{Binding SimulatorFooterText}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#9AFAD7" Margin="8,0" />
+                <TextBlock Text="{Binding WebDisplayText}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#9AFAD7" Margin="8,0" />
+                <TextBlock Text="{Binding TacticalLinkStatusText}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#9AFAD7" Margin="8,0" />
+                <TextBlock Text="{Binding AppVersionText}" FontFamily="Consolas" FontSize="12" FontWeight="SemiBold" Foreground="#8EA5AD" Margin="8,0" />
+            </StackPanel>
+        </Border>
+
         <Border x:Name="SettingsBorder"
                 Grid.Row="0"
-                Grid.RowSpan="3"
+                Grid.RowSpan="2"
                 Grid.Column="1"
                 Padding="10"
                 Background="#102028"
