@@ -43,6 +43,12 @@ public sealed class TrafficRepository
         _ownship = snapshot.Ownship;
         _ownshipHistory.Add(snapshot.Ownship);
         _ownshipHistory.RemoveAll(sample => snapshot.Timestamp - sample.Timestamp > TimeSpan.FromSeconds(6));
+        var currentContactIds = snapshot.Contacts.Select(contact => contact.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var id in _contacts
+                     .Where(pair => pair.Value.Current.Source == TrackSource.TacticalLink && !currentContactIds.Contains(pair.Key))
+                     .Select(pair => pair.Key)
+                     .ToArray())
+            _contacts.Remove(id);
         foreach (var contact in snapshot.Contacts)
         {
             if (ShouldSuppressStationaryContact(contact))
@@ -122,6 +128,14 @@ public sealed class TrafficRepository
     }
 
     public int Count => _contacts.Count;
+
+    public void RemoveContact(string id) => _contacts.Remove(id);
+
+    public void RemoveTacticalLinkContacts()
+    {
+        foreach (var id in _contacts.Where(pair => pair.Value.Current.Source == TrackSource.TacticalLink).Select(pair => pair.Key).ToArray())
+            _contacts.Remove(id);
+    }
 
     public TrackedContact? GetTrackedContact(string id) =>
         _contacts.TryGetValue(id, out var tracked) ? tracked : null;

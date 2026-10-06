@@ -112,6 +112,12 @@ public sealed class DeviceLoginStatusResponse
 }
 
 public sealed class MeResponse { public UserAccount User { get; set; } = new(); }
+public sealed class TacticalLinkTokenResponse
+{
+    public string Token { get; set; } = "";
+    public string Callsign { get; set; } = "";
+    public DateTimeOffset ExpiresAt { get; set; }
+}
 public sealed class CollectionsResponse { public List<Collection> Collections { get; set; } = []; }
 public sealed class RedeemShareCodeResponse { public Collection? Collection { get; set; } }
 public sealed class CollectionPagesResponse { public List<KneepadPage> Pages { get; set; } = []; }

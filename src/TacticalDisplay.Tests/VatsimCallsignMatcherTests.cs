@@ -9,6 +9,22 @@ namespace TacticalDisplay.Tests;
 public sealed class VatsimCallsignMatcherTests(ITestOutputHelper output)
 {
     [Fact]
+    public void EnrichSnapshotFromHistoryDoesNotAssignCallsignsToTacticalLinkTracks()
+    {
+        var timestamp = DateTimeOffset.UnixEpoch;
+        var direct = new TrafficContactState("tactical:user", null, 60.1, 24, 5000, 90, 250, timestamp, Source: TrackSource.TacticalLink);
+        var simulator = new TrafficContactState("sim:1", null, 60.1, 24, 5000, 90, 250, timestamp);
+        var snapshot = new TrafficSnapshot(new OwnshipState("OWN", 60, 24, 5000, 0, 0, timestamp), [direct, simulator], timestamp);
+        var pilots = new[] { new VatsimPilotCandidate("FIN123", 60.1, 24, 5000, 250, 90) };
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, [], pilots);
+
+        Assert.Null(enriched.Contacts.Single(contact => contact.Id == direct.Id).Callsign);
+        Assert.Equal("FIN123", enriched.Contacts.Single(contact => contact.Id == simulator.Id).Callsign);
+        Assert.Equal(TrackSource.TacticalLink, enriched.Contacts.Single(contact => contact.Id == direct.Id).Source);
+    }
+
+    [Fact]
     public void AssignmentSearch_LargeSymmetricFormationStaysAmbiguousWithinWorkAndTimeLimits()
     {
         var report = new StringBuilder("| Contacts | Pilots | Candidate edges | Largest component | Relaxed columns | Search ms | Stable pairs |\n|---:|---:|---:|---:|---:|---:|---:|\n");

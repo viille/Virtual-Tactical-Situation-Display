@@ -12,6 +12,11 @@ public sealed class TacticalDisplaySettings
     public string VatsimDataFeedUrl { get; set; } = "https://data.vatsim.net/v3/vatsim-data.json";
     public double VatsimCallsignRefreshSeconds { get; set; } = 15;
     public string OwnCallsign { get; set; } = string.Empty;
+    public string OwnAircraftType { get; set; } = string.Empty;
+    public bool TacticalLinkAutoReconnect { get; set; } = true;
+    public int TacticalLinkTelemetryRateHz { get; set; } = 10;
+    public double TacticalLinkInterestRadiusNm { get; set; } = 200;
+    public bool TacticalLinkDebugDiagnostics { get; set; }
     public bool EnableDiagnosticTelemetry { get; set; }
     public bool DiagnosticTelemetryConsentAsked { get; set; }
     public bool EnableDataSourceDebugLogging { get; set; }
@@ -55,7 +60,7 @@ public sealed class TacticalDisplaySettings
     public LabelMode LabelMode { get; set; } = LabelMode.Minimal;
     public CategoryFilterMode CategoryFilter { get; set; } = CategoryFilterMode.All;
     public int TrailLengthSamples { get; set; } = 90;
-    public double PollRateHz { get; set; } = 8;
+    public double PollRateHz { get; set; } = 10;
     public double RenderRateFps { get; set; } = 24;
     public double StaleSeconds { get; set; } = 4;
     public double RemoveAfterSeconds { get; set; } = 12;

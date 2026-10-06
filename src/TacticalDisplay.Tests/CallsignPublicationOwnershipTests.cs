@@ -53,6 +53,43 @@ public sealed class CallsignPublicationOwnershipTests
         Assert.True(published.Contacts.Single().CallsignRevoked);
     }
 
+    [Fact]
+    public void Reconcile_TacticalLinkImmediatelyTakesVatsimOwnerAndKeepsOwnershipUntilDeparture()
+    {
+        var ownership = new CallsignPublicationOwnership();
+        var now = DateTimeOffset.UtcNow;
+        var sim = Contact("sim:183", "VIPER11") with { Source = TrackSource.SimConnectVatsim };
+        _ = ownership.Reconcile(Snapshot(now, sim), null, TimeSpan.FromSeconds(15));
+
+        var direct = Contact("tl:abc", "VIPER11") with { Source = TrackSource.TacticalLink };
+        var handoff = ownership.Reconcile(Snapshot(now.AddSeconds(1), sim, direct), null, TimeSpan.FromSeconds(15));
+        Assert.Equal("VIPER11", handoff.Contacts.Single(contact => contact.Id == "tl:abc").Callsign);
+        Assert.Null(handoff.Contacts.Single(contact => contact.Id == "sim:183").Callsign);
+        Assert.True(handoff.Contacts.Single(contact => contact.Id == "sim:183").CallsignRevoked);
+
+        var next = ownership.Reconcile(Snapshot(now.AddSeconds(2), sim, direct with { Timestamp = now.AddSeconds(2) }), null, TimeSpan.FromSeconds(15));
+        Assert.Equal("VIPER11", next.Contacts.Single(contact => contact.Id == "tl:abc").Callsign);
+        Assert.Null(next.Contacts.Single(contact => contact.Id == "sim:183").Callsign);
+
+        var departure = ownership.Reconcile(Snapshot(now.AddSeconds(3), sim with { Timestamp = now.AddSeconds(3) }), null, TimeSpan.FromSeconds(15));
+        Assert.Equal("VIPER11", departure.Contacts.Single().Callsign);
+    }
+
+    [Fact]
+    public void Reconcile_MultipleTacticalLinkClaimsSuppressEveryDuplicate()
+    {
+        var ownership = new CallsignPublicationOwnership();
+        var now = DateTimeOffset.UtcNow;
+        var first = Contact("tl:first", "VIPER11") with { Source = TrackSource.TacticalLink };
+        var second = Contact("tl:second", "VIPER11") with { Source = TrackSource.TacticalLink };
+        var published = ownership.Reconcile(Snapshot(now, first, second), null, TimeSpan.FromSeconds(15));
+        Assert.All(published.Contacts, contact =>
+        {
+            Assert.Null(contact.Callsign);
+            Assert.True(contact.CallsignRevoked);
+        });
+    }
+
     private static TrafficContactState Contact(string id, string? callsign, bool revoked = false, long generation = 0) =>
         new(id, callsign, 60, 24, 5000, 90, 250, DateTimeOffset.UtcNow, revoked, generation);
 

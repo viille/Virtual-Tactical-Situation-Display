@@ -232,7 +232,7 @@ public partial class MainWindow : Window
         {
             Topmost = _viewModel.IsAlwaysOnTop;
         }
-        else if (e.PropertyName == nameof(MainViewModel.ShowSettings))
+        else if (e.PropertyName is nameof(MainViewModel.ShowSettings) or nameof(MainViewModel.ShowTacticalLinkMenu) or nameof(MainViewModel.ShowUtilityPanel))
         {
             ApplyLayoutState();
         }
@@ -774,12 +774,12 @@ public partial class MainWindow : Window
 
     private void ApplyLayoutState()
     {
-        var showSettings = _viewModel.ShowSettings;
-        MinWidth = showSettings ? MinWidthWithSettings : MinWidthWithoutSettings;
+        var showPanel = _viewModel.ShowUtilityPanel;
+        MinWidth = showPanel ? MinWidthWithSettings : MinWidthWithoutSettings;
 
-        SettingsColumn.Width = showSettings ? new GridLength(1.2, GridUnitType.Star) : new GridLength(0);
-        ScopeColumn.Width = showSettings ? new GridLength(3, GridUnitType.Star) : new GridLength(1, GridUnitType.Star);
-        ScopeBorder.Margin = showSettings ? new Thickness(0, 0, ScopeSettingsGapWidth, 0) : new Thickness(0);
+        SettingsColumn.Width = showPanel ? new GridLength(1.2, GridUnitType.Star) : new GridLength(0);
+        ScopeColumn.Width = showPanel ? new GridLength(3, GridUnitType.Star) : new GridLength(1, GridUnitType.Star);
+        ScopeBorder.Margin = showPanel ? new Thickness(0, 0, ScopeSettingsGapWidth, 0) : new Thickness(0);
     }
 
     private void RestoreWindowSize()

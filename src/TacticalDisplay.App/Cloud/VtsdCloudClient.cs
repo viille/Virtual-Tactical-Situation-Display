@@ -33,6 +33,9 @@ public sealed class VtsdCloudClient
     public Task SendTelemetryEventAsync(TelemetryEventRequest request, CancellationToken ct) =>
         SendAsync(HttpMethod.Post, "api/v1/telemetry", request, false, ct, true);
 
+    public Task<TacticalLinkTokenResponse> CreateTacticalLinkTokenAsync(CancellationToken ct) =>
+        SendAsync<TacticalLinkTokenResponse>(HttpMethod.Post, "api/v1/tactical-link/token", new { }, true, ct);
+
     private async Task SendAsync(HttpMethod method, string path, object? body, bool requiresToken, CancellationToken ct, bool addTokenWhenAvailable = false)
     {
         using var response = await SendCoreAsync(method, path, body, requiresToken, addTokenWhenAvailable, ct).ConfigureAwait(false);
