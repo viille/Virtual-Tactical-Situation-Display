@@ -193,8 +193,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
         hub.ExpirePresence(userId, oldId, 1);
         Assert.Equal((1, 1, 1, 1), hub.GetLifecycleCounts());
         await replacement.StopAbruptlyAsync();
-        await Task.Delay(180);
-        Assert.Equal((0, 0, 0, 0), hub.GetLifecycleCounts());
+        await WaitForLifecycleCountsAsync(hub, (0, 0, 0, 0));
 
         using var fresh = new TestPeer(hub, 60, 25, userId);
         await fresh.StartAsync();
@@ -213,8 +212,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
         using var connected = await first.ReadTypeAsync("CONNECTED");
         var oldId = connected.RootElement.GetProperty("participantId").GetString();
         await first.SendAsync(new { type = "DISCONNECT" });
-        await Task.Delay(100);
-        Assert.Equal((0, 0, 0, 0), hub.GetLifecycleCounts());
+        await WaitForLifecycleCountsAsync(hub, (0, 0, 0, 0));
         using var fresh = new TestPeer(hub, 60, 25, userId);
         await fresh.StartAsync();
         using var freshConnected = await fresh.ReadTypeAsync("CONNECTED");
@@ -345,6 +343,14 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
         var elapsed = Stopwatch.GetElapsedTime(startTimestamp);
         if (elapsed < targetElapsed)
             await Task.Delay(targetElapsed - elapsed);
+    }
+
+    private static async Task WaitForLifecycleCountsAsync(TacticalLinkHub hub,
+        (int PresenceCount, int PeerCount, int TelemetryLimiterCount, int ControlLimiterCount) expected)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        while (hub.GetLifecycleCounts() != expected)
+            await Task.Delay(10, timeout.Token);
     }
 
     private sealed class TestPeer : IDisposable
