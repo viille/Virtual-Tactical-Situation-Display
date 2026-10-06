@@ -185,6 +185,7 @@
                     <Grid.RowDefinitions>
                         <RowDefinition Height="54" />
                         <RowDefinition Height="*" />
+                        <RowDefinition Height="78" />
                     </Grid.RowDefinitions>
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="68" />
@@ -238,7 +239,7 @@
                                 WindowChrome.IsHitTestVisibleInChrome="True"
                                 Style="{StaticResource MfdWindowButtonStyle}" />
                     </StackPanel>
-                    <StackPanel Grid.Row="0"
+                    <StackPanel Grid.Row="2"
                                 Grid.Column="1"
                                 Orientation="Horizontal"
                                 HorizontalAlignment="Center"
