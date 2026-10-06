@@ -46,6 +46,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
     }
 
     public TacticalLinkConnectionState ConnectionState { get; private set; } = TacticalLinkConnectionState.Disconnected;
+    internal bool ProtocolRejected => _explicitDisconnectRequested && ConnectionState == TacticalLinkConnectionState.Disconnected;
     public IReadOnlyList<TacticalPeer> NearbyPeers { get { lock (_peerLock) return _peers.Values.ToArray(); } }
     public string? LocalParticipantId => _participantId;
     public string? LocalCallsign => _callsign;
@@ -350,7 +351,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
     }
 
-    private void HandleMessage(string json)
+    internal void HandleMessage(string json)
     {
         using var document = JsonDocument.Parse(json);
         var root = document.RootElement;
@@ -413,7 +414,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         finally { _sendLock.Release(); }
     }
 
-    private static byte[] SerializeVersioned(object message)
+    internal static byte[] SerializeVersioned(object message)
     {
         var payload = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(JsonSerializer.Serialize(message, Json), Json)!;
         payload["protocolVersion"] = JsonSerializer.SerializeToElement(TacticalLinkProtocol.Version);

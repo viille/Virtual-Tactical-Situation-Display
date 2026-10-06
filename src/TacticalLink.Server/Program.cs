@@ -100,10 +100,10 @@ public sealed class TacticalLinkHub
     private static readonly HashSet<string> AllowedCapabilities = ["identity", "telemetry", "aar.receiver", "aar.tanker", "aar.boom_operator", "vtsc", "formation"];
     private static readonly HashSet<string> AllowedTankerStates = ["Off", "Available", "Busy", "Unavailable"];
     private readonly ConcurrentDictionary<string, PeerConnection> _peers = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, long> _generations = new(StringComparer.Ordinal);
-    private readonly ConcurrentDictionary<string, (string ParticipantId, DateTimeOffset ExpiresAt)> _publicIdentities = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, PresenceIdentity> _presences = new(StringComparer.Ordinal);
+    private readonly object _presenceLock = new();
     private readonly IPeerInterestResolver _interestResolver;
-    private readonly TimeSpan _reconnectGrace = TimeSpan.FromSeconds(12);
+    private readonly TimeSpan _reconnectGrace;
     private readonly double _defaultRadiusNm = ReadRadius();
     private readonly double _maxRadiusNm = ReadMaxRadius();
     private readonly TimeSpan _telemetryStaleAfter = TimeSpan.FromSeconds(8);
@@ -111,21 +111,24 @@ public sealed class TacticalLinkHub
     private int _interestDirty;
     private long _telemetryFramesIn, _telemetryFramesOut, _droppedTelemetryFrames, _rateLimitEvents, _reconnects, _authRefreshFailures;
     private int _nearbyPeerRelations;
+    private readonly TimeProvider _timeProvider;
+    private readonly int _telemetryTokenLimit;
+    private readonly int _telemetryTokensPerSecond;
+    private readonly int _controlTokenLimit;
+    private readonly int _controlTokensPerSecond;
     private readonly ConcurrentDictionary<string, System.Threading.RateLimiting.TokenBucketRateLimiter> _telemetryLimiters = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, System.Threading.RateLimiting.TokenBucketRateLimiter> _controlLimiters = new(StringComparer.Ordinal);
-    private string GetPublicId(string userId)
-    {
-        var now = DateTimeOffset.UtcNow;
-        if (_publicIdentities.TryGetValue(userId, out var existing) && existing.ExpiresAt > now)
-            return existing.ParticipantId;
-        var id = "tl_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
-        _publicIdentities[userId] = (id, now + _reconnectGrace);
-        return id;
-    }
-
-    public TacticalLinkHub(IPeerInterestResolver interestResolver)
+    private readonly ConcurrentDictionary<string, long> _rateLimitEventsByParticipant = new(StringComparer.Ordinal);
+    public TacticalLinkHub(IPeerInterestResolver interestResolver, TimeSpan? reconnectGrace = null, TimeProvider? timeProvider = null,
+        int telemetryTokenLimit = 50, int telemetryTokensPerSecond = 45, int controlTokenLimit = 20, int controlTokensPerSecond = 15)
     {
         _interestResolver = interestResolver;
+        _reconnectGrace = reconnectGrace ?? TimeSpan.FromSeconds(12);
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _telemetryTokenLimit = telemetryTokenLimit;
+        _telemetryTokensPerSecond = telemetryTokensPerSecond;
+        _controlTokenLimit = controlTokenLimit;
+        _controlTokensPerSecond = controlTokensPerSecond;
         _ = Task.Run(InterestRefreshLoopAsync);
         _ = Task.Run(TelemetryExpiryLoopAsync);
         _ = Task.Run(MetricsLogLoopAsync);
@@ -133,20 +136,11 @@ public sealed class TacticalLinkHub
 
     public async Task RunPeerAsync(WebSocket socket, AuthenticatedParticipant identity, CancellationToken cancellationToken)
     {
-        var publicId = GetPublicId(identity.UserId);
-        var authenticatedIdentity = new ParticipantIdentity(publicId, identity.UserId, identity.VatsimCid, identity.Callsign, identity.ExpiresAt);
-        var generation = _generations.AddOrUpdate(publicId, 1, static (_, current) => current + 1);
+        var (publicId, generation, peer, replaced) = Activate(identity, socket);
+        replaced?.CancelGrace();
+        replaced?.TryClose(WebSocketCloseStatus.EndpointUnavailable, "reconnected");
         if (generation > 1) Interlocked.Increment(ref _reconnects);
-        var peer = _peers.AddOrUpdate(publicId,
-            _ => new PeerConnection(authenticatedIdentity, generation, socket),
-            (_, old) =>
-            {
-                old.CancelGrace();
-                old.TryClose(WebSocketCloseStatus.EndpointUnavailable, "reconnected");
-                var resumed = old.Resume(authenticatedIdentity, generation, socket);
-                old.Dispose();
-                return resumed;
-            });
+        if (replaced is not null) replaced.Dispose();
         peer.InterestRadiusNm = _defaultRadiusNm;
         peer.StartWriter(cancellationToken);
         peer.TrySend(new { type = "CONNECTED", participantId = peer.Identity.ParticipantId, callsign = peer.Identity.Callsign, connectionGeneration = generation });
@@ -209,9 +203,13 @@ public sealed class TacticalLinkHub
             if (_peers.TryGetValue(publicId, out var current) && current.Generation == generation)
             {
                 current.MarkDisconnected();
-                if (current.ExplicitlyDisconnected) RemoveIfGeneration(publicId, generation);
-                else current.StartGrace(_reconnectGrace, () => RemoveIfGeneration(publicId, generation));
-                _publicIdentities[identity.UserId] = (publicId, DateTimeOffset.UtcNow + _reconnectGrace);
+                lock (_presenceLock)
+                {
+                    if (_presences.TryGetValue(identity.UserId, out var presence) && presence.ParticipantId == publicId && presence.Generation == generation)
+                        _presences[identity.UserId] = presence with { Connected = false, GraceExpiresAt = current.ExplicitlyDisconnected ? null : _timeProvider.GetUtcNow() + _reconnectGrace };
+                }
+                if (current.ExplicitlyDisconnected) ExpirePresence(identity.UserId, publicId, generation);
+                else current.StartGrace(_reconnectGrace, _timeProvider, () => ExpirePresence(identity.UserId, publicId, generation));
             }
         }
     }
@@ -237,8 +235,8 @@ public sealed class TacticalLinkHub
         var limiters = isTelemetryMessage ? _telemetryLimiters : _controlLimiters;
         var limiter = limiters.GetOrAdd(peer.Identity.ParticipantId, _ => new System.Threading.RateLimiting.TokenBucketRateLimiter(new System.Threading.RateLimiting.TokenBucketRateLimiterOptions
         {
-            TokenLimit = isTelemetryMessage ? 50 : 20,
-            TokensPerPeriod = isTelemetryMessage ? 45 : 15,
+            TokenLimit = isTelemetryMessage ? _telemetryTokenLimit : _controlTokenLimit,
+            TokensPerPeriod = isTelemetryMessage ? _telemetryTokensPerSecond : _controlTokensPerSecond,
             ReplenishmentPeriod = TimeSpan.FromSeconds(1),
             AutoReplenishment = true,
             QueueLimit = 0,
@@ -248,6 +246,7 @@ public sealed class TacticalLinkHub
         if (!permit.IsAcquired)
         {
             Interlocked.Increment(ref _rateLimitEvents);
+            _rateLimitEventsByParticipant.AddOrUpdate(peer.Identity.ParticipantId, 1, static (_, count) => count + 1);
             if (isTelemetryMessage) Interlocked.Increment(ref _droppedTelemetryFrames);
             peer.RateLimitViolations++;
             if (peer.RateLimitViolations >= 5) peer.TryClose(WebSocketCloseStatus.PolicyViolation, "rate limit exceeded");
@@ -321,6 +320,68 @@ public sealed class TacticalLinkHub
 
     private bool IsCurrentGeneration(PeerConnection peer, long generation) =>
         peer.Generation == generation && _peers.TryGetValue(peer.Identity.ParticipantId, out var current) && ReferenceEquals(current, peer);
+
+    private (string ParticipantId, long Generation, PeerConnection Peer, PeerConnection? Replaced) Activate(AuthenticatedParticipant identity, WebSocket socket)
+    {
+        lock (_presenceLock)
+        {
+            var now = _timeProvider.GetUtcNow();
+            if (_presences.TryGetValue(identity.UserId, out var existing))
+            {
+                if (existing.Connected || existing.GraceExpiresAt > now)
+                {
+                    var generation = existing.Generation + 1;
+                    var replaced = _peers.TryGetValue(existing.ParticipantId, out var peer) ? peer : null;
+                    _presences[identity.UserId] = existing with { Generation = generation, Connected = true, GraceExpiresAt = null };
+                    var authenticatedIdentity = ToParticipantIdentity(existing.ParticipantId, identity);
+                    var current = replaced?.Resume(authenticatedIdentity, generation, socket) ?? new PeerConnection(authenticatedIdentity, generation, socket);
+                    _peers[existing.ParticipantId] = current;
+                    return (existing.ParticipantId, generation, current, replaced);
+                }
+                ExpirePresenceUnderLock(identity.UserId, existing.ParticipantId, existing.Generation);
+            }
+
+            var participantId = "tl_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
+            _presences[identity.UserId] = new PresenceIdentity(participantId, 1, true, null);
+            var newPeer = new PeerConnection(ToParticipantIdentity(participantId, identity), 1, socket);
+            _peers[participantId] = newPeer;
+            return (participantId, 1, newPeer, null);
+        }
+    }
+
+    private static ParticipantIdentity ToParticipantIdentity(string participantId, AuthenticatedParticipant identity) =>
+        new(participantId, identity.UserId, identity.VatsimCid, identity.Callsign, identity.ExpiresAt);
+
+    internal void ExpirePresence(string userId, string participantId, long generation)
+    {
+        lock (_presenceLock) ExpirePresenceUnderLock(userId, participantId, generation);
+        _ = RefreshInterestAsync(CancellationToken.None);
+    }
+
+    private void ExpirePresenceUnderLock(string userId, string participantId, long generation)
+    {
+        if (!_presences.TryGetValue(userId, out var presence) || presence.ParticipantId != participantId || presence.Generation != generation || presence.Connected)
+            return;
+        if (presence.GraceExpiresAt is { } expiry && expiry > _timeProvider.GetUtcNow()) return;
+        _presences.TryRemove(userId, out _);
+        if (_peers.TryGetValue(participantId, out var peer) && peer.Generation == generation && _peers.TryRemove(participantId, out var removed))
+            removed.Dispose();
+        _telemetryLimiters.TryRemove(participantId, out var telemetryLimiter);
+        _controlLimiters.TryRemove(participantId, out var controlLimiter);
+        telemetryLimiter?.Dispose();
+        controlLimiter?.Dispose();
+        _rateLimitEventsByParticipant.TryRemove(participantId, out _);
+    }
+
+    public (int PresenceCount, int PeerCount, int TelemetryLimiterCount, int ControlLimiterCount) GetLifecycleCounts() =>
+        (_presences.Count, _peers.Count, _telemetryLimiters.Count, _controlLimiters.Count);
+
+    public IReadOnlySet<string> GetConnectedParticipantIds() => _peers.Values.Where(peer => peer.IsConnected)
+        .Select(peer => peer.Identity.ParticipantId).ToHashSet(StringComparer.Ordinal);
+
+    public long GetParticipantRateLimitEvents(string participantId) => _rateLimitEventsByParticipant.GetValueOrDefault(participantId);
+
+    private sealed record PresenceIdentity(string ParticipantId, long Generation, bool Connected, DateTimeOffset? GraceExpiresAt);
 
     private async Task RefreshInterestAsync(CancellationToken cancellationToken)
     {
@@ -442,16 +503,6 @@ public sealed class TacticalLinkHub
         (!telemetry.VelocityDownMps.HasValue || double.IsFinite(telemetry.VelocityDownMps.Value)) &&
         (telemetry.AircraftType is null || telemetry.AircraftType.Length <= 32 && telemetry.AircraftType.All(character => char.IsLetterOrDigit(character) || character is '-' or ' '));
 
-    private void RemoveIfGeneration(string participantId, long generation)
-    {
-        if (_peers.TryGetValue(participantId, out var peer) && peer.Generation == generation)
-        {
-            _peers.TryRemove(participantId, out _);
-            peer.Dispose();
-            _ = RefreshInterestAsync(CancellationToken.None);
-        }
-    }
-
     private static double ReadRadius() => double.TryParse(Environment.GetEnvironmentVariable("TACTICAL_LINK_INTEREST_RADIUS_NM"), out var radius) ? System.Math.Clamp(radius, 1, ReadMaxRadius()) : 200;
     private static double ReadMaxRadius() => double.TryParse(Environment.GetEnvironmentVariable("TACTICAL_LINK_MAX_INTEREST_RADIUS_NM"), out var radius) ? System.Math.Clamp(radius, 1, 1000) : 500;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -512,9 +563,21 @@ public sealed class TacticalLinkHub
                         lock (_telemetryGate)
                         {
                             var item = _latestTelemetry.FirstOrDefault();
-                            if (item.Key is null) continue;
-                            json = item.Value;
-                            _latestTelemetry.Remove(item.Key);
+                            if (item.Key is not null)
+                            {
+                                json = item.Value;
+                                _latestTelemetry.Remove(item.Key);
+                            }
+                            else json = string.Empty;
+                        }
+                        if (json.Length == 0)
+                        {
+                            if (_closeAfterDrain)
+                            {
+                                await _socket.CloseOutputAsync(_closeStatus, _closeReason, CancellationToken.None);
+                                return;
+                            }
+                            continue;
                         }
                     }
                     var bytes = Encoding.UTF8.GetBytes(json);
@@ -583,11 +646,11 @@ public sealed class TacticalLinkHub
 
         public void MarkDisconnected() { IsConnected = false; InReconnectGrace = true; }
         public void UpdateIdentity(ParticipantIdentity identity) => Identity = identity;
-        public void StartGrace(TimeSpan gracePeriod, Action expire)
+        public void StartGrace(TimeSpan gracePeriod, TimeProvider timeProvider, Action expire)
         {
             _graceCts?.Cancel(); _graceCts?.Dispose(); _graceCts = new CancellationTokenSource();
             var token = _graceCts.Token;
-            _ = Task.Run(async () => { try { await Task.Delay(gracePeriod, token); expire(); } catch (OperationCanceledException) { } });
+            _ = Task.Run(async () => { try { await Task.Delay(gracePeriod, timeProvider, token); expire(); } catch (OperationCanceledException) { } });
         }
         public void CancelGrace() { _graceCts?.Cancel(); _graceCts?.Dispose(); _graceCts = null; }
         public void TryClose(WebSocketCloseStatus status, string reason)
@@ -603,6 +666,10 @@ public sealed class TacticalLinkHub
             _disposed = true;
             CancelGrace();
             _outbound.Writer.TryComplete();
+            while (_outbound.Reader.TryRead(out _)) { }
+            lock (_telemetryGate) _latestTelemetry.Clear();
+            NearbyParticipantIds.Clear();
+            PeerIdentityVersions.Clear();
             try { _wakeWriter.Release(); } catch (SemaphoreFullException) { }
         }
     }

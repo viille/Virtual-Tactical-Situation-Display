@@ -21,7 +21,9 @@ public sealed class CallsignPublicationOwnership
         {
             var generationChanged = activeGenerationsById.TryGetValue(pair.Value.ContactId, out var activeGenerations) &&
                 !activeGenerations.Contains(pair.Value.Generation);
+            var directTrackDeparted = pair.Value.Source == TrackSource.TacticalLink && !activeGenerationsById.ContainsKey(pair.Value.ContactId);
             if (generationChanged || snapshot.Timestamp - pair.Value.LastSupportedAt > evidenceRetention ||
+                directTrackDeparted ||
                 (active.TryGetValue(pair.Value.ContactKey, out var owningContact) && owningContact.CallsignRevoked))
             {
                 _owners.Remove(pair.Key);
@@ -56,6 +58,26 @@ public sealed class CallsignPublicationOwnership
                 continue;
             }
 
+            var directCandidates = candidates.Where(candidate => candidate.contact.Source == TrackSource.TacticalLink).ToArray();
+            if (directCandidates.Length > 1)
+            {
+                foreach (var candidate in candidates)
+                    contacts[candidate.index] = candidate.contact with { Callsign = null, CallsignRevoked = true };
+                _owners.Remove(ownerKey);
+                System.Diagnostics.Trace.TraceWarning("Multiple TacticalLink tracks claimed callsign {0}; publication suppressed.", ownerKey);
+                continue;
+            }
+
+            if (directCandidates.Length == 1)
+            {
+                var direct = directCandidates[0];
+                _owners[ownerKey] = new Owner(ContactKey(direct.contact), direct.contact.Id, direct.contact.Generation, snapshot.Timestamp, direct.contact.Source);
+                foreach (var candidate in candidates)
+                    if (candidate.index != direct.index)
+                        contacts[candidate.index] = candidate.contact with { Callsign = null, CallsignRevoked = true };
+                continue;
+            }
+
             var selected = candidates.FirstOrDefault(candidate =>
                 _owners.TryGetValue(ownerKey, out var owner) &&
                 string.Equals(owner.ContactKey, ContactKey(candidate.contact), StringComparison.OrdinalIgnoreCase));
@@ -84,7 +106,7 @@ public sealed class CallsignPublicationOwnership
                 selected = candidates[0];
             }
 
-            _owners[ownerKey] = new Owner(ContactKey(selected.contact), selected.contact.Id, selected.contact.Generation, snapshot.Timestamp);
+            _owners[ownerKey] = new Owner(ContactKey(selected.contact), selected.contact.Id, selected.contact.Generation, snapshot.Timestamp, selected.contact.Source);
             foreach (var candidate in candidates)
             {
                 if (candidate.index != selected.index)
@@ -101,5 +123,5 @@ public sealed class CallsignPublicationOwnership
 
     private static string ContactKey(TrafficContactState contact) => $"{contact.Id}@{contact.Generation}";
     private static string Normalize(string callsign) => callsign.Trim().ToUpperInvariant();
-    private sealed record Owner(string ContactKey, string ContactId, long Generation, DateTimeOffset LastSupportedAt);
+    private sealed record Owner(string ContactKey, string ContactId, long Generation, DateTimeOffset LastSupportedAt, TrackSource Source);
 }

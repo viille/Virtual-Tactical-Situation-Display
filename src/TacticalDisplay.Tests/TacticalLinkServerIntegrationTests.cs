@@ -117,6 +117,154 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task ActivePresenceRetainsIdPastGraceAndAdvancesGeneration()
+    {
+        var hub = new TacticalLinkHub(new PeerInterestResolver(), reconnectGrace: TimeSpan.FromMilliseconds(50));
+        var userId = Guid.NewGuid().ToString();
+        using var first = new TestPeer(hub, 60, 25, userId);
+        await first.StartAsync();
+        using var firstConnected = await first.ReadTypeAsync("CONNECTED");
+        var id = firstConnected.RootElement.GetProperty("participantId").GetString();
+        await Task.Delay(100);
+        using var replacement = new TestPeer(hub, 60, 25, userId);
+        await replacement.StartAsync();
+        using var secondConnected = await replacement.ReadTypeAsync("CONNECTED");
+        Assert.Equal(id, secondConnected.RootElement.GetProperty("participantId").GetString());
+        Assert.Equal(2, secondConnected.RootElement.GetProperty("connectionGeneration").GetInt64());
+        await first.StopAbruptlyAsync();
+        await replacement.StopAsync();
+    }
+
+    [Fact]
+    public async Task ConcurrentConnectionsForOneUserResolveToOnePublicPresence()
+    {
+        var hub = new TacticalLinkHub(new PeerInterestResolver());
+        var userId = Guid.NewGuid().ToString();
+        using var first = new TestPeer(hub, 60, 25, userId);
+        using var second = new TestPeer(hub, 60.1, 25, userId);
+        await Task.WhenAll(first.StartAsync(), second.StartAsync());
+        using var firstConnected = await first.ReadTypeAsync("CONNECTED");
+        using var secondConnected = await second.ReadTypeAsync("CONNECTED");
+        Assert.Equal(firstConnected.RootElement.GetProperty("participantId").GetString(), secondConnected.RootElement.GetProperty("participantId").GetString());
+        Assert.Equal(new long[] { 1, 2 }, new[]
+        {
+            firstConnected.RootElement.GetProperty("connectionGeneration").GetInt64(),
+            secondConnected.RootElement.GetProperty("connectionGeneration").GetInt64()
+        }.Order());
+        Assert.Single(hub.GetConnectedParticipantIds());
+        await Task.WhenAll(first.StopAbruptlyAsync(), second.StopAbruptlyAsync());
+    }
+
+    [Fact]
+    public async Task GraceExpiryCleansAllParticipantStateAndOldGenerationCannotRemoveReplacement()
+    {
+        var hub = new TacticalLinkHub(new PeerInterestResolver(), reconnectGrace: TimeSpan.FromMilliseconds(120));
+        var userId = Guid.NewGuid().ToString();
+        using var first = new TestPeer(hub, 60, 25, userId);
+        await first.StartAsync();
+        using var connected = await first.ReadTypeAsync("CONNECTED");
+        var oldId = connected.RootElement.GetProperty("participantId").GetString()!;
+        await first.PublishFrameAsync(2);
+        await first.StopAbruptlyAsync();
+        await Task.Delay(35);
+
+        using var replacement = new TestPeer(hub, 60, 25, userId);
+        await replacement.StartAsync();
+        using var replacementConnected = await replacement.ReadTypeAsync("CONNECTED");
+        var currentId = replacementConnected.RootElement.GetProperty("participantId").GetString()!;
+        Assert.Equal(oldId, currentId);
+        hub.ExpirePresence(userId, oldId, 1);
+        Assert.Equal((1, 1, 1, 1), hub.GetLifecycleCounts());
+        await replacement.StopAbruptlyAsync();
+        await Task.Delay(180);
+        Assert.Equal((0, 0, 0, 0), hub.GetLifecycleCounts());
+
+        using var fresh = new TestPeer(hub, 60, 25, userId);
+        await fresh.StartAsync();
+        using var freshConnected = await fresh.ReadTypeAsync("CONNECTED");
+        Assert.NotEqual(oldId, freshConnected.RootElement.GetProperty("participantId").GetString());
+        await fresh.StopAbruptlyAsync();
+    }
+
+    [Fact]
+    public async Task ExplicitDisconnectImmediatelyReleasesPublicIdentityAndLimiters()
+    {
+        var hub = new TacticalLinkHub(new PeerInterestResolver());
+        var userId = Guid.NewGuid().ToString();
+        using var first = new TestPeer(hub, 60, 25, userId);
+        await first.StartAsync();
+        using var connected = await first.ReadTypeAsync("CONNECTED");
+        var oldId = connected.RootElement.GetProperty("participantId").GetString();
+        await first.SendAsync(new { type = "DISCONNECT" });
+        await Task.Delay(100);
+        Assert.Equal((0, 0, 0, 0), hub.GetLifecycleCounts());
+        using var fresh = new TestPeer(hub, 60, 25, userId);
+        await fresh.StartAsync();
+        using var freshConnected = await fresh.ReadTypeAsync("CONNECTED");
+        Assert.NotEqual(oldId, freshConnected.RootElement.GetProperty("participantId").GetString());
+        await fresh.StopAbruptlyAsync();
+    }
+
+    [Fact]
+    public async Task PerPeerTelemetryAndControlRateLimitsAllowNormalRateAndClosePersistentAbuse()
+    {
+        var normalHub = new TacticalLinkHub(new PeerInterestResolver());
+        using (var normal = new TestPeer(normalHub, 60, 25))
+        {
+            await normal.StartAsync();
+            var connected = await normal.ReadTypeAsync("CONNECTED");
+            var normalId = connected.RootElement.GetProperty("participantId").GetString()!;
+            for (var index = 2; index <= 65; index++)
+            {
+                await normal.PublishFrameAsync(index);
+                await Task.Delay(50);
+            }
+            Assert.Equal(0, normalHub.GetParticipantRateLimitEvents(normalId));
+            await normal.StopAsync();
+        }
+
+        var abuseHub = new TacticalLinkHub(new PeerInterestResolver(), telemetryTokenLimit: 8, telemetryTokensPerSecond: 4, controlTokenLimit: 6, controlTokensPerSecond: 3);
+        using var abusive = new TestPeer(abuseHub, 60, 25);
+        using var observer = new TestPeer(abuseHub, 60.1, 25);
+        await Task.WhenAll(abusive.StartAsync(), observer.StartAsync());
+        var abusiveConnected = await abusive.ReadTypeAsync("CONNECTED");
+        var observerConnected = await observer.ReadTypeAsync("CONNECTED");
+        var abuseId = abusiveConnected.RootElement.GetProperty("participantId").GetString()!;
+        var observerId = observerConnected.RootElement.GetProperty("participantId").GetString()!;
+        for (var index = 2; index < 18; index++) await abusive.PublishFrameAsync(index);
+        await Task.Delay(100);
+        Assert.True(abuseHub.GetParticipantRateLimitEvents(abuseId) > 0);
+        Assert.Equal(0, abuseHub.GetParticipantRateLimitEvents(observerId));
+
+        for (var index = 0; index < 15; index++) await abusive.SendAsync(new { type = "PING" });
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+            while (abuseHub.GetParticipantRateLimitEvents(abuseId) < 5)
+                await Task.Delay(10, timeout.Token);
+        Assert.True(abuseHub.GetParticipantRateLimitEvents(abuseId) >= 5);
+        await Task.Delay(100);
+        Assert.DoesNotContain(abuseId, abuseHub.GetConnectedParticipantIds());
+        Assert.Contains(observerId, abuseHub.GetConnectedParticipantIds());
+        await observer.StopAsync();
+        await abusive.StopAbruptlyAsync();
+
+        var controlHub = new TacticalLinkHub(new PeerInterestResolver(), controlTokenLimit: 5, controlTokensPerSecond: 1);
+        using var controlAttacker = new TestPeer(controlHub, 60, 25);
+        using var controlObserver = new TestPeer(controlHub, 60.1, 25);
+        await Task.WhenAll(controlAttacker.StartAsync(), controlObserver.StartAsync());
+        var attackerConnected = await controlAttacker.ReadTypeAsync("CONNECTED");
+        var controlId = attackerConnected.RootElement.GetProperty("participantId").GetString()!;
+        for (var index = 0; index < 12; index++) await controlAttacker.SendAsync(new { type = "PING" });
+        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2)))
+            while (controlHub.GetParticipantRateLimitEvents(controlId) == 0)
+                await Task.Delay(10, timeout.Token);
+        Assert.True(controlHub.GetParticipantRateLimitEvents(controlId) > 0);
+        await Task.Delay(100);
+        Assert.DoesNotContain(controlId, controlHub.GetConnectedParticipantIds());
+        await controlObserver.StopAsync();
+        await controlAttacker.StopAbruptlyAsync();
+    }
+
+    [Fact]
     public async Task FiftyConcurrentPeersCanPublishTwentyFramesPerSecond()
     {
         var hub = new TacticalLinkHub(new PeerInterestResolver());
@@ -317,11 +465,17 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
             await _outgoing.Writer.WriteAsync("{\"type\":\"CLOSE\"}", cancellationToken);
             _state = WebSocketState.Closed;
         }
-        public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken) => Task.CompletedTask;
+        public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+        {
+            _state = WebSocketState.Closed;
+            _incoming.Writer.TryWrite([]);
+            return Task.CompletedTask;
+        }
         public override void Dispose() { _state = WebSocketState.Closed; _incoming.Writer.TryComplete(); }
         public override async Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
         {
             var bytes = await _incoming.Reader.ReadAsync(cancellationToken);
+            if (bytes.Length == 0) return new WebSocketReceiveResult(0, WebSocketMessageType.Close, true);
             Array.Copy(bytes, 0, buffer.Array!, buffer.Offset, bytes.Length);
             return new WebSocketReceiveResult(bytes.Length, WebSocketMessageType.Text, true);
         }
