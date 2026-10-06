@@ -73,9 +73,9 @@ public sealed class TacticalLinkTests
             var directPosition = TacticalDisplay.Core.Math.GeoMath.DestinationPoint(60, 25, 90, 300 * 0.514444 * (sampleTime.Subtract(timestamp).TotalSeconds + skewSeconds) / 1852.0);
             direct = direct with { Timestamp = sampleTime.AddSeconds(skewSeconds), LatitudeDeg = directPosition.latitudeDeg, LongitudeDeg = directPosition.longitudeDeg };
             sim = sim with { Timestamp = sampleTime, LatitudeDeg = simPosition.latitudeDeg, LongitudeDeg = simPosition.longitudeDeg };
-            var remaining = deduplicator.SuppressDuplicates([sim with { Id = $"sim:{sample}" }], [direct]);
-            if (sample < 3) Assert.Single(remaining);
-            else Assert.Single(remaining);
+            var remaining = deduplicator.SuppressDuplicates([sim], [direct]);
+            if (sample < 2) Assert.Single(remaining);
+            else Assert.Empty(remaining);
         }
     }
 
