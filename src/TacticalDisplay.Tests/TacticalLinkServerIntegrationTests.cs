@@ -142,16 +142,33 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
         var userId = Guid.NewGuid().ToString();
         using var first = new TestPeer(hub, 60, 25, userId);
         using var second = new TestPeer(hub, 60.1, 25, userId);
-        await Task.WhenAll(first.StartAsync(), second.StartAsync());
+        await first.StartAsync();
         using var firstConnected = await first.ReadTypeAsync("CONNECTED");
+        await second.StartAsync();
         using var secondConnected = await second.ReadTypeAsync("CONNECTED");
         Assert.Equal(firstConnected.RootElement.GetProperty("participantId").GetString(), secondConnected.RootElement.GetProperty("participantId").GetString());
-        Assert.Equal(new long[] { 1, 2 }, new[]
-        {
-            firstConnected.RootElement.GetProperty("connectionGeneration").GetInt64(),
-            secondConnected.RootElement.GetProperty("connectionGeneration").GetInt64()
-        }.Order());
+        Assert.Equal(2, secondConnected.RootElement.GetProperty("connectionGeneration").GetInt64());
         Assert.Single(hub.GetConnectedParticipantIds());
+        await Task.WhenAll(first.StopAbruptlyAsync(), second.StopAbruptlyAsync());
+    }
+
+    [Fact]
+    public async Task SimultaneousConnectionsForOneUserAreSerializedToOnePublicPresence()
+    {
+        var hub = new TacticalLinkHub(new PeerInterestResolver());
+        var userId = Guid.NewGuid().ToString();
+        using var first = new TestPeer(hub, 60, 25, userId);
+        using var second = new TestPeer(hub, 60.1, 25, userId);
+        var firstStart = first.StartAsync();
+        var secondStart = second.StartAsync();
+        await Task.WhenAll(firstStart, secondStart);
+        var firstConnectedTask = first.ReadTypeAsync("CONNECTED");
+        var secondConnectedTask = second.ReadTypeAsync("CONNECTED");
+        var connections = await Task.WhenAll(firstConnectedTask, secondConnectedTask);
+        Assert.Equal(connections[0].RootElement.GetProperty("participantId").GetString(), connections[1].RootElement.GetProperty("participantId").GetString());
+        Assert.Equal(new long[] { 1, 2 }, connections.Select(message => message.RootElement.GetProperty("connectionGeneration").GetInt64()).Order());
+        Assert.Single(hub.GetConnectedParticipantIds());
+        foreach (var connection in connections) connection.Dispose();
         await Task.WhenAll(first.StopAbruptlyAsync(), second.StopAbruptlyAsync());
     }
 
