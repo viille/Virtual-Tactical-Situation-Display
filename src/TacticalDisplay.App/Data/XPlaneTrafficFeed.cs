@@ -33,7 +33,7 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
             return Task.CompletedTask;
         }
 
-        DataSourceDebugLog.Info(LogSource, $"Start requested | pollRateHz={_settings.PollRateHz:0.##} rangeNm={_settings.SelectedRangeNm}");
+        DataSourceDebugLog.Info(LogSource, $"Start requested | pollRateHz={_settings.EffectivePollRateHz:0.##} rangeNm={_settings.SelectedRangeNm}");
         _isRunning = true;
         _loopCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         _loopTask = Task.Run(() => RunAsync(_loopCts.Token), CancellationToken.None);
@@ -97,7 +97,7 @@ public sealed class XPlaneTrafficFeed : ITrafficDataFeed
 
     private async Task PollLoopAsync(CancellationToken cancellationToken)
     {
-        var pollMs = (int)Math.Clamp(1000.0 / Math.Max(_settings.PollRateHz, 1), 100, 1000);
+        var pollMs = (int)Math.Clamp(1000.0 / Math.Max(_settings.EffectivePollRateHz, 1), 50, 1000);
         var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(pollMs));
 
         try

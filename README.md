@@ -15,6 +15,7 @@ Virtual Tactical Situation Display (VTSD) is a Windows app that shows a simple t
 - friend, package, support, enemy, and unknown target symbols
 - map, trails, declutter, bullseye, and active V-LARA airspace overlays
 - VTSD Cloud for synced collections, kneepad pages, and map features
+- optional TacticalLink for directly sharing simulator ownship state with nearby, explicitly connected VTSD users
 - kneepad for mission text, images, URL pages, and Cloud pages
 - tablet web display on the local network
 - global keyboard and gamepad hotkeys
@@ -56,10 +57,13 @@ Cloud can sync authorized collections, redeem share codes, cache content for off
 - `LBL`: cycle label detail
 - `KNEE`: show or hide kneepad
 - `WEB`: show or hide tablet web display
+- `TAC`: open TacticalLink; Connect starts location sharing and Disconnect stops it
 - `SET`: show or hide settings
 - `PIN`: keep the window on top
 
 Click a target to cycle its affiliation. Right click a target or label to rename it. Drag a label to move it. Middle click a target or label to hide or show that label.
+
+TacticalLink is opt-in. VTSD Cloud sign-in alone does not connect or share location. TacticalLink uses the active VATSIM callsign to identify a connected simulator participant and sends direct simulator telemetry only to nearby TacticalLink peers. It is a simulator feature and is not a public tracking service.
 
 ## Tablet Display
 

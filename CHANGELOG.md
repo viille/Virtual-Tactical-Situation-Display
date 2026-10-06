@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Added the first global, opt-in TacticalLink protocol/server foundation with transient in-memory presence, spatial interest filtering, capability updates and direct peer telemetry.
+- Added VTSD Cloud active VATSIM callsign resolution and short-lived RS256 TacticalLink JWT issuance.
+- Added a TAC menu and persistent connection indicator, direct peer traffic tracks, and conservative SimConnect duplicate suppression.
+- Prepared a tanker-capability profile field and availability protocol state; fuel transfer and AAR operations remain future work.
+- Added TacticalLink reconnect, 10/20 Hz telemetry, interest-radius and diagnostics settings; server expires stale simulator telemetry and clamps client interest to a configured maximum.
+
 ## 0.14.13 - 2026-10-05
 
 - Kept clearly supported callsign assignments when another formation component is ambiguous; weak matches now compete with an unmatched result.

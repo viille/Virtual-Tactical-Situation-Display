@@ -1,0 +1,410 @@
+using System.Net.WebSockets;
+using System.IO;
+using System.Text;
+using System.Text.Json;
+using TacticalDisplay.App.Cloud;
+using TacticalDisplay.App.Services;
+using TacticalDisplay.Core.Models;
+
+namespace TacticalDisplay.App.TacticalLink;
+
+/// <summary>Explicitly opt-in global TacticalLink connection; owns only transient peer state.</summary>
+public sealed class TacticalLinkClient : IAsyncDisposable
+{
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+    private readonly VtsdCloudClient _cloud;
+    private readonly Uri _serverUri;
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private readonly object _telemetryLock = new();
+    private readonly object _peerLock = new();
+    private readonly Dictionary<string, TacticalPeer> _peers = new(StringComparer.Ordinal);
+    private ClientWebSocket? _socket;
+    private CancellationTokenSource? _connectionCts;
+    private Task? _receiveTask;
+    private long _sequence;
+    private string? _participantId;
+    private string? _callsign;
+    private CancellationToken _applicationToken;
+    private CancellationTokenSource? _reconnectCts;
+    private Task? _reconnectTask;
+    private bool _explicitDisconnectRequested;
+    private bool _tankerCapable;
+    private bool _receiverCapable;
+    private bool _autoReconnect = true;
+    private bool _tankerAvailable;
+    private double _interestRadiusNm = 200;
+    private bool _debugDiagnostics;
+    private OwnshipState? _previousOwnship;
+
+    public TacticalLinkClient(VtsdCloudClient cloud, Uri? serverUri = null)
+    {
+        _cloud = cloud;
+        _serverUri = serverUri ?? new Uri("wss://link.vtsd.app/v1");
+    }
+
+    public TacticalLinkConnectionState ConnectionState { get; private set; } = TacticalLinkConnectionState.Disconnected;
+    public IReadOnlyList<TacticalPeer> NearbyPeers { get { lock (_peerLock) return _peers.Values.ToArray(); } }
+    public string? LocalParticipantId => _participantId;
+    public string? LocalCallsign => _callsign;
+    public event EventHandler? StateChanged;
+
+    public async Task ConnectAsync(CancellationToken cancellationToken, bool tankerCapable = false, bool receiverCapable = false, bool autoReconnect = true, double interestRadiusNm = 200, bool debugDiagnostics = false)
+    {
+        if (ConnectionState is TacticalLinkConnectionState.Connected or TacticalLinkConnectionState.Connecting) return;
+        _explicitDisconnectRequested = false;
+        _applicationToken = cancellationToken;
+        _tankerCapable = tankerCapable;
+        _receiverCapable = receiverCapable;
+        _autoReconnect = autoReconnect;
+        _interestRadiusNm = System.Math.Clamp(interestRadiusNm, 10, 500);
+        _debugDiagnostics = debugDiagnostics;
+        _reconnectCts?.Cancel();
+        SetState(TacticalLinkConnectionState.Connecting);
+        try { await ConnectCoreAsync(cancellationToken).ConfigureAwait(false); }
+        catch
+        {
+            MarkConnectionFailed();
+            throw;
+        }
+    }
+
+    private async Task ConnectCoreAsync(CancellationToken cancellationToken)
+    {
+        var token = await _cloud.CreateTacticalLinkTokenAsync(cancellationToken).ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(token.Token) || string.IsNullOrWhiteSpace(token.ParticipantId) || string.IsNullOrWhiteSpace(token.Callsign))
+            throw new CloudApiException("VTSD Cloud did not return a complete TacticalLink identity.", errorCode: "TACTICAL_LINK_IDENTITY");
+
+        var socket = new ClientWebSocket();
+        socket.Options.SetRequestHeader("Authorization", $"Bearer {token.Token}");
+        _socket = socket;
+        await socket.ConnectAsync(_serverUri, cancellationToken).ConfigureAwait(false);
+        _participantId = token.ParticipantId;
+        _callsign = token.Callsign;
+        _connectionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        SetState(TacticalLinkConnectionState.Connected);
+        var capabilities = GetCapabilities();
+        await SendAsync(new
+        {
+            type = "CONNECT",
+            participantId = token.ParticipantId,
+            capabilities,
+            operationalStates = _tankerCapable ? new { tankerAvailability = _tankerAvailable ? "Available" : "Off" } : null
+        }, cancellationToken).ConfigureAwait(false);
+        await SendAsync(new { type = "INTEREST_UPDATE", radiusNm = _interestRadiusNm }, cancellationToken).ConfigureAwait(false);
+        if (_debugDiagnostics) DataSourceDebugLog.Info("TacticalLink", $"Connected | participant={token.ParticipantId} interestRadiusNm={_interestRadiusNm:0}");
+        _receiveTask = ReceiveLoopAsync(socket, _connectionCts.Token);
+        _ = AuthRefreshLoopAsync(_connectionCts.Token);
+    }
+
+    public async Task PublishTelemetryAsync(OwnshipState ownship, string? aircraftType, CancellationToken cancellationToken)
+    {
+        if (ConnectionState != TacticalLinkConnectionState.Connected) return;
+        var groundTrack = ownship.GroundTrackDeg ?? ownship.HeadingDeg;
+        var horizontalSpeedMps = ownship.SpeedKt * 0.514444;
+        var trackRadians = groundTrack * (System.Math.PI / 180.0);
+        double? verticalSpeedFpm = null;
+        lock (_telemetryLock)
+        {
+            if (_previousOwnship is { } previous)
+            {
+                var elapsed = (ownship.Timestamp - previous.Timestamp).TotalSeconds;
+                if (elapsed is > 0.05 and <= 3)
+                {
+                    var rate = (ownship.AltitudeFt - previous.AltitudeFt) * 60.0 / elapsed;
+                    if (double.IsFinite(rate) && System.Math.Abs(rate) <= 20000) verticalSpeedFpm = rate;
+                }
+            }
+            _previousOwnship = ownship;
+        }
+        var telemetry = new
+        {
+            type = "TELEMETRY",
+            sequence = Interlocked.Increment(ref _sequence),
+            sampleTimestampUtc = ownship.Timestamp,
+            latitudeDeg = ownship.LatitudeDeg,
+            longitudeDeg = ownship.LongitudeDeg,
+            altitudeFt = ownship.AltitudeFt,
+            headingDeg = ownship.HeadingDeg,
+            groundTrackDeg = ownship.GroundTrackDeg,
+            speedKt = ownship.SpeedKt,
+            pitchDeg = (double?)null,
+            bankDeg = (double?)null,
+            verticalSpeedFpm,
+            velocityNorthMps = horizontalSpeedMps is { } northSpeed ? northSpeed * System.Math.Cos(trackRadians) : (double?)null,
+            velocityEastMps = horizontalSpeedMps is { } eastSpeed ? eastSpeed * System.Math.Sin(trackRadians) : (double?)null,
+            velocityDownMps = verticalSpeedFpm.HasValue ? -verticalSpeedFpm.Value * 0.00508 : (double?)null,
+            aircraftType = NormalizeAircraftType(aircraftType)
+        };
+        if (!await _sendLock.WaitAsync(0, cancellationToken).ConfigureAwait(false)) return;
+        try
+        {
+            var socket = _socket;
+            if (socket is { State: WebSocketState.Open })
+                await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(telemetry, Json), WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
+        }
+        finally { _sendLock.Release(); }
+    }
+
+    public async Task SetTankerAvailabilityAsync(bool available, bool tankerCapable, CancellationToken cancellationToken)
+    {
+        if (ConnectionState != TacticalLinkConnectionState.Connected) return;
+        _tankerCapable = tankerCapable;
+        _tankerAvailable = available;
+        var capabilities = GetCapabilities();
+        await SendAsync(new { type = "CAPABILITY_UPDATE", capabilities, operationalStates = new { tankerAvailability = available ? "Available" : "Off" } }, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task UpdateAircraftCapabilitiesAsync(bool tankerCapable, bool receiverCapable, CancellationToken cancellationToken)
+    {
+        _tankerCapable = tankerCapable;
+        _receiverCapable = receiverCapable;
+        if (!tankerCapable) _tankerAvailable = false;
+        if (ConnectionState != TacticalLinkConnectionState.Connected) return;
+        var states = tankerCapable ? new { tankerAvailability = _tankerAvailable ? "Available" : "Off" } : null;
+        await SendAsync(new { type = "CAPABILITY_UPDATE", capabilities = GetCapabilities(), operationalStates = states }, cancellationToken).ConfigureAwait(false);
+    }
+
+    public void SetAutoReconnect(bool enabled) => _autoReconnect = enabled;
+
+    public async Task SetInterestRadiusAsync(double radiusNm, CancellationToken cancellationToken)
+    {
+        _interestRadiusNm = System.Math.Clamp(radiusNm, 10, 500);
+        if (ConnectionState == TacticalLinkConnectionState.Connected)
+            await SendAsync(new { type = "INTEREST_UPDATE", radiusNm = _interestRadiusNm }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private string[] GetCapabilities() => new[] { "identity", "telemetry" }
+        .Concat(_receiverCapable ? ["aar.receiver"] : [])
+        .Concat(_tankerCapable ? ["aar.tanker"] : [])
+        .ToArray();
+
+    public async Task DisconnectAsync()
+    {
+        _explicitDisconnectRequested = true;
+        _reconnectCts?.Cancel();
+        var socket = _socket;
+        _connectionCts?.Cancel();
+        SetState(TacticalLinkConnectionState.Disconnected);
+        if (socket is { State: WebSocketState.Open })
+        {
+            try
+            {
+                await SendAsync(new { type = "DISCONNECT" }, CancellationToken.None).ConfigureAwait(false);
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+                await socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "disconnect", timeout.Token).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is WebSocketException or OperationCanceledException or ObjectDisposedException) { }
+        }
+        if (_receiveTask is not null) { try { await _receiveTask.ConfigureAwait(false); } catch (OperationCanceledException) { } }
+        if (_reconnectTask is not null) { try { await _reconnectTask.ConfigureAwait(false); } catch (OperationCanceledException) { } }
+        socket?.Dispose();
+        _socket = null;
+        _connectionCts?.Dispose();
+        _connectionCts = null;
+        _reconnectCts?.Dispose();
+        _reconnectCts = null;
+        _reconnectTask = null;
+        _receiveTask = null;
+        _tankerAvailable = false;
+        lock (_peerLock) _peers.Clear();
+        _participantId = null;
+        _callsign = null;
+        SetState(TacticalLinkConnectionState.Disconnected);
+    }
+
+    public TacticalLinkState Snapshot() => new(ConnectionState, LocalParticipantId, LocalCallsign, NearbyPeers);
+
+    public void MarkConnectionFailed()
+    {
+        _socket?.Dispose();
+        _socket = null;
+        _connectionCts?.Cancel();
+        _connectionCts?.Dispose();
+        _connectionCts = null;
+        _receiveTask = null;
+        _participantId = null;
+        _callsign = null;
+        lock (_peerLock) _peers.Clear();
+        SetState(TacticalLinkConnectionState.Disconnected);
+    }
+
+    private async Task ReceiveLoopAsync(ClientWebSocket socket, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[16 * 1024];
+        try
+        {
+            while (socket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+            {
+                using var message = new MemoryStream();
+                WebSocketReceiveResult result;
+                do
+                {
+                    result = await socket.ReceiveAsync(buffer, cancellationToken).ConfigureAwait(false);
+                    if (result.MessageType == WebSocketMessageType.Close) return;
+                    message.Write(buffer, 0, result.Count);
+                    if (message.Length > 256 * 1024) throw new WebSocketException("TacticalLink message exceeded the size limit.");
+                } while (!result.EndOfMessage);
+                HandleMessage(Encoding.UTF8.GetString(message.ToArray()));
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is WebSocketException or JsonException or IOException)
+        {
+            DataSourceDebugLog.Warn("TacticalLink", $"Connection interrupted | {ex.Message}");
+            SetState(TacticalLinkConnectionState.Degraded);
+        }
+        finally
+        {
+            if (!cancellationToken.IsCancellationRequested && !_explicitDisconnectRequested)
+            {
+                _connectionCts?.Cancel();
+                if (_autoReconnect)
+                {
+                    SetState(TacticalLinkConnectionState.Degraded);
+                    if (_reconnectTask is null || _reconnectTask.IsCompleted)
+                    {
+                    _reconnectCts?.Dispose();
+                    _reconnectCts = CancellationTokenSource.CreateLinkedTokenSource(_applicationToken);
+                    _reconnectTask = ReconnectLoopAsync(_reconnectCts.Token);
+                    }
+                }
+                else SetState(TacticalLinkConnectionState.Disconnected);
+            }
+        }
+    }
+
+    private async Task ReconnectLoopAsync(CancellationToken cancellationToken)
+    {
+        var delays = new[] { 1, 2, 5, 10, 20, 30 };
+        var attempt = 0;
+        while (!cancellationToken.IsCancellationRequested && !_explicitDisconnectRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(delays[Math.Min(attempt++, delays.Length - 1)]), cancellationToken).ConfigureAwait(false);
+            try
+            {
+                _socket?.Dispose();
+                _socket = null;
+                _connectionCts?.Cancel();
+                _connectionCts?.Dispose();
+                _connectionCts = null;
+                SetState(TacticalLinkConnectionState.Connecting);
+                await ConnectCoreAsync(cancellationToken).ConfigureAwait(false);
+                if (_receiveTask is not null) await _receiveTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
+            catch (Exception ex)
+            {
+                DataSourceDebugLog.Warn("TacticalLink", $"Reconnect attempt failed | {ex.Message}");
+                _socket?.Dispose();
+                _socket = null;
+                SetState(TacticalLinkConnectionState.Degraded);
+            }
+        }
+    }
+
+    private async Task AuthRefreshLoopAsync(CancellationToken cancellationToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(60));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
+            {
+                var token = await _cloud.CreateTacticalLinkTokenAsync(cancellationToken).ConfigureAwait(false);
+                await SendAsync(new { type = "AUTH_REFRESH", token = token.Token }, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+        catch (Exception ex) when (ex is CloudApiException or WebSocketException or ObjectDisposedException)
+        {
+            DataSourceDebugLog.Warn("TacticalLink", $"Authentication refresh failed | {ex.Message}");
+        }
+    }
+
+    private void HandleMessage(string json)
+    {
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+        if (!root.TryGetProperty("type", out var typeNode)) return;
+        var type = typeNode.GetString();
+        var peerId = root.TryGetProperty("participantId", out var idNode) ? idNode.GetString() : null;
+        if (type == "PEER_LEAVE" && peerId is not null)
+        {
+            lock (_peerLock) _peers.Remove(peerId);
+        }
+        else if (type is "PEER_ENTER" or "PEER_UPDATE" && peerId is not null)
+        {
+            var peer = JsonSerializer.Deserialize<TacticalPeerWire>(root.GetRawText(), Json);
+            if (peer is not null) lock (_peerLock) _peers[peerId] = peer.ToDomain();
+        }
+        else if (type == "TELEMETRY" && peerId is not null)
+        {
+            var telemetry = JsonSerializer.Deserialize<TacticalTelemetry>(root.GetProperty("telemetry").GetRawText(), Json);
+            if (telemetry is not null)
+            {
+                lock (_peerLock)
+                    if (_peers.TryGetValue(peerId, out var existing))
+                        _peers[peerId] = existing with { LatestTelemetry = telemetry, TelemetryAge = TimeSpan.Zero };
+            }
+        }
+        else if (type == "CONNECTED")
+        {
+            _participantId = peerId ?? _participantId;
+            if (root.TryGetProperty("callsign", out var callsign)) _callsign = callsign.GetString() ?? _callsign;
+        }
+        else if (type == "AUTH_REFRESHED" && root.TryGetProperty("callsign", out var refreshedCallsign))
+        {
+            _callsign = refreshedCallsign.GetString() ?? _callsign;
+        }
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private async Task SendAsync(object message, CancellationToken cancellationToken)
+    {
+        var socket = _socket;
+        if (socket is not { State: WebSocketState.Open }) return;
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(message, Json);
+        await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { await socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false); }
+        finally { _sendLock.Release(); }
+    }
+
+    private void SetState(TacticalLinkConnectionState state)
+    {
+        if (ConnectionState == state) return;
+        ConnectionState = state;
+        if (state == TacticalLinkConnectionState.Disconnected)
+        {
+            lock (_peerLock) _peers.Clear();
+            _participantId = null;
+            _callsign = null;
+        }
+        StateChanged?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static string? NormalizeAircraftType(string? aircraftType)
+    {
+        var normalized = new string((aircraftType ?? string.Empty)
+            .Where(character => char.IsLetterOrDigit(character) || character is '-' or ' ')
+            .Take(32)
+            .ToArray()).Trim();
+        return normalized.Length == 0 ? null : normalized;
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        await DisconnectAsync().ConfigureAwait(false);
+        _sendLock.Dispose();
+    }
+
+    private sealed class TacticalPeerWire
+    {
+        public string ParticipantId { get; set; } = "";
+        public string Callsign { get; set; } = "";
+        public string? AircraftType { get; set; }
+        public HashSet<string> Capabilities { get; set; } = [];
+        public Dictionary<string, string> OperationalStates { get; set; } = [];
+        public TacticalTelemetry? Telemetry { get; set; }
+        public TacticalPeer ToDomain() => new(ParticipantId, Callsign, AircraftType, Capabilities, OperationalStates, Telemetry,
+            Telemetry is null ? null : DateTimeOffset.UtcNow - Telemetry.SampleTimestampUtc);
+    }
+}

@@ -8,7 +8,7 @@ namespace TacticalDisplay.App.Data;
 
 public static class TrafficFeedFactory
 {
-    public static ITrafficDataFeed Create(TacticalDisplaySettings settings)
+    public static ITrafficDataFeed Create(TacticalDisplaySettings settings, Func<IReadOnlyList<TacticalPeer>>? peerSource = null)
     {
         settings.DataSourceMode = DataSourceModes.Normalize(settings.DataSourceMode);
 
@@ -30,6 +30,7 @@ public static class TrafficFeedFactory
             feed = new DemoTrafficFeed();
         }
 
+        feed = new TacticalLinkTrafficFusionFeed(feed, peerSource ?? (() => []));
         if (settings.EnableVatsimCallsignLookup && DataSourceModes.UsesSimulatorConnection(settings.DataSourceMode))
         {
             DataSourceDebugLog.Info("VATSIM", $"Wrapping {settings.DataSourceMode} feed with VATSIM callsign lookup");

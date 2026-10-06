@@ -1,0 +1,297 @@
+using System.Diagnostics;
+using System.Net.WebSockets;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Threading.Channels;
+using TacticalDisplay.Core.Services;
+using Xunit;
+using Xunit.Abstractions;
+
+namespace TacticalDisplay.Tests;
+
+public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
+{
+    [Fact]
+    public void ServerAcceptsCloudRs256IdentityAndRejectsTampering()
+    {
+        using var rsa = RSA.Create(2048);
+        var originalPublicKey = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY");
+        var originalIssuer = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_ISSUER");
+        var originalAudience = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_AUDIENCE");
+        var originalKeyId = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_KEY_ID");
+        try
+        {
+            Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY", rsa.ExportSubjectPublicKeyInfoPem());
+            Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_ISSUER", "https://www.vtsd.app");
+            Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_AUDIENCE", "tactical-link");
+            Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_KEY_ID", "test-key");
+            var userId = Guid.NewGuid().ToString();
+            var token = CreateToken(rsa, userId, "test-key");
+
+            var identity = TacticalJwtValidator.Validate("Bearer " + token);
+            Assert.Equal(userId, identity.ParticipantId);
+            Assert.Equal("VIPER11", identity.Callsign);
+            Assert.Equal("1234567", identity.VatsimCid);
+
+            var parts = token.Split('.');
+            var tamperedSignature = (parts[2][0] == 'A' ? "B" : "A") + parts[2][1..];
+            var tampered = parts[0] + "." + parts[1] + "." + tamperedSignature;
+            Assert.Throws<UnauthorizedAccessException>(() => TacticalJwtValidator.Validate("Bearer " + tampered));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY", originalPublicKey);
+            Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_ISSUER", originalIssuer);
+            Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_AUDIENCE", originalAudience);
+            Environment.SetEnvironmentVariable("TACTICAL_LINK_JWT_KEY_ID", originalKeyId);
+        }
+    }
+
+    [Fact]
+    public async Task GlobalPresenceSendsNearbyPeersAndLeavesImmediatelyOnDisconnect()
+    {
+        var hub = new TacticalLinkHub(new PeerInterestResolver());
+        using var first = new TestPeer(hub, 60, 25);
+        using var nearby = new TestPeer(hub, 60.1, 25);
+        using var distant = new TestPeer(hub, 64, 25);
+        await Task.WhenAll(first.StartAsync(), nearby.StartAsync(), distant.StartAsync());
+
+        using (var message = await first.ReadTypeAsync("PEER_ENTER")) Assert.Equal("PEER_ENTER", message.RootElement.GetProperty("type").GetString());
+        using (var message = await nearby.ReadTypeAsync("PEER_ENTER")) Assert.Equal("PEER_ENTER", message.RootElement.GetProperty("type").GetString());
+        Assert.False(first.HasQueuedType("PEER_ENTER", distant.ParticipantId));
+
+        await nearby.PublishFrameAsync(2);
+        using (var message = await first.ReadTypeAsync("TELEMETRY"))
+        {
+            Assert.Equal(nearby.ParticipantId, message.RootElement.GetProperty("participantId").GetString());
+            Assert.Equal(2, message.RootElement.GetProperty("telemetry").GetProperty("sequence").GetInt64());
+        }
+
+        await nearby.SendAsync(new { type = "DISCONNECT" });
+        using (var message = await first.ReadTypeAsync("PEER_LEAVE")) Assert.Equal("PEER_LEAVE", message.RootElement.GetProperty("type").GetString());
+    }
+
+    [Fact]
+    public async Task ReconnectRetainsParticipantAndAdvancesConnectionGeneration()
+    {
+        var hub = new TacticalLinkHub(new PeerInterestResolver());
+        var participantId = Guid.NewGuid().ToString();
+        using var first = new TestPeer(hub, 60, 25, participantId);
+        await first.StartAsync();
+        await first.StopAbruptlyAsync();
+
+        using var resumed = new TestPeer(hub, 60, 25, participantId);
+        await resumed.StartAsync();
+        using var connected = await resumed.ReadTypeAsync("CONNECTED");
+        Assert.Equal(participantId, connected.RootElement.GetProperty("participantId").GetString());
+        Assert.Equal(2, connected.RootElement.GetProperty("connectionGeneration").GetInt64());
+    }
+
+    [Fact]
+    public async Task FiftyConcurrentPeersCanPublishTwentyFramesPerSecond()
+    {
+        var hub = new TacticalLinkHub(new PeerInterestResolver());
+        var peers = Enumerable.Range(0, 50).Select(index => new TestPeer(hub,
+            index < 25 ? 40 + (index % 5) * 0.01 : 60 + (index % 5) * 0.01,
+            index < 25 ? -74 + (index / 5) * 0.01 : 25 + (index / 5) * 0.01)).ToArray();
+        try
+        {
+            await Task.WhenAll(peers.Select(peer => peer.StartAsync()));
+            var stopwatch = Stopwatch.StartNew();
+            for (var frame = 1; frame <= 20; frame++)
+            {
+                await Task.WhenAll(peers.Select(peer => peer.PublishFrameAsync(frame + 1)));
+                await Task.Delay(50);
+            }
+            await Task.WhenAll(peers.Select(peer => peer.PingAndWaitAsync()));
+            stopwatch.Stop();
+            Assert.All(peers, peer => Assert.Equal(1, peer.PongCount));
+            output.WriteLine($"TacticalLink load sample | peers=50 framesPerPeer=20 rateHz=20 elapsedMs={stopwatch.Elapsed.TotalMilliseconds:0.0}");
+        }
+        finally
+        {
+            await Task.WhenAll(peers.Select(peer => peer.StopAsync()));
+            foreach (var peer in peers) peer.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task OneHundredConcurrentPeersExchangeTwentyFramesPerSecond()
+    {
+        var hub = new TacticalLinkHub(new PeerInterestResolver());
+        var peers = Enumerable.Range(0, 100).Select(index => new TestPeer(hub,
+            index < 50 ? 40 + (index % 10) * 0.01 : 60 + (index % 10) * 0.01,
+            index < 50 ? -74 + (index / 10) * 0.01 : 25 + (index / 10) * 0.01)).ToArray();
+        try
+        {
+            await Task.WhenAll(peers.Select(peer => peer.StartAsync()));
+            var stopwatch = Stopwatch.StartNew();
+            for (var frame = 1; frame <= 20; frame++)
+            {
+                await Task.WhenAll(peers.Select(peer => peer.PublishFrameAsync(frame + 1)));
+                await Task.Delay(50);
+            }
+            await Task.WhenAll(peers.Select(peer => peer.PingAndWaitAsync()));
+            stopwatch.Stop();
+            Assert.All(peers, peer => Assert.Equal(1, peer.PongCount));
+            output.WriteLine($"TacticalLink load sample | peers=100 framesPerPeer=20 rateHz=20 elapsedMs={stopwatch.Elapsed.TotalMilliseconds:0.0}");
+        }
+        finally
+        {
+            await Task.WhenAll(peers.Select(peer => peer.StopAsync()));
+            foreach (var peer in peers) peer.Dispose();
+        }
+    }
+
+    private sealed class TestPeer : IDisposable
+    {
+        private readonly TacticalLinkHub _hub;
+        private readonly double _latitude;
+        private readonly double _longitude;
+        private readonly CancellationTokenSource _cts = new();
+        private readonly TestWebSocket _socket = new();
+        private Task? _runTask;
+        public TestPeer(TacticalLinkHub hub, double latitude, double longitude, string? participantId = null)
+        {
+            _hub = hub;
+            _latitude = latitude;
+            _longitude = longitude;
+            ParticipantId = participantId ?? Guid.NewGuid().ToString();
+        }
+        public string ParticipantId { get; }
+        public int PongCount { get; private set; }
+
+        public async Task StartAsync()
+        {
+            var identity = new AuthenticatedParticipant(ParticipantId, ParticipantId, "1234567", "TEST1", DateTimeOffset.UtcNow.AddMinutes(2));
+            _runTask = _hub.RunPeerAsync(_socket, identity, _cts.Token);
+            await SendAsync(new { type = "CONNECT", participantId = "ignored" });
+            await PublishAsync(1);
+        }
+
+        public Task PublishFrameAsync(int sequence) => PublishAsync(sequence);
+
+        public async Task PingAndWaitAsync()
+        {
+            await SendAsync(new { type = "PING" });
+            using var pong = await ReadTypeAsync("PONG");
+            PongCount++;
+        }
+
+        private Task PublishAsync(int sequence) => SendAsync(new
+        {
+            type = "TELEMETRY",
+            sequence,
+            sampleTimestampUtc = DateTimeOffset.UtcNow,
+            latitudeDeg = _latitude,
+            longitudeDeg = _longitude,
+            altitudeFt = 25000,
+            headingDeg = 90,
+            groundTrackDeg = 90,
+            speedKt = 300,
+            aircraftType = "F35A"
+        });
+
+        public Task SendAsync(object message) => _socket.SendClientMessageAsync(JsonSerializer.Serialize(message, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+        public async Task<JsonDocument> ReadTypeAsync(string type)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (true)
+            {
+                var json = await _socket.ReadServerMessageAsync(timeout.Token);
+                var parsed = JsonDocument.Parse(json);
+                if (parsed.RootElement.TryGetProperty("type", out var found) && found.GetString() == type) return parsed;
+                parsed.Dispose();
+            }
+        }
+        public bool HasQueuedType(string type, string participantId) => _socket.HasServerMessage(type, participantId);
+
+        public async Task StopAsync()
+        {
+            if (_socket.State == WebSocketState.Open)
+            {
+                try { await SendAsync(new { type = "DISCONNECT" }); } catch (ChannelClosedException) { }
+            }
+            if (_runTask is not null)
+            {
+                var finished = await Task.WhenAny(_runTask, Task.Delay(TimeSpan.FromSeconds(3)));
+                if (finished != _runTask) _cts.Cancel();
+                try { await _runTask; } catch (OperationCanceledException) { }
+            }
+        }
+        public async Task StopAbruptlyAsync()
+        {
+            _cts.Cancel();
+            if (_runTask is not null)
+            {
+                try { await _runTask; } catch (OperationCanceledException) { }
+            }
+        }
+        public void Dispose() { _cts.Cancel(); _cts.Dispose(); _socket.Dispose(); }
+    }
+
+    private static string CreateToken(RSA rsa, string userId, string keyId)
+    {
+        var header = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new { alg = "RS256", typ = "JWT", kid = keyId }));
+        var payload = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            sub = userId,
+            user_id = userId,
+            participant_id = userId,
+            vatsim_cid = "1234567",
+            callsign = "VIPER11",
+            iss = "https://www.vtsd.app",
+            aud = "tactical-link",
+            iat = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            nbf = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+            exp = DateTimeOffset.UtcNow.AddMinutes(2).ToUnixTimeSeconds(),
+            jti = Guid.NewGuid().ToString()
+        }));
+        var signed = header + "." + payload;
+        var signature = rsa.SignData(Encoding.ASCII.GetBytes(signed), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        return signed + "." + Base64Url(signature);
+    }
+
+    private static string Base64Url(byte[] value) => Convert.ToBase64String(value).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private sealed class TestWebSocket : WebSocket
+    {
+        private readonly Channel<byte[]> _incoming = Channel.CreateUnbounded<byte[]>();
+        private readonly Channel<string> _outgoing = Channel.CreateUnbounded<string>();
+        private WebSocketState _state = WebSocketState.Open;
+        public override WebSocketCloseStatus? CloseStatus => null;
+        public override string? CloseStatusDescription => null;
+        public override WebSocketState State => _state;
+        public override string? SubProtocol => null;
+        public async Task SendClientMessageAsync(string text) => await _incoming.Writer.WriteAsync(Encoding.UTF8.GetBytes(text));
+        public async Task<string> ReadServerMessageAsync(CancellationToken cancellationToken) => await _outgoing.Reader.ReadAsync(cancellationToken);
+        public bool HasServerMessage(string type, string participantId)
+        {
+            while (_outgoing.Reader.TryRead(out var text))
+            {
+                using var message = JsonDocument.Parse(text);
+                if (message.RootElement.GetProperty("type").GetString() == type &&
+                    message.RootElement.TryGetProperty("participantId", out var id) && id.GetString() == participantId) return true;
+            }
+            return false;
+        }
+        public override void Abort() => _state = WebSocketState.Aborted;
+        public override Task CloseAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken)
+        {
+            _state = WebSocketState.Closed;
+            return Task.CompletedTask;
+        }
+        public override Task CloseOutputAsync(WebSocketCloseStatus closeStatus, string? statusDescription, CancellationToken cancellationToken) =>
+            CloseAsync(closeStatus, statusDescription, cancellationToken);
+        public override void Dispose() { _state = WebSocketState.Closed; _incoming.Writer.TryComplete(); _outgoing.Writer.TryComplete(); }
+        public override async Task<WebSocketReceiveResult> ReceiveAsync(ArraySegment<byte> buffer, CancellationToken cancellationToken)
+        {
+            var bytes = await _incoming.Reader.ReadAsync(cancellationToken);
+            Array.Copy(bytes, 0, buffer.Array!, buffer.Offset, bytes.Length);
+            return new WebSocketReceiveResult(bytes.Length, WebSocketMessageType.Text, true);
+        }
+        public override async Task SendAsync(ArraySegment<byte> buffer, WebSocketMessageType messageType, bool endOfMessage, CancellationToken cancellationToken) =>
+            await _outgoing.Writer.WriteAsync(Encoding.UTF8.GetString(buffer.Array!, buffer.Offset, buffer.Count), cancellationToken);
+    }
+}

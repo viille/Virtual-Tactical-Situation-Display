@@ -61,7 +61,8 @@ public sealed record TrafficContactState(
     DateTimeOffset Timestamp,
     bool CallsignRevoked = false,
     long Generation = 0,
-    double? GroundTrackDeg = null);
+    double? GroundTrackDeg = null,
+    TrackSource Source = TrackSource.SimConnect);
 
 public sealed record PositionHistoryPoint(
     double LatitudeDeg,

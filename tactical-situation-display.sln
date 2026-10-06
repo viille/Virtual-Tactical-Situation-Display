@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TacticalDisplay.Updater", "
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TacticalDisplay.Watchdog", "src\TacticalDisplay.Watchdog\TacticalDisplay.Watchdog.csproj", "{D94205A6-3177-40A4-A7A9-EF066B0FA944}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TacticalLink.Server", "src\TacticalLink.Server\TacticalLink.Server.csproj", "{B6DA72B4-115B-4381-8BF3-98B7F10107F9}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -50,6 +52,10 @@ Global
 		{D94205A6-3177-40A4-A7A9-EF066B0FA944}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D94205A6-3177-40A4-A7A9-EF066B0FA944}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D94205A6-3177-40A4-A7A9-EF066B0FA944}.Release|Any CPU.Build.0 = Release|Any CPU
+		{B6DA72B4-115B-4381-8BF3-98B7F10107F9}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{B6DA72B4-115B-4381-8BF3-98B7F10107F9}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{B6DA72B4-115B-4381-8BF3-98B7F10107F9}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{B6DA72B4-115B-4381-8BF3-98B7F10107F9}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{495B7CE3-A762-4EBC-961E-D606B98278D8} = {A4C83ED3-5926-4243-A39E-9418037AFBF5}
@@ -58,5 +64,6 @@ Global
 		{71183168-32E5-4417-903D-CEB5497C476D} = {A4C83ED3-5926-4243-A39E-9418037AFBF5}
 		{874A13D8-5DBF-4E8B-A621-48A7877D35F1} = {A4C83ED3-5926-4243-A39E-9418037AFBF5}
 		{D94205A6-3177-40A4-A7A9-EF066B0FA944} = {A4C83ED3-5926-4243-A39E-9418037AFBF5}
+		{B6DA72B4-115B-4381-8BF3-98B7F10107F9} = {A4C83ED3-5926-4243-A39E-9418037AFBF5}
 	EndGlobalSection
 EndGlobal

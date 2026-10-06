@@ -76,7 +76,8 @@ public static class VatsimCallsignMatcher
             return snapshot;
         }
 
-        var assignedCallsigns = AssignCurrentMatches(snapshot.Contacts, pilots);
+        var simulatorContacts = snapshot.Contacts.Where(contact => contact.Source != TrackSource.TacticalLink).ToArray();
+        var assignedCallsigns = AssignCurrentMatches(simulatorContacts, pilots);
         return EnrichAssignedSnapshot(snapshot, assignedCallsigns);
     }
 
@@ -92,8 +93,9 @@ public static class VatsimCallsignMatcher
             return snapshot;
         }
 
-        var assignedCallsigns = AssignHistoricalMatches(snapshot.Contacts, history, pilots);
-        var unresolvedContacts = snapshot.Contacts
+        var simulatorContacts = snapshot.Contacts.Where(contact => contact.Source != TrackSource.TacticalLink).ToArray();
+        var assignedCallsigns = AssignHistoricalMatches(simulatorContacts, history, pilots);
+        var unresolvedContacts = simulatorContacts
             .Where(contact =>
                 string.IsNullOrWhiteSpace(contact.Callsign) &&
                 !assignedCallsigns.ContainsKey(contact.Id))

@@ -128,6 +128,8 @@ public sealed class JsonConfigStore
         settings.WindowWidth = System.Math.Clamp(settings.WindowWidth, 640, 3840);
         settings.WindowHeight = System.Math.Clamp(settings.WindowHeight, 480, 2160);
         settings.VatsimCallsignRefreshSeconds = System.Math.Clamp(settings.VatsimCallsignRefreshSeconds, 15, 300);
+        settings.TacticalLinkTelemetryRateHz = settings.TacticalLinkTelemetryRateHz >= 20 ? 20 : 10;
+        settings.TacticalLinkInterestRadiusNm = System.Math.Clamp(settings.TacticalLinkInterestRadiusNm, 10, 500);
 
         // SimConnect traffic queries are limited to 200 km, which is just
         // under 108 NM. Migrate the old 120 NM option to the safe 100 NM max
@@ -226,6 +228,8 @@ public sealed class JsonConfigStore
         }
 
         if (!IsPositive(settings.PollRateHz) ||
+            settings.TacticalLinkTelemetryRateHz is not (10 or 20) ||
+            !IsPositive(settings.TacticalLinkInterestRadiusNm) ||
             !IsPositive(settings.RenderRateFps) ||
             !IsPositive(settings.StaleSeconds) ||
             !IsPositive(settings.RemoveAfterSeconds) ||

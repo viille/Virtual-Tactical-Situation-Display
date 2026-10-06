@@ -1,0 +1,14 @@
+services:
+  tactical-link:
+    build:
+      context: ../..
+      dockerfile: src/TacticalLink.Server/Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      TACTICAL_LINK_LISTEN_URL: http://0.0.0.0:8080
+      TACTICAL_LINK_INTEREST_RADIUS_NM: ${TACTICAL_LINK_INTEREST_RADIUS_NM:-200}
+      TACTICAL_LINK_MAX_INTEREST_RADIUS_NM: ${TACTICAL_LINK_MAX_INTEREST_RADIUS_NM:-500}
+    expose:
+      - "8080"

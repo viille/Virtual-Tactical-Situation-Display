@@ -473,7 +473,15 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
             confirmedContacts.Add(enrichedContact with { Callsign = confirmation.ConfirmedCallsign });
         }
 
-        return enriched with { Contacts = confirmedContacts };
+        return enriched with
+        {
+            Contacts = confirmedContacts.Select(contact => contact with
+            {
+                Source = contact.Source == TrackSource.TacticalLink
+                    ? TrackSource.TacticalLink
+                    : string.IsNullOrWhiteSpace(contact.Callsign) ? TrackSource.SimConnect : TrackSource.SimConnectVatsim
+            }).ToArray()
+        };
     }
 
     private CallsignConfirmation UpdateCallsignConfirmation(
