@@ -178,6 +178,10 @@ public sealed class AarModuleHandlerTests
         Assert.Equal("None", added.LastPayload.GetProperty("requestMode").GetString());
         Assert.False(added.LastPayload.GetProperty("full").GetBoolean());
         Assert.True(added.LastPayload.GetProperty("requestedKg").ValueKind == JsonValueKind.Null);
+        var receiverNotice = Assert.Single(added.Events, item => item.Recipient == "receiver" && item.Kind == "TANKER_ADDED_RECEIVER");
+        Assert.Equal("None", receiverNotice.Payload.GetProperty("requestMode").GetString());
+        Assert.Equal("TankerAdded", receiverNotice.Payload.GetProperty("source").GetString());
+        Assert.Equal("receiver", receiverNotice.Payload.GetProperty("receiverParticipantId").GetString());
     }
 
     [Fact]
@@ -265,8 +269,12 @@ public sealed class AarModuleHandlerTests
         Assert.Equal("Complete", rig.OperationState(operationId));
     }
 
-    [Fact]
-    public async Task DisconnectDuringPendingProposalSuspendsForWatermarkReconciliationAndRejectsLateAcknowledgement()
+    [Theory]
+    [InlineData("DISCONNECT", "Suspended", "OPERATION_SUSPENDED")]
+    [InlineData("STOP_TRANSFER", "Contact", "TRANSFER_STOPPED")]
+    [InlineData("HOLD", "Astern", "HOLD")]
+    [InlineData("BREAKAWAY", "Breakaway", "BREAKAWAY")]
+    public async Task SafetyCommandDominatesPendingProposalAndRejectsLateAcknowledgement(string safetyCommand, string expectedState, string expectedKind)
     {
         var rig = new Rig();
         await rig.PrepareTankerAndReceiver();
@@ -285,18 +293,27 @@ public sealed class AarModuleHandlerTests
         await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId);
 
         var proposal = new TaskCompletionSource<AarServerEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var proposalCount = 0;
         rig.Handler.EventReady += message =>
         {
-            if (message.Kind == "TRANSFER_PROPOSAL" && message.ParticipantId == "tanker") proposal.TrySetResult(message);
+            if (message.Kind == "TRANSFER_PROPOSAL" && message.ParticipantId == "tanker")
+            {
+                Interlocked.Increment(ref proposalCount);
+                proposal.TrySetResult(message);
+            }
         };
         await rig.Handler.StartAsync(CancellationToken.None);
         try
         {
             var pending = await proposal.Task.WaitAsync(TimeSpan.FromSeconds(3));
-            var disconnected = await rig.Send("receiver", "DISCONNECT", new { }, operationId: operationId);
+            var commandPeer = safetyCommand == "DISCONNECT" ? "receiver" : "tanker";
+            var safety = await rig.Send(commandPeer, safetyCommand, new { }, operationId: operationId);
 
-            Assert.Equal("OPERATION_SUSPENDED", disconnected.LastKind);
-            Assert.Equal("Suspended", rig.OperationState(operationId));
+            Assert.Equal(expectedKind, safety.LastKind);
+            Assert.Equal(expectedState, rig.OperationState(operationId));
+            var snapshot = await rig.Send("tanker", "GET_STATE", new { });
+            var operation = snapshot.LastPayload.GetProperty("operations").EnumerateArray().Single(item => item.GetProperty("operationId").GetString() == operationId);
+            Assert.False(operation.GetProperty("fuelOnAuthorized").GetBoolean());
             var staleAck = await rig.Send("tanker", "TRANSFER_ACK", new
             {
                 proposalId = JsonSerializer.SerializeToElement(pending.Payload).GetProperty("proposalId").GetString(),
@@ -304,7 +321,9 @@ public sealed class AarModuleHandlerTests
                 appliedCumulativeKg = 10d
             }, operationId: operationId);
             Assert.Equal("MODULE_ERROR", staleAck.LastKind);
-            Assert.Equal("Suspended", rig.OperationState(operationId));
+            Assert.Equal(expectedState, rig.OperationState(operationId));
+            await Task.Delay(350);
+            Assert.Equal(1, Volatile.Read(ref proposalCount));
         }
         finally
         {
@@ -375,9 +394,14 @@ public sealed class AarModuleHandlerTests
         Assert.Equal("DryHookup", accepted.LastPayload.GetProperty("transferMode").GetString());
         Assert.Equal(0, accepted.LastPayload.GetProperty("plannedKg").GetDouble());
         Assert.Equal(0, rig.FuelSummary("tanker").GetProperty("committedFuelKg").GetDouble());
+        await rig.Send("tanker", "FUEL_STATUS", new { currentFuelKg = 1000, capacityKg = 2000, adapterReady = false });
+        await rig.Send("receiver", "FUEL_STATUS", new { currentFuelKg = 100, capacityKg = 500, adapterReady = false });
+        Assert.Equal("Accepted", rig.OperationState(operationId));
+        await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
+        await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
         var start = await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId);
         Assert.Equal("MODULE_ERROR", start.LastKind);
-        Assert.Equal("Accepted", rig.OperationState(operationId));
+        Assert.Equal("ClearedContact", rig.OperationState(operationId));
     }
 
     [Fact]

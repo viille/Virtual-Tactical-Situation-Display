@@ -265,7 +265,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             : null;
         if (!ready && state.Availability == "Available") SetAvailabilityState(context, state, "Unavailable");
         if (!ready)
-            foreach (var operation in _operations.Values.Where(item => !IsTerminal(item.State) && (item.TankerId == peer.ParticipantId || item.ReceiverId == peer.ParticipantId)))
+            foreach (var operation in _operations.Values.Where(item => item.TransferMode == "Fuel" && !IsTerminal(item.State) && (item.TankerId == peer.ParticipantId || item.ReceiverId == peer.ParticipantId)))
                 Suspend(operation, "FUEL_ADAPTER_UNAVAILABLE", TimeSpan.FromSeconds(5));
         return Result("FUEL_STATUS_ACCEPTED", null, null, new { adapterReady = ready });
     }
@@ -411,13 +411,25 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         if (now - operation.LastTransferProposalAt < TimeSpan.FromSeconds(1)) return;
         var tankerPoses = GetParticipant(operation.TankerId).Poses;
         var receiverPoses = GetParticipant(operation.ReceiverId).Poses;
-        if (tankerPoses.Count == 0 || receiverPoses.Count == 0) return;
+        if (tankerPoses.Count == 0 || receiverPoses.Count == 0)
+        {
+            Suspend(operation, "CONTACT_POSE_UNAVAILABLE");
+            return;
+        }
         var poseTime = tankerPoses.Last().TimestampUtc < receiverPoses.Last().TimestampUtc ? tankerPoses.Last().TimestampUtc : receiverPoses.Last().TimestampUtc;
         var tankerPose = At(tankerPoses, poseTime);
         var receiverPose = At(receiverPoses, poseTime);
         if (tankerPose is null || receiverPose is null ||
-            !AarContactGeometry.TryMeasure(tankerPose, receiverPose, _contactConfiguration, now, out var relative) ||
-            !AarContactGeometry.IsInsideRelease(relative, _contactConfiguration)) return;
+            !AarContactGeometry.TryMeasure(tankerPose, receiverPose, _contactConfiguration, now, out var relative))
+        {
+            Suspend(operation, "CONTACT_GEOMETRY_UNCERTAIN");
+            return;
+        }
+        if (!AarContactGeometry.IsInsideRelease(relative, _contactConfiguration))
+        {
+            ReturnToAstern(operation);
+            return;
+        }
         var tanker = GetParticipant(operation.TankerId);
         var receiver = GetParticipant(operation.ReceiverId);
         if (tanker.CurrentFuelKg is null || receiver.CurrentFuelKg is null || receiver.FuelCapacityKg is null)
@@ -637,7 +649,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var item = new AarRequest("req_" + Guid.NewGuid().ToString("N"), receiverId, peer.ParticipantId, null, _clock.GetUtcNow(), ++_nextQueueOrder)
         { Source = "TankerAdded", TransferMode = transferMode };
         _requests.Add(item.Id, item);
-        Notify(context, receiverId, "TANKER_ADDED_RECEIVER", null, null, new { requestId = item.Id, tankerParticipantId = peer.ParticipantId, status = "Pending" });
+        Notify(context, receiverId, "TANKER_ADDED_RECEIVER", null, null, RequestView(item));
         Notify(context, peer.ParticipantId, "QUEUE_UPDATED", null, null, QueueView(peer.ParticipantId));
         return Result("RECEIVER_ADDED_TO_QUEUE", null, null, RequestView(item), item.Id);
     }
@@ -1159,7 +1171,8 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                     {
                         var tanker = GetParticipant(operation.TankerId);
                         var receiver = GetParticipant(operation.ReceiverId);
-                        var fuelStale = now - tanker.FuelUpdatedAt > TimeSpan.FromSeconds(5) || now - receiver.FuelUpdatedAt > TimeSpan.FromSeconds(5);
+                        var fuelStale = operation.TransferMode == "Fuel" &&
+                            (now - tanker.FuelUpdatedAt > TimeSpan.FromSeconds(5) || now - receiver.FuelUpdatedAt > TimeSpan.FromSeconds(5));
                         var poseStale = tanker.Poses.Count == 0 || receiver.Poses.Count == 0 ||
                             now - tanker.Poses.Last().TimestampUtc > _contactConfiguration.EffectiveMaximumPoseAge ||
                             now - receiver.Poses.Last().TimestampUtc > _contactConfiguration.EffectiveMaximumPoseAge;

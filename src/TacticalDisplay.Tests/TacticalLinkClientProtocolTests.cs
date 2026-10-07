@@ -166,6 +166,20 @@ public sealed class TacticalLinkClientProtocolTests
     }
 
     [Fact]
+    public void AarClientTracksTankerAddedReceiverRequestForReceiverCancellation()
+    {
+        var client = new TacticalLinkClient(null!);
+        using var aar = new AarClient(client, CancellationToken.None);
+        client.HandleMessage("{\"protocolVersion\":1,\"type\":\"CONNECTED\",\"participantId\":\"local-receiver\"}");
+
+        client.HandleMessage("""
+            {"protocolVersion":1,"type":"MODULE_EVENT","module":"aar","moduleProtocolVersion":1,"transportSequence":1,"kind":"TANKER_ADDED_RECEIVER","payload":{"requestId":"req-added","receiverParticipantId":"local-receiver","tankerParticipantId":"tanker","source":"TankerAdded","requestMode":"None","requestedKg":null,"status":"Pending"}}
+            """);
+
+        Assert.Equal("req-added", aar.State.OwnPendingRequestId);
+    }
+
+    [Fact]
     public void AarClientKeepsStructuredSafeMaximumForTheViewModel()
     {
         var client = new TacticalLinkClient(null!);
