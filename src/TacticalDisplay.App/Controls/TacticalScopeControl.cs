@@ -794,7 +794,27 @@ public sealed class TacticalScopeControl : FrameworkElement
         var text = solution.HasSolution
             ? $"INT {target.DisplayName} HDG {FormatDirection(solution.HeadingDeg)} TTI {FormatInterceptTime(solution.TimeSeconds)}"
             : $"INT {target.DisplayName} NO INT";
-        DrawTopReadout(dc, text, scopeCenter.X + 150, 10.0, solution.HasSolution ? Color.FromRgb(255, 225, 120) : Color.FromRgb(255, 125, 125));
+        DrawBottomReadout(dc, text, scopeCenter.X, RenderSize.Height - 24.0, solution.HasSolution ? Color.FromRgb(255, 225, 120) : Color.FromRgb(255, 125, 125));
+    }
+
+    private void DrawBottomReadout(DrawingContext dc, string text, double centerX, double y, Color foreground)
+    {
+        var formatted = CreateFormattedText(text, foreground, 14, FontWeights.Bold);
+        var point = new Point(centerX - formatted.Width / 2.0, y - formatted.Height);
+        if (RenderSize.Width > 0)
+        {
+            point.X = Math.Clamp(point.X, 2, Math.Max(2, RenderSize.Width - formatted.Width - 18));
+        }
+
+        var background = new SolidColorBrush(Color.FromArgb(176, 3, 10, 16));
+        var border = new Pen(new SolidColorBrush(Color.FromArgb(110, 110, 180, 170)), 1);
+        dc.DrawRoundedRectangle(
+            background,
+            border,
+            new Rect(point.X - 8, point.Y - 3, formatted.Width + 16, formatted.Height + 6),
+            2,
+            2);
+        dc.DrawText(formatted, point);
     }
 
     private void DrawInterceptLabel(DrawingContext dc, ComputedTarget target, InterceptSolution solution, Point point)
