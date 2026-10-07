@@ -15,7 +15,8 @@ public static class TrafficFeedFactory
         ITrafficDataFeed feed;
         if (DataSourceModes.IsMsfs(settings.DataSourceMode))
         {
-            feed = new SimConnectTrafficFeed(settings);
+            var simConnectFeed = new SimConnectTrafficFeed(settings);
+            feed = new AarFuelAdapterFeed(simConnectFeed, new MsfsAarFuelAdapter(simConnectFeed));
         }
         else if (DataSourceModes.IsXPlane12(settings.DataSourceMode))
         {

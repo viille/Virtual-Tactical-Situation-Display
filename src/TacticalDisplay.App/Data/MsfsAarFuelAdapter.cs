@@ -122,6 +122,8 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
 
     public void MarkNotInstalled() => SetRuntime(AarBridgeRuntimeState.NotInstalled, "MSFS AAR Bridge is required for live fuel transfer. Dry Hookup remains available without the bridge.");
 
+    public void MarkSimulatorDisconnected() => SetRuntime(AarBridgeRuntimeState.Error, "Microsoft Flight Simulator is disconnected; live fuel transfer is stopped.");
+
     public void MarkInstalledNotRunning(string? version) 
     {
         lock (_gate) _bridgeVersion = version;

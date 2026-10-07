@@ -1,5 +1,8 @@
 using System.IO;
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Text;
+using System.Text.Json;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.Core.Math;
 using TacticalDisplay.Core.Models;
@@ -7,7 +10,7 @@ using TacticalDisplay.Core.Services;
 
 namespace TacticalDisplay.App.Data;
 
-public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IAarFuelAdapter
+public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IAarFuelAdapter, IAarBridgeTransport
 {
     private const string NativeSimConnectDllName = "SimConnect.dll";
     private const string LogSource = "MSFS";
@@ -20,7 +23,19 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
     private static readonly TimeSpan MinimumTrafficRetention = TimeSpan.FromSeconds(2);
     private readonly TacticalDisplaySettings _settings;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(3);
+    private const string AarBridgeRequestEvent = "VTSD_AAR_REQUEST";
+    private const string AarBridgeResponseEvent = "VTSD_AAR_RESPONSE";
+    private const uint AarBridgeResponseEventId = 1500;
+    private const uint CommBusBroadcastToWasm = 1 << 1;
+    private static readonly TimeSpan AarBridgeResponseTimeout = TimeSpan.FromSeconds(3);
+    private static readonly JsonSerializerOptions AarBridgeJson = new(JsonSerializerDefaults.Web);
     private readonly object _stateLock = new();
+    private readonly object _commBusLock = new();
+    private readonly ConcurrentDictionary<string, TaskCompletionSource<AarBridgeResponse>> _pendingAarBridgeResponses = new(StringComparer.Ordinal);
+    private readonly StringBuilder _aarBridgeResponseBuffer = new();
+    private NativeSimConnectApi? _activeSimConnectApi;
+    private IntPtr _activeSimConnectHandle;
+    private uint _aarBridgeResponseParts;
     private CancellationTokenSource? _loopCts;
     private Task? _loopTask;
     private bool _isRunning;
@@ -56,6 +71,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
     }
     public bool AarSamplingEnabled { get => Volatile.Read(ref _aarSamplingEnabled); set => Volatile.Write(ref _aarSamplingEnabled, value); }
     public bool IsConnected { get; private set; }
+    bool IAarBridgeTransport.IsConnected => IsConnected;
     public bool IsAvailable => IsConnected;
     public bool CanReadFuel => IsConnected && _latestAarFuel is not null;
     // The public MSFS SimConnect fuel SimVars are readable, but their documented Settable column is empty.
@@ -74,6 +90,41 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
             return Task.FromResult(new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, "Fuel delta must be finite and non-zero."));
         return Task.FromResult(new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed,
             "Generic MSFS SimConnect fuel writing is not available; the simulator was not changed."));
+    }
+
+    public async Task<AarBridgeResponse> SendAsync(AarBridgeRequest request, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var completion = new TaskCompletionSource<AarBridgeResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        if (!_pendingAarBridgeResponses.TryAdd(request.RequestId, completion))
+            throw new InvalidOperationException("A duplicate AAR bridge request ID is already pending.");
+
+        try
+        {
+            var payload = JsonSerializer.SerializeToUtf8Bytes(request, AarBridgeJson);
+            var nullTerminated = new byte[payload.Length + 1];
+            Buffer.BlockCopy(payload, 0, nullTerminated, 0, payload.Length);
+            lock (_commBusLock)
+            {
+                var api = _activeSimConnectApi;
+                var handle = _activeSimConnectHandle;
+                if (!IsConnected || api?.CallCommBusEvent is null || handle == IntPtr.Zero)
+                    throw new NotSupportedException("This SimConnect session does not expose the MSFS 2024 CommBus API required by the AAR Bridge.");
+                var data = Marshal.AllocHGlobal(nullTerminated.Length);
+                try
+                {
+                    Marshal.Copy(nullTerminated, 0, data, nullTerminated.Length);
+                    var result = api.CallCommBusEvent(handle, AarBridgeRequestEvent, CommBusBroadcastToWasm, (uint)nullTerminated.Length, data);
+                    if (result != 0) throw new IOException($"SimConnect_CallCommBusEvent failed with HRESULT 0x{result:X8}.");
+                }
+                finally { Marshal.FreeHGlobal(data); }
+            }
+            return await completion.Task.WaitAsync(AarBridgeResponseTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _pendingAarBridgeResponses.TryRemove(request.RequestId, out _);
+        }
     }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -172,6 +223,20 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         {
             DataSourceDebugLog.Info(LogSource, "SimConnect session opened");
             ResetSessionTrafficState();
+            lock (_commBusLock)
+            {
+                _activeSimConnectApi = api;
+                _activeSimConnectHandle = simHandle;
+                _aarBridgeResponseBuffer.Clear();
+                _aarBridgeResponseParts = 0;
+            }
+            var subscribeCommBus = api.SubscribeToCommBusEvent;
+            if (subscribeCommBus is not null)
+            {
+                var subscribeResult = subscribeCommBus(simHandle, AarBridgeResponseEventId, AarBridgeResponseEvent);
+                if (subscribeResult != 0)
+                    DataSourceDebugLog.Warn(LogSource, $"AAR bridge CommBus response subscription failed | hresult=0x{subscribeResult:X8}");
+            }
             api.SubscribeToSystemEvent(simHandle, (uint)SystemEventId.ObjectAdded, "ObjectAdded");
             api.SubscribeToSystemEvent(simHandle, (uint)SystemEventId.ObjectRemoved, "ObjectRemoved");
             ConfigureDataDefinitions(api, simHandle);
@@ -258,6 +323,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         finally
         {
             DataSourceDebugLog.Info(LogSource, "Closing SimConnect session");
+            lock (_commBusLock)
+            {
+                _activeSimConnectApi = null;
+                _activeSimConnectHandle = IntPtr.Zero;
+            }
+            FailPendingAarBridgeRequests(new IOException("The MSFS SimConnect session closed."));
             api.Close(simHandle);
             SetConnected(false, forceNotify: true);
         }
@@ -313,10 +384,60 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
                 case SimConnectRecvId.SimobjectDataByType:
                     HandleSimobjectData(pData);
                     break;
+                case SimConnectRecvId.CommBus:
+                    HandleAarBridgeResponse(pData, cbData);
+                    break;
             }
         }
 
         return true;
+    }
+
+    private void HandleAarBridgeResponse(IntPtr pData, uint byteCount)
+    {
+        if (byteCount <= 32) return;
+        var prefix = Marshal.PtrToStructure<SimConnectRecvCommBusPrefix>(pData);
+        if (prefix.EventId != AarBridgeResponseEventId || prefix.Parts == 0 || prefix.PartIndex >= prefix.Parts) return;
+        var payloadLength = checked((int)byteCount - 32);
+        var bytes = new byte[payloadLength];
+        Marshal.Copy(IntPtr.Add(pData, 32), bytes, 0, payloadLength);
+        var chunk = Encoding.UTF8.GetString(bytes).TrimEnd('\0');
+        string? completeMessage = null;
+        lock (_commBusLock)
+        {
+            if (prefix.PartIndex == 0)
+            {
+                _aarBridgeResponseBuffer.Clear();
+                _aarBridgeResponseParts = prefix.Parts;
+            }
+            if (_aarBridgeResponseParts != prefix.Parts) return;
+            _aarBridgeResponseBuffer.Append(chunk);
+            if (prefix.PartIndex + 1 == prefix.Parts)
+            {
+                completeMessage = _aarBridgeResponseBuffer.ToString();
+                _aarBridgeResponseBuffer.Clear();
+                _aarBridgeResponseParts = 0;
+            }
+        }
+        if (completeMessage is null) return;
+
+        try
+        {
+            var response = JsonSerializer.Deserialize<AarBridgeResponse>(completeMessage, AarBridgeJson)
+                ?? throw new InvalidDataException("The AAR Bridge returned an empty CommBus response.");
+            if (string.IsNullOrWhiteSpace(response.RequestId) || !_pendingAarBridgeResponses.TryGetValue(response.RequestId, out var completion)) return;
+            completion.TrySetResult(response);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidDataException)
+        {
+            DataSourceDebugLog.Warn(LogSource, $"Invalid AAR bridge CommBus response: {ex.Message}");
+        }
+    }
+
+    private void FailPendingAarBridgeRequests(Exception error)
+    {
+        foreach (var pending in _pendingAarBridgeResponses.Values) pending.TrySetException(error);
+        _pendingAarBridgeResponses.Clear();
     }
 
     private void HandleObjectAddRemove(IntPtr pData)
@@ -815,6 +936,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         public SimConnectRequestDataOnSimObjectTypeDelegate RequestDataOnSimObjectType { get; }
         public SimConnectGetNextDispatchDelegate GetNextDispatch { get; }
         public SimConnectSubscribeToSystemEventDelegate SubscribeToSystemEvent { get; }
+        public SimConnectCallCommBusEventDelegate? CallCommBusEvent { get; }
+        public SimConnectSubscribeToCommBusEventDelegate? SubscribeToCommBusEvent { get; }
 
         private NativeSimConnectApi(
             IntPtr libHandle,
@@ -824,7 +947,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
             SimConnectRequestDataOnSimObjectDelegate requestOnObject,
             SimConnectRequestDataOnSimObjectTypeDelegate requestByType,
             SimConnectGetNextDispatchDelegate getNextDispatch,
-            SimConnectSubscribeToSystemEventDelegate subscribeToSystemEvent)
+            SimConnectSubscribeToSystemEventDelegate subscribeToSystemEvent,
+            SimConnectCallCommBusEventDelegate? callCommBusEvent,
+            SimConnectSubscribeToCommBusEventDelegate? subscribeToCommBusEvent)
         {
             _libHandle = libHandle;
             Open = open;
@@ -834,6 +959,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
             RequestDataOnSimObjectType = requestByType;
             GetNextDispatch = getNextDispatch;
             SubscribeToSystemEvent = subscribeToSystemEvent;
+            CallCommBusEvent = callCommBusEvent;
+            SubscribeToCommBusEvent = subscribeToCommBusEvent;
         }
 
         public static NativeSimConnectApi? TryCreate(string dllPath)
@@ -848,7 +975,10 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
                 var requestByType = GetDelegate<SimConnectRequestDataOnSimObjectTypeDelegate>(handle, "SimConnect_RequestDataOnSimObjectType");
                 var getNextDispatch = GetDelegate<SimConnectGetNextDispatchDelegate>(handle, "SimConnect_GetNextDispatch");
                 var subscribeToSystemEvent = GetDelegate<SimConnectSubscribeToSystemEventDelegate>(handle, "SimConnect_SubscribeToSystemEvent");
-                return new NativeSimConnectApi(handle, open, close, addToDef, requestOnObject, requestByType, getNextDispatch, subscribeToSystemEvent);
+                var callCommBusEvent = TryGetDelegate<SimConnectCallCommBusEventDelegate>(handle, "SimConnect_CallCommBusEvent");
+                var subscribeToCommBusEvent = TryGetDelegate<SimConnectSubscribeToCommBusEventDelegate>(handle, "SimConnect_SubscribeToCommBusEvent");
+                return new NativeSimConnectApi(handle, open, close, addToDef, requestOnObject, requestByType, getNextDispatch, subscribeToSystemEvent,
+                    callCommBusEvent, subscribeToCommBusEvent);
             }
             catch (Exception ex)
             {
@@ -862,6 +992,11 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
             var fnPtr = NativeLibrary.GetExport(libHandle, exportName);
             return Marshal.GetDelegateForFunctionPointer<T>(fnPtr);
         }
+
+        private static T? TryGetDelegate<T>(IntPtr libHandle, string exportName) where T : Delegate =>
+            NativeLibrary.TryGetExport(libHandle, exportName, out var function)
+                ? Marshal.GetDelegateForFunctionPointer<T>(function)
+                : null;
 
         public void Dispose()
         {
@@ -923,12 +1058,31 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
     [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Ansi)]
     private delegate int SimConnectSubscribeToSystemEventDelegate(IntPtr hSimConnect, uint EventID, string SystemEventName);
 
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Ansi)]
+    private delegate int SimConnectCallCommBusEventDelegate(IntPtr hSimConnect, string EventName, uint BroadcastTo, uint BufferSize, IntPtr Data);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Ansi)]
+    private delegate int SimConnectSubscribeToCommBusEventDelegate(IntPtr hSimConnect, uint EventID, string EventName);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct SimConnectRecv
     {
         public uint dwSize;
         public uint dwVersion;
         public uint dwID;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SimConnectRecvCommBusPrefix
+    {
+        public uint Size;
+        public uint Version;
+        public uint Id;
+        public uint RequestId;
+        public uint ArraySize;
+        public uint PartIndex;
+        public uint Parts;
+        public uint EventId;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1007,7 +1161,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         EventFilename = 6,
         EventFrame = 7,
         SimobjectData = 8,
-        SimobjectDataByType = 9
+        SimobjectDataByType = 9,
+        CommBus = 44
     }
 
     private enum SystemEventId : uint
