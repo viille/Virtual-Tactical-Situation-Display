@@ -23,8 +23,7 @@ public sealed record TacticalTelemetry(
     double? VerticalSpeedFpm = null,
     double? VelocityNorthMps = null,
     double? VelocityEastMps = null,
-    double? VelocityDownMps = null,
-    string? AircraftType = null);
+    double? VelocityDownMps = null);
 
 public sealed record TacticalPeer(
     string ParticipantId,

@@ -38,7 +38,7 @@ public sealed class TrafficFusion
         VelocityNorthMps: telemetry.VelocityNorthMps,
         VelocityEastMps: telemetry.VelocityEastMps,
         VelocityDownMps: telemetry.VelocityDownMps,
-        AircraftType: telemetry.AircraftType);
+        AircraftType: peer.AircraftType);
 }
 
 public sealed record TrafficFusionResult(

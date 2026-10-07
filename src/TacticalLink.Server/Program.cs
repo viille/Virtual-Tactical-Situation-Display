@@ -35,8 +35,8 @@ app.Map("/v1", async (HttpContext context, TacticalLinkHub hub) =>
 });
 app.Run();
 
-public sealed record AuthenticatedParticipant(string UserId, string VatsimCid, string Callsign, DateTimeOffset ExpiresAt);
-public sealed record ParticipantIdentity(string ParticipantId, string UserId, string VatsimCid, string Callsign, DateTimeOffset ExpiresAt);
+public sealed record AuthenticatedParticipant(string UserId, string VatsimCid, string Callsign, string? AircraftType, DateTimeOffset ExpiresAt);
+public sealed record ParticipantIdentity(string ParticipantId, string UserId, string VatsimCid, string Callsign, string? AircraftType, DateTimeOffset ExpiresAt);
 
 public static class TacticalJwtValidator
 {
@@ -72,11 +72,20 @@ public static class TacticalJwtValidator
             var userId = Claim("user_id");
             var cid = Claim("vatsim_cid");
             var callsign = Claim("callsign");
+            string? aircraftType = null;
+            if (root.TryGetProperty("aircraft_type", out var aircraftTypeClaim) && aircraftTypeClaim.ValueKind != JsonValueKind.Null)
+            {
+                if (aircraftTypeClaim.ValueKind != JsonValueKind.String) throw new UnauthorizedAccessException();
+                aircraftType = aircraftTypeClaim.GetString()?.Trim().ToUpperInvariant();
+                if (aircraftType is { Length: > 0 } && (aircraftType.Length > 12 || aircraftType.Length < 2 || aircraftType.Any(character => !char.IsAsciiLetterOrDigit(character))))
+                    throw new UnauthorizedAccessException();
+                if (string.IsNullOrEmpty(aircraftType)) aircraftType = null;
+            }
             if (string.IsNullOrWhiteSpace(userId) || Claim("sub") != userId ||
                 string.IsNullOrWhiteSpace(cid) ||
                 string.IsNullOrWhiteSpace(callsign) || callsign.Length > 16)
                 throw new UnauthorizedAccessException();
-            return new(userId, cid, callsign, DateTimeOffset.FromUnixTimeSeconds(root.GetProperty("exp").GetInt64()));
+            return new(userId, cid, callsign, aircraftType, DateTimeOffset.FromUnixTimeSeconds(root.GetProperty("exp").GetInt64()));
         }
         catch (UnauthorizedAccessException) { throw; }
         catch (Exception ex) when (ex is JsonException or FormatException or CryptographicException or KeyNotFoundException or InvalidOperationException or ArgumentException)
@@ -97,7 +106,7 @@ public static class TacticalJwtValidator
 
 public sealed class TacticalLinkHub
 {
-    private static readonly HashSet<string> AllowedCapabilities = ["identity", "telemetry", "aar.receiver", "aar.tanker", "aar.boom_operator", "vtsc", "formation"];
+    private static readonly IAircraftCapabilityResolver AircraftCapabilities = new StaticAircraftCapabilityResolver();
     private static readonly HashSet<string> AllowedTankerStates = ["Off", "Available", "Busy", "Unavailable"];
     private readonly ConcurrentDictionary<string, PeerConnection> _peers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, PresenceIdentity> _presences = new(StringComparer.Ordinal);
@@ -143,7 +152,7 @@ public sealed class TacticalLinkHub
         if (replaced is not null) replaced.Dispose();
         peer.InterestRadiusNm = _defaultRadiusNm;
         peer.StartWriter(cancellationToken);
-        peer.TrySend(new { type = "CONNECTED", participantId = peer.Identity.ParticipantId, callsign = peer.Identity.Callsign, connectionGeneration = generation });
+        peer.TrySend(new { type = "CONNECTED", participantId = peer.Identity.ParticipantId, callsign = peer.Identity.Callsign, aircraftType = peer.Identity.AircraftType, capabilities = peer.Capabilities, operationalStates = peer.OperationalStates, connectionGeneration = generation });
         _ = Task.Run(async () =>
         {
             try
@@ -257,7 +266,7 @@ public sealed class TacticalLinkHub
         {
             case "CONNECT":
                 peer.IsConnected = true;
-                peer.SetCapabilities(root);
+                peer.UpdateOperationalStates(root);
                 await RefreshInterestAsync(cancellationToken);
                 break;
             case "DISCONNECT":
@@ -290,7 +299,8 @@ public sealed class TacticalLinkHub
                 await RefreshInterestAsync(cancellationToken);
                 break;
             case "CAPABILITY_UPDATE":
-                peer.SetCapabilities(root);
+                peer.UpdateOperationalStates(root);
+                peer.TrySend(new { type = "CAPABILITY_UPDATED", capabilities = peer.Capabilities, operationalStates = peer.OperationalStates });
                 await RefreshInterestAsync(cancellationToken);
                 break;
             case "AUTH_REFRESH":
@@ -301,8 +311,8 @@ public sealed class TacticalLinkHub
                         var refreshed = TacticalJwtValidator.Validate("Bearer " + jwt);
                         if (refreshed.UserId == peer.Identity.UserId && refreshed.VatsimCid == peer.Identity.VatsimCid)
                         {
-                            peer.UpdateIdentity(new ParticipantIdentity(peer.Identity.ParticipantId, refreshed.UserId, refreshed.VatsimCid, refreshed.Callsign, refreshed.ExpiresAt));
-                            peer.TrySend(new { type = "AUTH_REFRESHED", callsign = refreshed.Callsign, expiresAt = refreshed.ExpiresAt });
+                            peer.UpdateIdentity(new ParticipantIdentity(peer.Identity.ParticipantId, refreshed.UserId, refreshed.VatsimCid, refreshed.Callsign, refreshed.AircraftType, refreshed.ExpiresAt));
+                            peer.TrySend(new { type = "AUTH_REFRESHED", callsign = refreshed.Callsign, aircraftType = refreshed.AircraftType, capabilities = peer.Capabilities, operationalStates = peer.OperationalStates, expiresAt = refreshed.ExpiresAt });
                             await RefreshInterestAsync(cancellationToken);
                         }
                         else peer.TrySend(new { type = "ERROR", code = "IDENTITY_MISMATCH", message = "The refreshed identity did not match this connection." });
@@ -350,7 +360,7 @@ public sealed class TacticalLinkHub
     }
 
     private static ParticipantIdentity ToParticipantIdentity(string participantId, AuthenticatedParticipant identity) =>
-        new(participantId, identity.UserId, identity.VatsimCid, identity.Callsign, identity.ExpiresAt);
+        new(participantId, identity.UserId, identity.VatsimCid, identity.Callsign, identity.AircraftType, identity.ExpiresAt);
 
     internal void ExpirePresence(string userId, string participantId, long generation)
     {
@@ -362,7 +372,13 @@ public sealed class TacticalLinkHub
     {
         if (!_presences.TryGetValue(userId, out var presence) || presence.ParticipantId != participantId || presence.Generation != generation || presence.Connected)
             return;
-        if (presence.GraceExpiresAt is { } expiry && expiry > _timeProvider.GetUtcNow()) return;
+        if (presence.GraceExpiresAt is { } expiry && expiry > _timeProvider.GetUtcNow())
+        {
+            if (_peers.TryGetValue(participantId, out var pendingPeer) && pendingPeer.Generation == generation)
+                pendingPeer.StartGrace(expiry - _timeProvider.GetUtcNow() + TimeSpan.FromMilliseconds(20), _timeProvider,
+                    () => ExpirePresence(userId, participantId, generation));
+            return;
+        }
         _presences.TryRemove(userId, out _);
         if (_peers.TryGetValue(participantId, out var peer) && peer.Generation == generation && _peers.TryRemove(participantId, out var removed))
             removed.Dispose();
@@ -479,14 +495,14 @@ public sealed class TacticalLinkHub
         type,
         participantId = peer.Identity.ParticipantId,
         callsign = peer.Identity.Callsign,
-        aircraftType = peer.Telemetry?.AircraftType,
+        aircraftType = peer.Identity.AircraftType,
         capabilities = peer.Capabilities,
         operationalStates = peer.OperationalStates,
         telemetry = peer.Telemetry
     };
 
     private static string IdentityVersion(PeerConnection peer) =>
-        $"{peer.Identity.Callsign}|{peer.Telemetry?.AircraftType}|{string.Join(',', peer.Capabilities.Order(StringComparer.Ordinal))}|{string.Join(',', peer.OperationalStates.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}={pair.Value}"))}";
+        $"{peer.Identity.Callsign}|{peer.Identity.AircraftType}|{string.Join(',', peer.Capabilities.Order(StringComparer.Ordinal))}|{string.Join(',', peer.OperationalStates.OrderBy(pair => pair.Key).Select(pair => $"{pair.Key}={pair.Value}"))}";
 
     private static bool IsValidTelemetry(TacticalTelemetry telemetry) =>
         double.IsFinite(telemetry.LatitudeDeg) && telemetry.LatitudeDeg is >= -90 and <= 90 &&
@@ -500,8 +516,16 @@ public sealed class TacticalLinkHub
         (!telemetry.VerticalSpeedFpm.HasValue || double.IsFinite(telemetry.VerticalSpeedFpm.Value) && System.Math.Abs(telemetry.VerticalSpeedFpm.Value) <= 20000) &&
         (!telemetry.VelocityNorthMps.HasValue || double.IsFinite(telemetry.VelocityNorthMps.Value)) &&
         (!telemetry.VelocityEastMps.HasValue || double.IsFinite(telemetry.VelocityEastMps.Value)) &&
-        (!telemetry.VelocityDownMps.HasValue || double.IsFinite(telemetry.VelocityDownMps.Value)) &&
-        (telemetry.AircraftType is null || telemetry.AircraftType.Length <= 32 && telemetry.AircraftType.All(character => char.IsLetterOrDigit(character) || character is '-' or ' '));
+        (!telemetry.VelocityDownMps.HasValue || double.IsFinite(telemetry.VelocityDownMps.Value));
+
+    private static HashSet<string> CapabilitiesFor(string? aircraftType)
+    {
+        var capabilities = new HashSet<string>(["identity", "telemetry"], StringComparer.Ordinal);
+        var profile = AircraftCapabilities.Resolve(aircraftType);
+        if (profile.CanTanker) capabilities.Add("aar.tanker");
+        if (profile.CanReceive) capabilities.Add("aar.receiver");
+        return capabilities;
+    }
 
     private static double ReadRadius() => double.TryParse(Environment.GetEnvironmentVariable("TACTICAL_LINK_INTEREST_RADIUS_NM"), out var radius) ? System.Math.Clamp(radius, 1, ReadMaxRadius()) : 200;
     private static double ReadMaxRadius() => double.TryParse(Environment.GetEnvironmentVariable("TACTICAL_LINK_MAX_INTEREST_RADIUS_NM"), out var radius) ? System.Math.Clamp(radius, 1, 1000) : 500;
@@ -516,7 +540,15 @@ public sealed class TacticalLinkHub
         private readonly Dictionary<string, string> _latestTelemetry = new(StringComparer.Ordinal);
         private readonly SemaphoreSlim _wakeWriter = new(0);
         private volatile bool _disposed;
-        public PeerConnection(ParticipantIdentity identity, long generation, WebSocket socket) { Identity = identity; Generation = generation; _socket = socket; IsConnected = true; Capabilities = ["identity", "telemetry"]; }
+        public PeerConnection(ParticipantIdentity identity, long generation, WebSocket socket)
+        {
+            Identity = identity;
+            Generation = generation;
+            _socket = socket;
+            IsConnected = true;
+            Capabilities = CapabilitiesFor(identity.AircraftType);
+            if (Capabilities.Contains("aar.tanker")) OperationalStates["tankerAvailability"] = "Off";
+        }
         public ParticipantIdentity Identity { get; private set; }
         public long Generation { get; }
         public bool IsConnected { get; set; }
@@ -538,17 +570,18 @@ public sealed class TacticalLinkHub
         private string _closeReason = "closed";
         public PeerConnection Resume(ParticipantIdentity identity, long generation, WebSocket socket)
         {
-            return new PeerConnection(identity, generation, socket)
+            var resumed = new PeerConnection(identity, generation, socket)
             {
                 Telemetry = Telemetry,
                 LastTelemetryReceivedAt = LastTelemetryReceivedAt,
                 LastSequence = 0,
                 InterestRadiusNm = InterestRadiusNm,
                 NearbyParticipantIds = new HashSet<string>(NearbyParticipantIds, StringComparer.Ordinal),
-                PeerIdentityVersions = new Dictionary<string, string>(PeerIdentityVersions, StringComparer.Ordinal),
-                Capabilities = new HashSet<string>(Capabilities, StringComparer.Ordinal),
-                OperationalStates = new Dictionary<string, string>(OperationalStates, StringComparer.Ordinal)
+                PeerIdentityVersions = new Dictionary<string, string>(PeerIdentityVersions, StringComparer.Ordinal)
             };
+            if (resumed.Capabilities.Contains("aar.tanker") && OperationalStates.TryGetValue("tankerAvailability", out var availability))
+                resumed.OperationalStates["tankerAvailability"] = availability;
+            return resumed;
         }
 
         public void StartWriter(CancellationToken cancellationToken) => _ = Task.Run(async () =>
@@ -627,13 +660,13 @@ public sealed class TacticalLinkHub
             lock (_telemetryGate) _latestTelemetry.Remove(participantId);
         }
 
-        public void SetCapabilities(JsonElement root)
+        public void UpdateOperationalStates(JsonElement root)
         {
-            if (root.TryGetProperty("capabilities", out var values) && values.ValueKind == JsonValueKind.Array)
-                Capabilities = values.EnumerateArray().Select(value => value.GetString()).Where(value => value is not null && AllowedCapabilities.Contains(value)).Cast<string>().ToHashSet(StringComparer.Ordinal);
-            if (Capabilities.Contains("aar.tanker") && !OperationalStates.ContainsKey("tankerAvailability"))
-                OperationalStates["tankerAvailability"] = "Off";
-            if (!Capabilities.Contains("aar.tanker")) OperationalStates.Remove("tankerAvailability");
+            if (!Capabilities.Contains("aar.tanker"))
+            {
+                OperationalStates.Remove("tankerAvailability");
+                return;
+            }
             if (root.TryGetProperty("operationalStates", out var states) && states.ValueKind == JsonValueKind.Object && Capabilities.Contains("aar.tanker"))
             {
                 var requested = states.TryGetProperty("tankerAvailability", out var tanker) && tanker.ValueKind == JsonValueKind.String
@@ -645,7 +678,16 @@ public sealed class TacticalLinkHub
         }
 
         public void MarkDisconnected() { IsConnected = false; InReconnectGrace = true; }
-        public void UpdateIdentity(ParticipantIdentity identity) => Identity = identity;
+        public void UpdateIdentity(ParticipantIdentity identity)
+        {
+            var wasTanker = Capabilities.Contains("aar.tanker");
+            var availability = OperationalStates.GetValueOrDefault("tankerAvailability", "Off");
+            Identity = identity;
+            Capabilities = CapabilitiesFor(identity.AircraftType);
+            OperationalStates.Clear();
+            if (Capabilities.Contains("aar.tanker"))
+                OperationalStates["tankerAvailability"] = wasTanker ? availability : "Off";
+        }
         public void StartGrace(TimeSpan gracePeriod, TimeProvider timeProvider, Action expire)
         {
             _graceCts?.Cancel(); _graceCts?.Dispose(); _graceCts = new CancellationTokenSource();

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Made TacticalLink aircraft identity and capabilities server-authoritative from the active VATSIM flight plan.
+
 ## 0.15.0 - 2026-10-07
 
 - Added opt-in global TacticalLink presence and direct peer telemetry with spatial interest filtering and reconnect handling.

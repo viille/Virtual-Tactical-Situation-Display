@@ -116,6 +116,7 @@ public sealed class TacticalLinkTokenResponse
 {
     public string Token { get; set; } = "";
     public string Callsign { get; set; } = "";
+    public string? AircraftType { get; set; }
     public DateTimeOffset ExpiresAt { get; set; }
 }
 public sealed class CollectionsResponse { public List<Collection> Collections { get; set; } = []; }
