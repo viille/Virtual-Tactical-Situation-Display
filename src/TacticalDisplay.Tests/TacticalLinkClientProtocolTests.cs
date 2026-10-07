@@ -133,6 +133,23 @@ public sealed class TacticalLinkClientProtocolTests
     }
 
     [Fact]
+    public void AarClientAppliesContactReleaseAsAsternState()
+    {
+        var client = new TacticalLinkClient(null!);
+        using var aar = new AarClient(client, CancellationToken.None);
+
+        client.HandleMessage("""
+            {"protocolVersion":1,"type":"MODULE_EVENT","module":"aar","moduleProtocolVersion":1,"transportSequence":1,"kind":"REFUELING_STARTED","operationId":"op-1","operationRevision":2,"payload":{"operationId":"op-1","state":"Refueling","slot":"Active","operationRevision":2,"fuelOnAuthorized":true,"plannedKg":100,"transferredKg":10}}
+            """);
+        client.HandleMessage("""
+            {"protocolVersion":1,"type":"MODULE_EVENT","module":"aar","moduleProtocolVersion":1,"transportSequence":2,"kind":"CONTACT_RELEASED","operationId":"op-1","operationRevision":3,"payload":{"operationId":"op-1","state":"Astern","slot":"Active","operationRevision":3,"fuelOnAuthorized":false,"plannedKg":100,"transferredKg":10}}
+            """);
+
+        Assert.Equal(AarOperationPhase.Astern, aar.State.ActiveOperation!.Phase);
+        Assert.False(aar.State.ActiveOperation.FuelOnAuthorized);
+    }
+
+    [Fact]
     public void AarClientKeepsStructuredSafeMaximumForTheViewModel()
     {
         var client = new TacticalLinkClient(null!);

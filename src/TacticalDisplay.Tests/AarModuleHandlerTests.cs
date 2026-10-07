@@ -249,6 +249,53 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task DisconnectDuringPendingProposalSuspendsForWatermarkReconciliationAndRejectsLateAcknowledgement()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Request("receiver", "tanker", 100);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+        var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
+        await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
+        await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
+
+        var now = DateTimeOffset.UtcNow;
+        var tankerPose = new { timestampUtc = now, latitudeDeg = 60d, longitudeDeg = 25d, altitudeMeters = 10000d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        var receiverPose = new { timestampUtc = now.AddMilliseconds(5), latitudeDeg = 60d - (30d / 111000d), longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose);
+        await rig.Send("receiver", "POSE_UPDATE", receiverPose);
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose with { timestampUtc = now.AddMilliseconds(10) });
+        await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId);
+
+        var proposal = new TaskCompletionSource<AarServerEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
+        rig.Handler.EventReady += message =>
+        {
+            if (message.Kind == "TRANSFER_PROPOSAL" && message.ParticipantId == "tanker") proposal.TrySetResult(message);
+        };
+        await rig.Handler.StartAsync(CancellationToken.None);
+        try
+        {
+            var pending = await proposal.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var disconnected = await rig.Send("receiver", "DISCONNECT", new { }, operationId: operationId);
+
+            Assert.Equal("OPERATION_SUSPENDED", disconnected.LastKind);
+            Assert.Equal("Suspended", rig.OperationState(operationId));
+            var staleAck = await rig.Send("tanker", "TRANSFER_ACK", new
+            {
+                proposalId = JsonSerializer.SerializeToElement(pending.Payload).GetProperty("proposalId").GetString(),
+                operationRevision = pending.OperationRevision,
+                appliedCumulativeKg = 10d
+            }, operationId: operationId);
+            Assert.Equal("MODULE_ERROR", staleAck.LastKind);
+            Assert.Equal("Suspended", rig.OperationState(operationId));
+        }
+        finally
+        {
+            await rig.Handler.StopAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
     public async Task TankerControlsAsternAndContactClearanceAndReceiverCannotIssueClearance()
     {
         var rig = new Rig();

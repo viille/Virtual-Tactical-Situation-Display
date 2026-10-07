@@ -186,7 +186,7 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
 
         if (message.Kind is "REQUEST_ACCEPTED" or "OPERATION_STATE" or "OPERATION_SNAPSHOT" or "OPERATION_RECONCILED" or
             "OPERATION_SUSPENDED" or "OPERATION_COMPLETE" or "OPERATION_FAILED" or "OPERATION_CANCELLED" or
-            "OPERATION_DISCONNECTING" or "CLEARED_ASTERN" or "CLEARED_CONTACT" or "CONTACT_CAPTURED" or
+            "OPERATION_DISCONNECTING" or "CLEARED_ASTERN" or "CLEARED_CONTACT" or "CONTACT_CAPTURED" or "CONTACT_RELEASED" or
             "REFUELING_STARTED" or "TRANSFER_CONFIRMED" or "TRANSFER_STOPPED" or "PLANNED_AMOUNT_REACHED" or "BREAKAWAY" or "HOLD")
         {
             var operationNode = TryObject(payload, "operation", out var nested) ? nested : payload;

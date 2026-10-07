@@ -432,7 +432,12 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var remaining = operation.PlannedKg - operation.TransferredKg;
         if (tankerHeadroom <= 0.01 || receiverHeadroom <= 0.01 || remaining <= 0.01)
         {
-            Suspend(operation, tankerHeadroom <= 0.01 ? "TANKER_RESERVE_BOUNDARY" : receiverHeadroom <= 0.01 ? "RECEIVER_CAPACITY_BOUNDARY" : "PLANNED_AMOUNT_REACHED", TimeSpan.FromSeconds(5));
+            if (remaining <= 0.01)
+            {
+                StopAtPlannedAmount(operation);
+                return;
+            }
+            Suspend(operation, tankerHeadroom <= 0.01 ? "TANKER_RESERVE_BOUNDARY" : "RECEIVER_CAPACITY_BOUNDARY", TimeSpan.FromSeconds(5));
             return;
         }
         var amount = Math.Min(operation.EffectiveFlowKgPerSecond, Math.Min(remaining, Math.Min(tankerHeadroom, receiverHeadroom)));
@@ -462,6 +467,16 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         }
 
         return null;
+    }
+
+    private void StopAtPlannedAmount(AarOperation operation)
+    {
+        operation.PendingTransfer = null;
+        operation.FuelOnAuthorized = false;
+        operation.State = "Contact";
+        operation.Revision++;
+        Publish(operation.TankerId, "PLANNED_AMOUNT_REACHED", operation.Id, operation.Revision, OperationView(operation));
+        Publish(operation.ReceiverId, "PLANNED_AMOUNT_REACHED", operation.Id, operation.Revision, ReceiverOperationView(operation));
     }
 
     private void CompleteOperation(ModuleCommandContext context, AarOperation operation, string terminalKind)
@@ -580,6 +595,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         request.Status = "Rejected";
         request.TerminalAt = _clock.GetUtcNow();
         Notify(context, request.ReceiverId, "REQUEST_REJECTED", null, null, RequestView(request));
+        Notify(context, request.TankerId, "QUEUE_UPDATED", null, null, QueueView(request.TankerId));
         return Result("REQUEST_REJECTED", null, null, RequestView(request), request.Id);
     }
 
@@ -591,6 +607,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         request.Status = "Cancelled";
         request.TerminalAt = _clock.GetUtcNow();
         Notify(context, request.TankerId, "REQUEST_CANCELLED", null, null, RequestView(request));
+        Notify(context, request.TankerId, "QUEUE_UPDATED", null, null, QueueView(request.TankerId));
         return Result("REQUEST_CANCELLED", null, null, RequestView(request), request.Id);
     }
 
@@ -846,6 +863,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         _requests[operation.RequestId].TerminalAt = operation.TerminalAt;
         Notify(context, operation.TankerId, "OPERATION_CANCELLED", operation.Id, operation.Revision, OperationView(operation));
         Notify(context, operation.ReceiverId, "OPERATION_CANCELLED", operation.Id, operation.Revision, ReceiverOperationView(operation));
+        Notify(context, operation.TankerId, "QUEUE_UPDATED", null, null, QueueView(operation.TankerId));
         return Result("OPERATION_CANCELLED", operation.Id, operation.Revision,
             peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation), operation.RequestId);
     }
@@ -895,11 +913,15 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                 throw new InvalidOperationException("The active operation cannot disconnect from its current state.");
             if (operation.PendingTransfer is not null)
             {
+                // Stop flow immediately, then reconcile the adapter watermark before finalizing
+                // disconnect because a local write may already have completed.
                 operation.State = "Disconnecting";
                 Suspend(operation, "DISCONNECT_DURING_UNCONFIRMED_TRANSFER", TimeSpan.FromSeconds(5));
                 return Result("OPERATION_SUSPENDED", operation.Id, operation.Revision,
                     peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation), operation.RequestId);
             }
+            operation.FuelOnAuthorized = false;
+            operation.ClearanceValid = false;
             operation.State = "Disconnecting";
             operation.Revision++;
             Notify(context, operation.TankerId, "OPERATION_STATE", operation.Id, operation.Revision, OperationView(operation));
@@ -1011,6 +1033,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                 var peer = context.GetPeers().FirstOrDefault(candidate => candidate.ParticipantId == tankerId);
                 if (peer is not null && HasTankerMode(peer)) SetAvailabilityState(context, state, "Available");
             }
+            Notify(context, tankerId, "QUEUE_UPDATED", null, null, QueueView(tankerId));
             return;
         }
         next.Slot = "Active";
@@ -1018,6 +1041,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         next.Revision++;
         Notify(context, next.TankerId, "OPERATION_STATE", next.Id, next.Revision, OperationView(next));
         Notify(context, next.ReceiverId, "OPERATION_STATE", next.Id, next.Revision, ReceiverOperationView(next));
+        Notify(context, tankerId, "QUEUE_UPDATED", null, null, QueueView(tankerId));
     }
 
     private void SendCurrentSnapshot(ModuleCommandContext context, string? requestId, string? operationId)
