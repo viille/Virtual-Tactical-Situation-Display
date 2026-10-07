@@ -8,7 +8,6 @@
 #include <rapidjson/writer.h>
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <ctime>
@@ -46,7 +45,9 @@ struct FuelState {
 
 struct CachedMutation {
     std::string requestId;
-    std::string fingerprint;
+    std::string action;
+    int protocolVersion;
+    double deltaKg;
     std::string response;
     std::time_t createdAt;
 };
@@ -253,7 +254,7 @@ std::string ApplyFuelDelta(const std::string& requestId, double requestedKg) {
         remainder -= allocation;
         const auto& tank = before.tanks[i];
         const double sign = requestedKg > 0 ? 1.0 : -1.0;
-        const double nextQuantity = std::clamp(tank.quantityGallons + sign * allocation, 0.0, tank.capacityGallons);
+        const double nextQuantity = std::max(0.0, std::min(tank.quantityGallons + sign * allocation, tank.capacityGallons));
         ParamArray params(tank.index);
         allWritesSucceeded = fsVarsAVarSet(g_tankQuantity, g_gallonsUnit, params.value, nextQuantity, FS_OBJECT_ID_USER_AIRCRAFT) == FS_VAR_ERROR_NONE;
         double readBack = 0;
@@ -278,23 +279,16 @@ std::string ApplyFuelDelta(const std::string& requestId, double requestedKg) {
         complete ? nullptr : "Fuel transfer was partial or a tank write failed; further transfer must stop.", &after, requestedKg, signedAppliedKg);
 }
 
-std::string MutationFingerprint(const std::string& action, int protocolVersion, double deltaKg) {
-    char number[64]{};
-    const auto conversion = std::to_chars(number, number + sizeof(number), deltaKg, std::chars_format::general, 17);
-    if (conversion.ec != std::errc{}) return {};
-    return action + "|" + std::to_string(protocolVersion) + "|" + std::string(number, conversion.ptr);
-}
-
 void PruneMutationCache(std::time_t now) {
     while (!g_mutationCache.empty() && now - g_mutationCache.front().createdAt > kMutationCacheTtlSeconds)
         g_mutationCache.pop_front();
     while (g_mutationCache.size() > kMaximumCachedMutations) g_mutationCache.pop_front();
 }
 
-void CacheMutation(const std::string& requestId, const std::string& fingerprint, const std::string& response) {
+void CacheMutation(const std::string& requestId, const std::string& action, int protocolVersion, double deltaKg, const std::string& response) {
     const auto now = std::time(nullptr);
     PruneMutationCache(now);
-    g_mutationCache.push_back({ requestId, fingerprint, response, now });
+    g_mutationCache.push_back({ requestId, action, protocolVersion, deltaKg, response, now });
     while (g_mutationCache.size() > kMaximumCachedMutations) g_mutationCache.pop_front();
 }
 
@@ -327,20 +321,20 @@ void OnRequest(const char* bytes, unsigned int size, void*) {
             return;
         }
 
-        const auto fingerprint = MutationFingerprint(action, protocolVersion, deltaValue->value.GetDouble());
+        const double deltaKg = deltaValue->value.GetDouble();
         const auto now = std::time(nullptr);
         PruneMutationCache(now);
         const auto cached = std::find_if(g_mutationCache.begin(), g_mutationCache.end(), [&](const CachedMutation& entry) {
             return entry.requestId == requestId;
         });
         if (cached != g_mutationCache.end()) {
-            if (cached->fingerprint == fingerprint) SendResponse(cached->response);
+            if (cached->action == action && cached->protocolVersion == protocolVersion && cached->deltaKg == deltaKg) SendResponse(cached->response);
             else SendResponse(MakeResponse(requestId, action, "Failed", "IDEMPOTENCY_CONFLICT: requestId was already used for a different fuel mutation."));
             return;
         }
 
-        const auto response = ApplyFuelDelta(requestId, deltaValue->value.GetDouble());
-        CacheMutation(requestId, fingerprint, response);
+        const auto response = ApplyFuelDelta(requestId, deltaKg);
+        CacheMutation(requestId, action, protocolVersion, deltaKg, response);
         SendResponse(response);
         return;
     }

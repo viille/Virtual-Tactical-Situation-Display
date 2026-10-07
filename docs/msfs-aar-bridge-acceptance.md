@@ -4,7 +4,7 @@ The v0.16 fuel adapter uses a VTSD-owned standalone WASM package. The bridge onl
 
 ## Build the package
 
-Install the Microsoft Flight Simulator 2024 SDK and its Visual Studio WASM platform toolset, then run from the repository root:
+Install the Microsoft Flight Simulator 2024 SDK, then run from the repository root. If Visual Studio/MSBuild with the MSFS platform toolset is available, the script uses it. Otherwise it compiles and links with the `clang-cl`, `wasm-ld`, WASI libraries, and `MSFS_WasmVersions.a` shipped in the SDK:
 
 ```powershell
 $env:MSFS2024_SDK = 'C:\MSFS 2024 SDK'
@@ -12,11 +12,11 @@ $env:MSFS2024_SDK = 'C:\MSFS 2024 SDK'
 src\MSFS.AarBridge\Build-MsfsAarBridge.ps1
 ```
 
-The script builds `vtsd_aar_bridge.wasm`, prepares a versioned package with a generated `layout.json`, and stages it under `src/TacticalDisplay.App/Resources/MSFS/vtsd-aar-bridge`. It also creates `vtsd-aar-bridge.zip`; the desktop project embeds this archive into its single-file executable. VTSD extracts it to a temporary directory, validates every listed file and hash, then installs it into `Community2024`. This avoids relying on single-file content extraction being next to the executable. A build without the SDK cannot produce the module; it must not be treated as an AAR fuel capable release.
+The script builds `vtsd_aar_bridge.wasm`, prepares a versioned package with a generated `layout.json`, and stages it under `src/TacticalDisplay.App/Resources/MSFS/vtsd-aar-bridge`. It also creates `vtsd-aar-bridge.zip`; the desktop project embeds this archive into the app assembly and single-file release executable. VTSD extracts it to a temporary directory, validates every listed file and hash, then installs it into `Community2024`. This avoids relying on single-file content extraction being next to the executable. A build without the SDK cannot produce the module; it must not be treated as an AAR fuel capable release.
 
 ## Build and SDK verification status
 
-The source package and desktop integration are present, but this checkout does not have the MSFS 2024 SDK or its Visual Studio WASM toolset. Running the build script currently stops before compilation because `WASM\include\MSFS\MSFS.h` is not available. Therefore no MSFS API call, setter result, aircraft fuel system, WASM module load, or read-back has been tested here. The bridge uses `fsVarsAVarGet` and `fsVarsAVarSet` with `FUELSYSTEM TANK QUANTITY` and `FUELSYSTEM TANK USABLE CAPACITY`; that proposed write path remains unverified until an SDK build and MSFS 2024 acceptance run. Do not infer that the API is supported from desktop fake-bridge tests.
+The bundled package in this PR was built with Microsoft Flight Simulator 2024 SDK 1.7.3 using the SDK-provided `clang-cl` 15.0.1 and `wasm-ld` toolchain. The C++ source compiled and linked successfully, including `MSFS_WasmVersions.a`. This proves source/toolchain compatibility only: the simulator has not loaded the module, and no runtime `fsVarsAVarGet` / `fsVarsAVarSet` result, fuel setter result, aircraft fuel-system behavior, or simulator read-back has been observed. The bridge targets `NEW FUEL SYSTEM`, `FUELSYSTEM TANK QUANTITY`, `FUELSYSTEM TANK USABLE CAPACITY`, and `FUEL WEIGHT PER GALLON`. Do not infer runtime support from compilation or desktop fake-bridge tests.
 
 ## Runtime safeguards
 
@@ -34,7 +34,7 @@ These checks require MSFS 2024, the SDK-built package, and a real aircraft. They
 | Check | Expected result | Status |
 | --- | --- | --- |
 | Install from VTSD UI into detected `Community2024` | Only `vtsd-aar-bridge` is created; sibling packages remain unchanged | Pending |
-| Single-file release package | Bridge ZIP is embedded in the VTSD executable and can be extracted and installed without files beside the executable | Automated archive/install test; release build pending SDK package |
+| Single-file release package | Bridge ZIP is embedded in the VTSD executable and can be extracted and installed without files beside the executable | SDK package build, embedded-archive install test, and Release single-file publish pass; simulator runtime pending |
 | Install using manually selected folder | Invalid folders are rejected; chosen path persists | Pending |
 | Restart MSFS after first install | Package is installed on disk, runtime remains not connected until MSFS loads it | Pending |
 | CommBus `HELLO` and protocol match | Bridge version and protocol 1 are reported | Pending |

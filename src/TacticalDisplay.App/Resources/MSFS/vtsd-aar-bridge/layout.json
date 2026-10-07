@@ -1,0 +1,16 @@
+{
+  "content": [
+    {
+      "path": "manifest.json",
+      "size": 223,
+      "date": 1791375638,
+      "hash": "732cf581ebb5497f9cb3b1e7e429e0cd"
+    },
+    {
+      "path": "modules/vtsd_aar_bridge.wasm",
+      "size": 157537,
+      "date": 1791380432,
+      "hash": "ac1cd7edc41987a774d3fd79226782ff"
+    }
+  ]
+}

@@ -133,6 +133,19 @@ public sealed class MsfsAarBridgeInstallerTests
     }
 
     [Fact]
+    public async Task EmbeddedBridgeArchiveInstallsTheBuiltSdkPackage()
+    {
+        using var temp = new TempDirectory();
+        var community = Directory.CreateDirectory(Path.Combine(temp.Path, "Community2024")).FullName;
+
+        var installed = await new MsfsAarBridgeInstaller().InstallBundledAsync(
+            typeof(MsfsAarBridgeInstaller).Assembly, community, CancellationToken.None);
+
+        Assert.Equal("1.0.0", installed.Version);
+        Assert.True(File.Exists(Path.Combine(installed.PackageDirectory, "modules", "vtsd_aar_bridge.wasm")));
+    }
+
+    [Fact]
     public async Task InstallArchiveRejectsPathTraversal()
     {
         using var temp = new TempDirectory();

@@ -22,16 +22,67 @@ if ([string]::IsNullOrWhiteSpace($msbuild)) {
     $command = Get-Command 'MSBuild.exe' -ErrorAction SilentlyContinue
     if ($command) { $msbuild = $command.Source }
 }
-if ([string]::IsNullOrWhiteSpace($msbuild) -or -not (Test-Path -LiteralPath $msbuild -PathType Leaf)) {
-    throw 'Visual Studio MSBuild was not found. Install the MSFS 2024 WASM platform toolset and Visual Studio C++ build tools.'
-}
-
 $project = Join-Path $PSScriptRoot 'MSFS.AarBridge.vcxproj'
 $module = Join-Path $PSScriptRoot 'build\vtsd_aar_bridge.wasm'
-& $msbuild $project '/m' '/t:Rebuild' '/p:Configuration=Release' '/p:Platform=MSFS' "/p:MSFS2024_SDK=$SdkRoot" '/verbosity:minimal'
-if ($LASTEXITCODE -ne 0) { throw "MSFS AAR Bridge build failed with exit code $LASTEXITCODE." }
+if (-not [string]::IsNullOrWhiteSpace($msbuild) -and (Test-Path -LiteralPath $msbuild -PathType Leaf)) {
+    & $msbuild $project '/m' '/t:Rebuild' '/p:Configuration=Release' '/p:Platform=MSFS' "/p:MSFS2024_SDK=$SdkRoot" '/verbosity:minimal'
+    if ($LASTEXITCODE -ne 0) { throw "MSFS AAR Bridge MSBuild failed with exit code $LASTEXITCODE." }
+}
+else {
+    $sdkForward = $SdkRoot.Replace('\', '/')
+    $clang = Join-Path $SdkRoot 'WASM\llvm\bin\clang-cl.exe'
+    $wasmLinker = Join-Path $SdkRoot 'WASM\llvm\bin\wasm-ld.exe'
+    $sysroot = Join-Path $SdkRoot 'WASM\wasi-sysroot'
+    $wasiLibraries = Join-Path $sysroot 'lib\wasm32-wasi'
+    $versionLibrary = Join-Path $SdkRoot 'WASM\WasmVersions\MSFS_WasmVersions.a'
+    $builtinsLibrary = Join-Path $wasiLibraries 'libclang_rt.builtins-wasm32.a'
+    $objectDirectory = Join-Path $PSScriptRoot 'build'
+    $object = Join-Path $objectDirectory 'main.o'
+    $source = Join-Path $PSScriptRoot 'Source\main.cpp'
+    $include = Join-Path $SdkRoot 'WASM\include'
+    $includeUtils = Join-Path $include 'MSFS\Utils'
+    $requiredTools = @($clang, $wasmLinker, $versionLibrary, $builtinsLibrary)
+    $missingTool = $requiredTools | Where-Object { -not (Test-Path -LiteralPath $_ -PathType Leaf) } | Select-Object -First 1
+    if ($missingTool) { throw "MSFS 2024 SDK WASM compiler inputs were not found: $missingTool" }
+
+    New-Item -ItemType Directory -Path $objectDirectory -Force | Out-Null
+    $compileArguments = @(
+        '-c',
+        '--target=wasm32-wasi',
+        "/clang:--sysroot=$sdkForward/WASM/wasi-sysroot",
+        '/clang:-std=c++17',
+        '/clang:-O3',
+        '/EHs-c-',
+        '/D__wasi__',
+        '/I', $include,
+        '/I', $includeUtils,
+        '-o', $object,
+        $source
+    )
+    & $clang @compileArguments
+    if ($LASTEXITCODE -ne 0) { throw "MSFS AAR Bridge C++ compilation failed with exit code $LASTEXITCODE." }
+
+    $linkArguments = @(
+        '--no-entry',
+        '--allow-undefined',
+        '--export=module_init',
+        '--export=module_deinit',
+        '-L', $wasiLibraries,
+        '-o', $module,
+        $object,
+        $versionLibrary,
+        (Join-Path $wasiLibraries 'libc++.a'),
+        (Join-Path $wasiLibraries 'libc++abi.a'),
+        (Join-Path $wasiLibraries 'libc.a'),
+        (Join-Path $wasiLibraries 'libm.a'),
+        $builtinsLibrary
+    )
+    & $wasmLinker @linkArguments
+    if ($LASTEXITCODE -ne 0) { throw "MSFS AAR Bridge WASM linking failed with exit code $LASTEXITCODE." }
+}
+
 if (-not (Test-Path -LiteralPath $module -PathType Leaf)) {
-    throw "MSFS toolset completed without producing the expected module: $module"
+    throw "MSFS toolchain completed without producing the expected module: $module"
 }
 
 $resourcesRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\TacticalDisplay.App\Resources\MSFS'))

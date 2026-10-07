@@ -1,0 +1,9 @@
+{
+  "dependencies": [],
+  "content_type": "MISC",
+  "title": "VTSD AAR Bridge",
+  "manufacturer": "Virtual Tactical Situation Display",
+  "creator": "VTSD",
+  "package_version": "1.0.0",
+  "minimum_game_version": "1.0.0"
+}
