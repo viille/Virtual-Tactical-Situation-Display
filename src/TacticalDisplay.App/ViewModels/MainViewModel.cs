@@ -2396,7 +2396,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         var installed = _msfsAarBridgeInstaller.InspectInstalled(community);
         var bridgeStatus = _feed as IAarBridgeRuntimeStatusSource;
         var runtimeState = bridgeStatus?.BridgeRuntimeState;
-        var version = bridgeStatus?.BridgeVersion ?? installed?.Version;
+        var installedVersion = installed?.Version;
+        var runningVersion = bridgeStatus?.BridgeVersion;
+        var version = runningVersion ?? installedVersion;
         var name = version is null ? "MSFS AAR Bridge" : $"MSFS AAR Bridge {version}";
         if (installed is null && runtimeState is not (AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable))
         {
@@ -2408,14 +2410,17 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             var adapter = _feed as IAarFuelAdapter;
             var fuelRead = adapter?.CanReadFuel == true ? "ready" : "unavailable";
             var fuelWrite = adapter?.CanWriteFuel == true ? "ready" : "unavailable";
+            var versionMismatch = installedVersion is not null && runningVersion is not null &&
+                !string.Equals(installedVersion, runningVersion, StringComparison.OrdinalIgnoreCase);
+            var restartNotice = versionMismatch ? $" Installed {installedVersion}, running {runningVersion}; restart MSFS 2024 to activate the installed version." : string.Empty;
             MsfsAarBridgeStatusText = state switch
             {
                 AarBridgeRuntimeState.NotInstalled => "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not.",
                 AarBridgeRuntimeState.InstalledNotRunning => $"{name} installed. Restart MSFS 2024 to activate it.",
                 AarBridgeRuntimeState.Connecting => $"{name} connecting to MSFS 2024.",
-                AarBridgeRuntimeState.ConnectedReadOnly => $"{name} connected. Fuel read {fuelRead}; fuel write unavailable. {bridgeStatus?.BridgeDiagnostic ?? "Dry Hookup remains available."}",
-                AarBridgeRuntimeState.ConnectedWritable => $"{name} connected. Fuel read {fuelRead}; fuel write {fuelWrite}.",
-                AarBridgeRuntimeState.ProtocolMismatch => $"{name} protocol is incompatible. Update the bridge. {bridgeStatus?.BridgeDiagnostic}",
+                AarBridgeRuntimeState.ConnectedReadOnly => $"{name} connected. Fuel read {fuelRead}; fuel write unavailable.{restartNotice} {bridgeStatus?.BridgeDiagnostic ?? "Dry Hookup remains available."}",
+                AarBridgeRuntimeState.ConnectedWritable => $"{name} connected. Fuel read {fuelRead}; fuel write {fuelWrite}.{restartNotice}",
+                AarBridgeRuntimeState.ProtocolMismatch => $"{name} protocol is incompatible. Update the bridge.{restartNotice} {bridgeStatus?.BridgeDiagnostic}",
                 _ => $"{name} error. {bridgeStatus?.BridgeDiagnostic ?? "Fuel transfer is stopped; Dry Hookup remains available."}"
             };
             return;
