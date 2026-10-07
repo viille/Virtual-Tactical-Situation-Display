@@ -42,10 +42,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private readonly MsfsAarBridgeInstaller _msfsAarBridgeInstaller = new();
     private readonly DispatcherTimer _tacticalTelemetryTimer;
     private readonly HashSet<string> _activeAarOperations = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, double> _aarAppliedWatermarks = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, (double Watermark, string Status, double AppliedKg)> _aarProposalResults = new(StringComparer.Ordinal);
-    private readonly HashSet<string> _aarProposalsInFlight = new(StringComparer.Ordinal);
-    private readonly object _aarWatermarkLock = new();
+    private readonly AarFuelProposalProcessor _aarFuelProposalProcessor = new();
     private readonly ObservableCollection<AarPendingRequestDisplay> _aarPendingRequests = [];
     private TacticalLinkPeerDisplay? _selectedAarTanker;
     private TacticalLinkPeerDisplay? _selectedAarReceiver;
@@ -2080,7 +2077,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             if (e.OperationId is { } watermarkOperation && e.Payload.TryGetProperty("transferredKg", out var transferredWatermark) &&
                 transferredWatermark.ValueKind == JsonValueKind.Number && transferredWatermark.TryGetDouble(out var cumulativeWatermark))
             {
-                lock (_aarWatermarkLock) _aarAppliedWatermarks[watermarkOperation] = Math.Max(_aarAppliedWatermarks.GetValueOrDefault(watermarkOperation), cumulativeWatermark);
+                _aarFuelProposalProcessor.RecordWatermark(watermarkOperation, cumulativeWatermark);
             }
             if (e.OperationId is { } operationId)
             {
@@ -2490,8 +2487,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         if (!IsTacticalLinkConnected || (!IsTankerCapable && !IsTankerReceiverCapable)) return;
         var adapter = _feed as IAarFuelAdapter;
         var ready = adapter is { IsAvailable: true, CanReadFuel: true, CanWriteFuel: true };
-        double watermark;
-        lock (_aarWatermarkLock) watermark = _aarActiveOperationId is { } activeId ? _aarAppliedWatermarks.GetValueOrDefault(activeId) : 0;
+        var watermark = _aarActiveOperationId is { } activeId ? _aarFuelProposalProcessor.GetWatermark(activeId) : 0;
         _ = _tacticalLink.SendModuleMessageAsync("aar", 1, "FUEL_STATUS", null,
             new { currentFuelKg = reading.CurrentFuelKg, capacityKg = reading.CapacityKg, adapterReady = ready, lastAppliedTransferredKg = watermark }, _runCts.Token)
             .ContinueWith(task =>
@@ -2508,53 +2504,26 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             !moduleEvent.Payload.TryGetProperty("deltaKg", out var deltaNode) || !deltaNode.TryGetDouble(out var deltaKg) || deltaKg <= 0 ||
             !moduleEvent.Payload.TryGetProperty("targetCumulativeKg", out var targetNode) || !targetNode.TryGetDouble(out var targetKg)) return;
 
-        double appliedCumulativeKg = 0;
-        var baseWatermark = targetKg - deltaKg;
-        var cachedResult = false;
-        lock (_aarWatermarkLock)
+        var role = moduleEvent.Payload.TryGetProperty("participantRole", out var roleNode) ? roleNode.GetString() : null;
+        if (role is not ("Tanker" or "Receiver")) return;
+        AarFuelProposalResult? application;
+        try
         {
-            if (_aarProposalResults.TryGetValue(proposalId, out var priorResult))
-            {
-                appliedCumulativeKg = priorResult.Watermark;
-                cachedResult = true;
-            }
-            else if (!_aarProposalsInFlight.Add(proposalId)) return;
-            if (!cachedResult && !_aarAppliedWatermarks.TryGetValue(operationId, out appliedCumulativeKg))
-                _aarAppliedWatermarks[operationId] = appliedCumulativeKg = Math.Max(0, baseWatermark);
+            application = await _aarFuelProposalProcessor.ApplyAsync(proposalId, operationId, role, deltaKg, targetKg,
+                _aarProtectedReserveKg, _feed as IAarFuelAdapter, _runCts.Token).ConfigureAwait(false);
         }
-        var application = new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, "Fuel adapter unavailable.");
-        if (cachedResult)
+        catch (OperationCanceledException) when (_runCts.IsCancellationRequested) { return; }
+        catch (InvalidOperationException ex)
         {
-            lock (_aarWatermarkLock)
-            {
-                var prior = _aarProposalResults[proposalId];
-                application = new AarFuelApplyResult(deltaKg, prior.AppliedKg, Enum.TryParse<AarFuelApplyStatus>(prior.Status, out var priorStatus) ? priorStatus : AarFuelApplyStatus.Failed);
-            }
+            DataSourceDebugLog.ThrottledDebug("AAR", "proposal-conflict", TimeSpan.FromSeconds(10), () => ex.Message);
+            return;
         }
-        else if (_feed is IAarFuelAdapter adapter)
-        {
-            var localRole = moduleEvent.Payload.TryGetProperty("participantRole", out var roleNode) ? roleNode.GetString() : null;
-            var signedDelta = localRole == "Tanker" ? -deltaKg : deltaKg;
-            var localReserve = localRole == "Tanker" ? _aarProtectedReserveKg : 0;
-            try { application = await new AarFuelApplicationService(adapter).ApplyDeltaKgAsync(signedDelta, localReserve, _runCts.Token).ConfigureAwait(false); }
-            catch (OperationCanceledException) when (_runCts.IsCancellationRequested) { lock (_aarWatermarkLock) _aarProposalsInFlight.Remove(proposalId); return; }
-            catch (Exception ex) { application = new AarFuelApplyResult(signedDelta, 0, AarFuelApplyStatus.Failed, ex.Message); }
-            appliedCumulativeKg += Math.Abs(application.AppliedKg);
-            lock (_aarWatermarkLock) _aarAppliedWatermarks[operationId] = appliedCumulativeKg;
-        }
-        if (!cachedResult)
-        {
-            lock (_aarWatermarkLock)
-            {
-                _aarProposalResults[proposalId] = (appliedCumulativeKg, application.Status.ToString(), Math.Abs(application.AppliedKg));
-                _aarProposalsInFlight.Remove(proposalId);
-            }
-        }
+        if (application is null) return;
 
         try
         {
             await _tacticalLink.SendModuleMessageAsync("aar", 1, "TRANSFER_ACK", operationId,
-                new { operationId, proposalId, appliedCumulativeKg, operationRevision = revision, appliedKg = Math.Abs(application.AppliedKg), status = application.Status.ToString() },
+                new { operationId, proposalId, appliedCumulativeKg = application.AppliedCumulativeKg, operationRevision = revision, appliedKg = application.AppliedKg, status = application.Status.ToString() },
                 _runCts.Token, "transfer-ack-" + proposalId).ConfigureAwait(false);
         }
         catch (OperationCanceledException) when (_runCts.IsCancellationRequested) { }
