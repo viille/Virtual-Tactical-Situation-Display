@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased (v0.16.0 draft)
+
+- Added tanker-controlled AAR queue management, planned onload changes, astern clearance, HOLD, explicit transfer start/stop, and DryHookup mode to TacticalLink.Server.
+- Added receiver-side internal transfer proposal data and cumulative application acknowledgements with operation revision validation.
+- Added local KG/LB presentation and specific-amount or FULL receiver requests.
+- Added SimConnect fuel quantity/capacity reading in kilograms. Generic SimConnect fuel writing is not exposed by the documented writable SimVars, so the adapter fails closed and AAR availability remains disabled until an acknowledged write method is available.
+- Added draft F-15 and F-16 receiver registry profiles with ICAO designator and boom-method sources in Cloud migration `0005_aar_receiver_seed`.
+
 ## 0.15.0 - 2026-10-07
 
 - Made TacticalLink aircraft identity and capabilities server-authoritative from the active VATSIM flight plan.

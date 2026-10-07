@@ -14,6 +14,7 @@ public sealed class TacticalDisplaySettings
     public string OwnCallsign { get; set; } = string.Empty;
     public bool TacticalLinkAutoReconnect { get; set; } = true;
     public int TacticalLinkTelemetryRateHz { get; set; } = 10;
+    public string AarFuelUnit { get; set; } = "KG";
     public double TacticalLinkInterestRadiusNm { get; set; } = 200;
     public bool TacticalLinkDebugDiagnostics { get; set; }
     public bool EnableDiagnosticTelemetry { get; set; }

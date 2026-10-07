@@ -7,7 +7,7 @@ using TacticalDisplay.Core.Services;
 
 namespace TacticalDisplay.App.Data;
 
-public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
+public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IAarFuelAdapter
 {
     private const string NativeSimConnectDllName = "SimConnect.dll";
     private const string LogSource = "MSFS";
@@ -16,6 +16,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
     private const double MaxTrafficRequestRadiusMeters = 200_000.0;
     private static readonly TimeSpan TrafficStallRecoveryThreshold = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan OwnshipFreshThreshold = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan AarFuelPublishInterval = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MinimumTrafficRetention = TimeSpan.FromSeconds(2);
     private readonly TacticalDisplaySettings _settings;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(3);
@@ -34,6 +35,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
     private DateTimeOffset _lastOwnshipSampleAt = DateTimeOffset.MinValue;
     private DateTimeOffset _lastTrafficRequestAt = DateTimeOffset.MinValue;
     private DateTimeOffset _lastTrafficSampleAt = DateTimeOffset.MinValue;
+    private DateTimeOffset _lastAarFuelPublishedAt = DateTimeOffset.MinValue;
+    private AarFuelReading? _latestAarFuel;
     private bool _hasReceivedTrafficThisSession;
     private bool _aarSamplingEnabled;
 
@@ -45,8 +48,33 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
     public event EventHandler<TrafficSnapshot>? SnapshotReceived;
     public event EventHandler<bool>? ConnectionChanged;
     public event EventHandler<OwnshipState>? AarPoseSampled;
+    public event EventHandler<AarFuelReading>? AarFuelSampled;
+    event EventHandler<AarFuelReading>? IAarFuelAdapter.FuelSampled
+    {
+        add => AarFuelSampled += value;
+        remove => AarFuelSampled -= value;
+    }
     public bool AarSamplingEnabled { get => Volatile.Read(ref _aarSamplingEnabled); set => Volatile.Write(ref _aarSamplingEnabled, value); }
     public bool IsConnected { get; private set; }
+    public bool IsAvailable => IsConnected;
+    public bool CanReadFuel => IsConnected && _latestAarFuel is not null;
+    // The public MSFS SimConnect fuel SimVars are readable, but their documented Settable column is empty.
+    // Fail closed until MSFS exposes a generic, acknowledged fuel write API.
+    public bool CanWriteFuel => false;
+
+    public AarFuelReading? ReadFuel()
+    {
+        lock (_stateLock) return _latestAarFuel;
+    }
+
+    public Task<AarFuelApplyResult> ApplyFuelDeltaKgAsync(double deltaKg, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!double.IsFinite(deltaKg) || deltaKg == 0)
+            return Task.FromResult(new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, "Fuel delta must be finite and non-zero."));
+        return Task.FromResult(new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed,
+            "Generic MSFS SimConnect fuel writing is not available; the simulator was not changed."));
+    }
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -244,6 +272,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "GROUND VELOCITY", "knots", (uint)SimConnectDataType.Float64, 0, 5);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "MAGVAR", "degrees", (uint)SimConnectDataType.Float64, 0, 6);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "GPS GROUND TRUE TRACK", "degrees", (uint)SimConnectDataType.Float64, 0, 7);
+        api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "FUEL TOTAL QUANTITY WEIGHT", "pounds", (uint)SimConnectDataType.Float64, 0, 8);
+        api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "FUEL TOTAL CAPACITY", "gallons", (uint)SimConnectDataType.Float64, 0, 9);
+        api.AddToDataDefinition(simHandle, (uint)DefinitionId.Ownship, "FUEL WEIGHT PER GALLON", "pounds", (uint)SimConnectDataType.Float64, 0, 10);
 
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE LATITUDE", "degrees", (uint)SimConnectDataType.Float64, 0, 11);
         api.AddToDataDefinition(simHandle, (uint)DefinitionId.Traffic, "PLANE LONGITUDE", "degrees", (uint)SimConnectDataType.Float64, 0, 12);
@@ -332,6 +363,18 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
                 _latestOwnship = ownship;
             }
             if (AarSamplingEnabled) AarPoseSampled?.Invoke(this, ownship);
+            if (now - _lastAarFuelPublishedAt >= AarFuelPublishInterval)
+            {
+                var currentKg = ownshipRaw.FuelWeightLbs * 0.45359237;
+                var capacityKg = ownshipRaw.FuelCapacityGallons * ownshipRaw.FuelWeightPerGallonLbs * 0.45359237;
+                if (double.IsFinite(currentKg) && double.IsFinite(capacityKg) && currentKg >= 0 && capacityKg > 0 && currentKg <= capacityKg + 0.1)
+                {
+                    var reading = new AarFuelReading(currentKg, capacityKg, now);
+                    lock (_stateLock) _latestAarFuel = reading;
+                    AarFuelSampled?.Invoke(this, reading);
+                }
+                _lastAarFuelPublishedAt = now;
+            }
 
             DataSourceDebugLog.ThrottledDebug(
                 LogSource,
@@ -421,6 +464,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
         lock (_stateLock)
         {
             _latestOwnship = null;
+            _latestAarFuel = null;
             _latestTraffic.Clear();
             _lastTrafficIdentitySamples.Clear();
             _contactGenerations.Clear();
@@ -432,6 +476,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
             _lastTrafficRequestAt = DateTimeOffset.MinValue;
             _lastTrafficSampleAt = DateTimeOffset.MinValue;
             _hasReceivedTrafficThisSession = false;
+            _lastAarFuelPublishedAt = DateTimeOffset.MinValue;
         }
 
         DataSourceDebugLog.Info(LogSource, "Reset SimConnect session traffic state");
@@ -935,6 +980,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
         public double SpeedKt;
         public double MagneticVariationDeg;
         public double GroundTrackDeg;
+        public double FuelWeightLbs;
+        public double FuelCapacityGallons;
+        public double FuelWeightPerGallonLbs;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]

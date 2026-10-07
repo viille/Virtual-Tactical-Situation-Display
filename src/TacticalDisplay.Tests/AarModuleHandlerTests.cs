@@ -92,6 +92,111 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task TankerCanAddCompatibleNearbyReceiverWithoutReceiverRequest()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+
+        var added = await rig.Send("tanker", "ADD_RECEIVER_TO_QUEUE", new { receiverParticipantId = "receiver" });
+        var state = await rig.Send("tanker", "GET_STATE", new { });
+        var pending = state.LastPayload.GetProperty("queue").GetProperty("pending")[0];
+
+        Assert.Equal("RECEIVER_ADDED_TO_QUEUE", added.LastKind);
+        Assert.Equal("TankerAdded", pending.GetProperty("source").GetString());
+        Assert.True(pending.GetProperty("full").GetBoolean());
+        Assert.Contains(added.Events, item => item.Recipient == "receiver" && item.Kind == "TANKER_ADDED_RECEIVER");
+    }
+
+    [Fact]
+    public async Task TankerMayChangePlanWithoutChangingOriginalReceiverRequest()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Request("receiver", "tanker", 150);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+        var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
+
+        var changed = await rig.Send("tanker", "SET_PLANNED_ONLOAD", new { plannedKg = 250 }, operationId: operationId);
+
+        Assert.Equal(250, changed.LastPayload.GetProperty("plannedKg").GetDouble());
+        Assert.Equal(150, changed.LastPayload.GetProperty("requestedKg").GetDouble());
+    }
+
+    [Fact]
+    public async Task TankerControlsAsternAndContactClearanceAndReceiverCannotIssueClearance()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Request("receiver", "tanker", 100);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+        var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
+
+        var receiverClear = await rig.Send("receiver", "CLEAR_ASTERN", new { }, operationId: operationId);
+        var clearedAstern = await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
+        var clearedContact = await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
+        var receiverStart = await rig.Send("receiver", "START_TRANSFER", new { }, operationId: operationId);
+
+        Assert.Equal("MODULE_ERROR", receiverClear.LastKind);
+        Assert.Equal("CLEARED_ASTERN", clearedAstern.LastKind);
+        Assert.Equal("CLEAR_CONTACTED", clearedContact.LastKind);
+        Assert.Equal("ClearedContact", clearedContact.LastPayload.GetProperty("state").GetString());
+        Assert.Equal("MODULE_ERROR", receiverStart.LastKind);
+        Assert.Equal(0, clearedContact.LastPayload.GetProperty("transferredKg").GetDouble());
+    }
+
+    [Fact]
+    public async Task DryHookupRejectsFuelStartAndLeavesReceiverViewPrivate()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Request("receiver", "tanker", 100);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+        var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
+
+        var mode = await rig.Send("tanker", "SET_TRANSFER_MODE", new { transferMode = "DryHookup" }, operationId: operationId);
+        var astern = await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
+        var clearance = await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
+        var start = await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId);
+        var receiverState = await rig.Send("receiver", "GET_STATE", new { });
+        var serialized = JsonSerializer.Serialize(receiverState.LastPayload);
+
+        Assert.Equal("DryHookup", mode.LastPayload.GetProperty("transferMode").GetString());
+        Assert.Equal("CLEARED_ASTERN", astern.LastKind);
+        Assert.Equal("CLEAR_CONTACTED", clearance.LastKind);
+        Assert.Equal("MODULE_ERROR", start.LastKind);
+        Assert.DoesNotContain("plannedKg", serialized);
+        Assert.DoesNotContain("transferredKg", serialized);
+    }
+
+    [Fact]
+    public async Task ContactDoesNotAuthorizeFuelUntilTankerStartsTransfer()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Request("receiver", "tanker", 100);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+        var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
+        await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
+        await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
+
+        var now = DateTimeOffset.UtcNow;
+        var tankerPose = new { timestampUtc = now, latitudeDeg = 60d, longitudeDeg = 25d, altitudeMeters = 10000d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        var receiverPose = new { timestampUtc = now.AddMilliseconds(5), latitudeDeg = 60d - (30d / 111000d), longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose);
+        var contact = await rig.Send("receiver", "POSE_UPDATE", receiverPose);
+
+        Assert.Equal("Contact", rig.OperationState(operationId));
+        Assert.DoesNotContain(contact.Events, item => item.Kind == "TRANSFER_PROPOSAL");
+        var beforeFuelOn = await rig.Send("tanker", "GET_STATE", new { });
+        Assert.Equal(0, beforeFuelOn.LastPayload.GetProperty("operations")[0].GetProperty("transferredKg").GetDouble());
+
+        var started = await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId);
+
+        Assert.Equal("REFUELING_STARTED", started.LastKind);
+        Assert.Equal("Refueling", rig.OperationState(operationId));
+    }
+
+    [Fact]
     public async Task ReceiverStateContainsNoFuelAmountsRatesOrProgress()
     {
         var rig = new Rig();
@@ -173,7 +278,7 @@ public sealed class AarModuleHandlerTests
 
         public Rig()
         {
-            _handler = new AarModuleHandler(new Registry());
+            _handler = new AarModuleHandler(new Registry(), contactConfiguration: new AarContactConfiguration(CaptureDebounce: TimeSpan.Zero));
             _router = new ModuleRouter([_handler]);
         }
 
