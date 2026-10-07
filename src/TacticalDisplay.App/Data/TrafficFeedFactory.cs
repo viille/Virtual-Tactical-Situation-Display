@@ -20,7 +20,10 @@ public static class TrafficFeedFactory
         }
         else if (DataSourceModes.IsXPlane12(settings.DataSourceMode))
         {
-            feed = new XPlane12WebApiTrafficFeed(settings);
+            var xplane12Feed = new XPlane12WebApiTrafficFeed(settings);
+            var fuelAdapter = new XPlane12AarFuelAdapter(xplane12Feed);
+            xplane12Feed.AttachAarFuelAdapter(fuelAdapter);
+            feed = new AarFuelAdapterFeed(xplane12Feed, fuelAdapter);
         }
         else if (DataSourceModes.IsXPlaneLegacy(settings.DataSourceMode))
         {

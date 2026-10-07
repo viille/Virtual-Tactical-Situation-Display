@@ -7,7 +7,7 @@ using TacticalDisplay.Core.Services;
 
 namespace TacticalDisplay.App.Data;
 
-public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
+public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed, IAarPoseSource
 {
     private const string LogSource = "XPlane12";
     private const int MaxTcasTargets = 63;
@@ -47,7 +47,9 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     private Task? _loopTask;
     private bool _isRunning;
     private bool _isConnected;
+    private XPlane12AarFuelAdapter? _aarFuelAdapter;
     private bool _aarSamplingEnabled;
+    private DateTimeOffset _lastFuelRefreshAt = DateTimeOffset.MinValue;
     private readonly Dictionary<string, long> _dataRefIds = new(StringComparer.Ordinal);
     private DateTimeOffset _lastMultiplayerFallbackReadAt = DateTimeOffset.MinValue;
     private IReadOnlyList<TrafficContactState> _latestMultiplayerFallbackTraffic = [];
@@ -65,6 +67,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     public bool AarSamplingEnabled { get => _aarSamplingEnabled; set => _aarSamplingEnabled = value; }
 
     internal XPlane12WebApiClient WebApi => _webApi;
+    internal void AttachAarFuelAdapter(XPlane12AarFuelAdapter adapter) => _aarFuelAdapter = adapter;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -101,6 +104,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         }
 
         loopCts?.Dispose();
+        _aarFuelAdapter?.MarkUnavailable();
         SetConnected(false);
     }
 
@@ -151,6 +155,16 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         }
 
         await TryResolveOptionalDataRefAsync("sim/flightmodel/position/mag_psi", cancellationToken);
+        if (_aarFuelAdapter is not null)
+        {
+            try { await _aarFuelAdapter.InitializeAsync(cancellationToken).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                _aarFuelAdapter.MarkUnavailable();
+                DataSourceDebugLog.Info(LogSource, $"XP12 AAR fuel adapter is unavailable; traffic continues | error={ex.Message}");
+            }
+        }
         foreach (var dataRefName in OptionalTrafficDataRefs)
         {
             try
@@ -199,6 +213,13 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             nextSampleAt = now + targetInterval;
             var snapshot = await ReadSnapshotAsync(cancellationToken);
             if (AarSamplingEnabled) AarPoseSampled?.Invoke(this, snapshot.Ownship);
+            if (_aarFuelAdapter is not null && now - _lastFuelRefreshAt >= TimeSpan.FromSeconds(1))
+            {
+                _lastFuelRefreshAt = now;
+                try { await _aarFuelAdapter.RefreshFuelAsync(cancellationToken).ConfigureAwait(false); }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+                catch (Exception ex) { DataSourceDebugLog.ThrottledDebug(LogSource, "aar-fuel-refresh", TimeSpan.FromSeconds(10), () => ex.Message); }
+            }
             SnapshotReceived?.Invoke(this, snapshot);
         }
     }

@@ -1,6 +1,5 @@
 using System.Collections.ObjectModel;
 using System.Globalization;
-using System.Text.Json;
 using System.Windows;
 using TacticalDisplay.App.Commands;
 using TacticalDisplay.App.Data;
@@ -10,6 +9,13 @@ using TacticalDisplay.Core.Config;
 using TacticalDisplay.Core.Models;
 
 namespace TacticalDisplay.App.ViewModels;
+
+public sealed record AarPendingRequestDisplay(string RequestId, string Callsign, string StatusText,
+    string Source, string RequestMode, double? RequestedKg)
+{
+    public string DisplayText => $"{Callsign} · {Source} · {RequestMode}" +
+        (RequestedKg is { } amount ? $" · {amount:0} kg" : string.Empty);
+}
 
 /// <summary>Owns AAR module presentation state and its module commands.</summary>
 public sealed class AarViewModel : ViewModelBase
@@ -43,7 +49,7 @@ public sealed class AarViewModel : ViewModelBase
     private string? _committedNextOperationId;
     private bool _activeIsLocalTanker;
     private double _protectedReserveKg;
-    private JsonElement? _fuelSummary;
+    private AarFuelSummaryState? _fuelSummary;
     private (double TransferredKg, double RemainingKg, double FlowKgPerSecond, bool IsRefueling)? _transferMetrics;
 
     internal AarViewModel(AarClient client, AarFuelTransferCoordinator fuelCoordinator, TacticalLinkClient link,
@@ -64,7 +70,7 @@ public sealed class AarViewModel : ViewModelBase
         _stateChanged = stateChanged;
         _token = token;
         _unit = string.Equals(settings.AarFuelUnit, "LB", StringComparison.OrdinalIgnoreCase) ? "LB" : "KG";
-        _client.EventReceived += OnModuleEventReceived;
+        _client.StateChanged += OnClientStateChanged;
 
         SetAarProtectedReserveCommand = Command(() => _ = SetReserveAsync());
         RequestFullAarCommand = Command(() => _ = RequestFullAsync());
@@ -77,22 +83,24 @@ public sealed class AarViewModel : ViewModelBase
         RemoveAarQueueEntryCommand = Command(() => _ = RemoveQueueEntryAsync());
         MoveAarQueueEntryUpCommand = Command(() => _ = MoveQueueEntryAsync(-1));
         MoveAarQueueEntryDownCommand = Command(() => _ = MoveQueueEntryAsync(1));
+        MoveAarQueueEntryTopCommand = Command(() => _ = MoveQueueEntryToAsync(0));
+        MoveAarQueueEntryBottomCommand = Command(() => _ = MoveQueueEntryToAsync(_pendingRequests.Count - 1));
         SetAarPlannedOnloadCommand = Command(() => _ = SetPlanAsync());
         ToggleAarTransferModeCommand = Command(() => _ = ToggleModeAsync());
-        ClearAarAsternCommand = Command(() => _ = SendOperationCommandAsync("CLEAR_ASTERN"));
-        HoldAarOperationCommand = Command(() => _ = SendOperationCommandAsync("HOLD"));
-        StartAarTransferCommand = Command(() => _ = SendOperationCommandAsync("START_TRANSFER"));
-        StopAarTransferCommand = Command(() => _ = SendOperationCommandAsync("STOP_TRANSFER"));
-        StartAarPrecontactCommand = Command(() => _ = SendOperationCommandAsync("PROCEED_TO_PRECONTACT"));
-        ClearAarContactCommand = Command(() => _ = SendOperationCommandAsync("CLEAR_CONTACT"));
-        DisconnectAarOperationCommand = Command(() => _ = SendOperationCommandAsync("DISCONNECT"));
-        BreakawayAarOperationCommand = Command(() => _ = SendOperationCommandAsync("BREAKAWAY"));
-        ReconcileAarOperationCommand = Command(() => _ = SendOperationCommandAsync("RECONCILE"));
+        ClearAarAsternCommand = Command(() => _ = SendOperationCommandAsync("CLEAR_ASTERN"), () => CanRunOperationCommand("CLEAR_ASTERN"));
+        HoldAarOperationCommand = Command(() => _ = SendOperationCommandAsync("HOLD"), () => CanRunOperationCommand("HOLD"));
+        StartAarTransferCommand = Command(() => _ = SendOperationCommandAsync("START_TRANSFER"), () => CanRunOperationCommand("START_TRANSFER"));
+        StopAarTransferCommand = Command(() => _ = SendOperationCommandAsync("STOP_TRANSFER"), () => CanRunOperationCommand("STOP_TRANSFER"));
+        ClearAarContactCommand = Command(() => _ = SendOperationCommandAsync("CLEAR_CONTACT"), () => CanRunOperationCommand("CLEAR_CONTACT"));
+        DisconnectAarOperationCommand = Command(() => _ = SendOperationCommandAsync("DISCONNECT"), () => CanRunOperationCommand("DISCONNECT"));
+        BreakawayAarOperationCommand = Command(() => _ = SendOperationCommandAsync("BREAKAWAY"), () => CanRunOperationCommand("BREAKAWAY"));
+        ReconcileAarOperationCommand = Command(() => _ = SendOperationCommandAsync("RECONCILE"), () => CanRunOperationCommand("RECONCILE"));
         ToggleAarAvailabilityCommand = Command(() => _ = ToggleAvailabilityAsync());
         ToggleTankerAvailabilityCommand = Command(() => _ = ToggleTankerModeAsync());
+        ApplyClientState(_client.State);
     }
 
-    private RelayCommand Command(Action action) => new(action);
+    private RelayCommand Command(Action action, Func<bool>? canExecute = null) => new(action, canExecute);
     public RelayCommand SetAarProtectedReserveCommand { get; }
     public RelayCommand RequestFullAarCommand { get; }
     public RelayCommand AcceptAarRequestCommand { get; }
@@ -104,13 +112,14 @@ public sealed class AarViewModel : ViewModelBase
     public RelayCommand RemoveAarQueueEntryCommand { get; }
     public RelayCommand MoveAarQueueEntryUpCommand { get; }
     public RelayCommand MoveAarQueueEntryDownCommand { get; }
+    public RelayCommand MoveAarQueueEntryTopCommand { get; }
+    public RelayCommand MoveAarQueueEntryBottomCommand { get; }
     public RelayCommand SetAarPlannedOnloadCommand { get; }
     public RelayCommand ToggleAarTransferModeCommand { get; }
     public RelayCommand ClearAarAsternCommand { get; }
     public RelayCommand HoldAarOperationCommand { get; }
     public RelayCommand StartAarTransferCommand { get; }
     public RelayCommand StopAarTransferCommand { get; }
-    public RelayCommand StartAarPrecontactCommand { get; }
     public RelayCommand ClearAarContactCommand { get; }
     public RelayCommand DisconnectAarOperationCommand { get; }
     public RelayCommand BreakawayAarOperationCommand { get; }
@@ -195,23 +204,18 @@ public sealed class AarViewModel : ViewModelBase
         Raise(nameof(AvailableAarTankers)); Raise(nameof(AvailableAarReceivers)); Raise(nameof(CanUseAar));
         Raise(nameof(CanOfferTanker)); Raise(nameof(IsAarReceiverCapable)); Raise(nameof(IsTankerCapable));
         Raise(nameof(IsLocalTankerJoined)); Raise(nameof(TankerButtonText)); Raise(nameof(AarAvailabilityButtonText));
+        RaiseOperationCommandStates();
     }
 
     public void SetFuelAdapterUnavailable() => AarTankerMetricsText = "Fuel adapter unavailable";
 
-    public void HandleEvent(TacticalLinkModuleEvent message) => ApplyModuleEvent(message);
+    public void Dispose() => _client.StateChanged -= OnClientStateChanged;
 
-    private void OnModuleEventReceived(object? sender, TacticalLinkModuleEvent message) => HandleEvent(message);
-
-    public void Dispose() => _client.EventReceived -= OnModuleEventReceived;
-
-    private string FormatFuelSummary(JsonElement fuel)
+    private string FormatFuelSummary(AarFuelSummaryState? fuel)
     {
-        if (!fuel.TryGetProperty("currentFuelKg", out var current) || current.ValueKind != JsonValueKind.Number ||
-            !fuel.TryGetProperty("protectedReserveKg", out var reserve) || reserve.ValueKind != JsonValueKind.Number ||
-            !fuel.TryGetProperty("availableToPromiseKg", out var available) || available.ValueKind != JsonValueKind.Number)
+        if (fuel?.CurrentFuelKg is not { } current || fuel.ProtectedReserveKg is not { } reserve || fuel.AvailableToPromiseKg is not { } available)
             return "Fuel adapter unavailable";
-        return $"Fuel {FormatAmount(current.GetDouble())} {_unit} · reserve {FormatAmount(reserve.GetDouble())} {_unit} · available {FormatAmount(available.GetDouble())} {_unit}";
+        return $"Fuel {FormatAmount(current)} {_unit} · reserve {FormatAmount(reserve)} {_unit} · available {FormatAmount(available)} {_unit}";
     }
 
     private string FormatMetrics(double transferred, double remaining, double flow, bool isRefueling) =>
@@ -258,7 +262,7 @@ public sealed class AarViewModel : ViewModelBase
     private async Task RequestFullAsync()
     {
         if (!IsAarReceiverCapable || SelectedAarTanker is null) return;
-        await _client.RequestRefuelAsync(SelectedAarTanker.ParticipantId, null, true, AarTransferMode, _token);
+        await _client.RequestFullRefuelAsync(SelectedAarTanker.ParticipantId, AarTransferMode, _token);
         AarStatusText = "FULL request sent";
     }
     private async Task RequestAsync()
@@ -266,7 +270,7 @@ public sealed class AarViewModel : ViewModelBase
         if (!IsAarReceiverCapable || SelectedAarTanker is null) return;
         if (AarTransferMode == "DryHookup")
         {
-            await _client.RequestRefuelAsync(SelectedAarTanker.ParticipantId, null, true, AarTransferMode, _token);
+            await _client.RequestFullRefuelAsync(SelectedAarTanker.ParticipantId, AarTransferMode, _token);
             AarStatusText = "Dry Hookup request sent";
             return;
         }
@@ -291,6 +295,11 @@ public sealed class AarViewModel : ViewModelBase
         var current = _pendingRequests.IndexOf(SelectedAarRequest);
         var position = Math.Clamp(current + offset, 0, Math.Max(0, _pendingRequests.Count - 1));
         await _client.MoveQueueEntryAsync(SelectedAarRequest.RequestId, position, _token);
+    }
+    private async Task MoveQueueEntryToAsync(int position)
+    {
+        if (SelectedAarRequest is null || _pendingRequests.Count == 0) return;
+        await _client.MoveQueueEntryAsync(SelectedAarRequest.RequestId, Math.Clamp(position, 0, _pendingRequests.Count - 1), _token);
     }
     private async Task ReturnCommittedAsync()
     {
@@ -333,6 +342,40 @@ public sealed class AarViewModel : ViewModelBase
         };
         await task;
     }
+
+    private bool CanRunOperationCommand(string kind)
+    {
+        if (!_isConnected() || _activeOperationId is null || _client.State.ActiveOperation is not { } operation)
+            return false;
+        var tanker = operation.TankerParticipantId == _link.LocalParticipantId;
+        var phase = operation.Phase;
+        return kind switch
+        {
+            "CLEAR_ASTERN" => tanker && phase == AarOperationPhase.Accepted,
+            "CLEAR_CONTACT" => tanker && phase == AarOperationPhase.Astern,
+            "HOLD" => tanker && phase is AarOperationPhase.Astern or AarOperationPhase.ClearedContact or AarOperationPhase.Contact or AarOperationPhase.Refueling,
+            "START_TRANSFER" => tanker && phase == AarOperationPhase.Contact && operation.TransferMode == global::TacticalDisplay.App.TacticalLink.AarTransferMode.Fuel &&
+                _fuelAdapter() is { IsAvailable: true, CanReadFuel: true, CanWriteFuel: true },
+            "STOP_TRANSFER" => tanker && phase == AarOperationPhase.Refueling,
+            "DISCONNECT" => phase is AarOperationPhase.Accepted or AarOperationPhase.Astern or AarOperationPhase.ClearedContact or
+                AarOperationPhase.Contact or AarOperationPhase.Refueling or AarOperationPhase.Suspended,
+            "BREAKAWAY" => !AarState.IsTerminal(phase) && phase != AarOperationPhase.Unknown,
+            "RECONCILE" => phase == AarOperationPhase.Suspended,
+            _ => false
+        };
+    }
+
+    private void RaiseOperationCommandStates()
+    {
+        ClearAarAsternCommand.RaiseCanExecuteChanged();
+        HoldAarOperationCommand.RaiseCanExecuteChanged();
+        StartAarTransferCommand.RaiseCanExecuteChanged();
+        StopAarTransferCommand.RaiseCanExecuteChanged();
+        ClearAarContactCommand.RaiseCanExecuteChanged();
+        DisconnectAarOperationCommand.RaiseCanExecuteChanged();
+        BreakawayAarOperationCommand.RaiseCanExecuteChanged();
+        ReconcileAarOperationCommand.RaiseCanExecuteChanged();
+    }
     private async Task RespondAsync(bool accept)
     {
         if (!_isTankerCapable() || !_isConnected() || !_client.IsTankerJoined || SelectedAarRequest is null) return;
@@ -342,113 +385,84 @@ public sealed class AarViewModel : ViewModelBase
             if (!TryParseAmount(AarPlannedAmountText, out var kg) || kg <= 0) { AarStatusText = $"Enter a positive planned amount in {_unit}, or leave it blank to use the safe maximum"; return; }
             plan = kg;
         }
-        await _client.RespondToRequestAsync(SelectedAarRequest.RequestId, accept, AarTransferMode, plan, _token);
+        if (accept) await _client.AcceptRequestAsync(SelectedAarRequest.RequestId, AarTransferMode, plan, _token);
+        else await _client.RejectRequestAsync(SelectedAarRequest.RequestId, _token);
         AarStatusText = accept ? "Request accepted" : "Request rejected";
         if (!accept) _pendingRequests.Remove(SelectedAarRequest);
         SelectedAarRequest = null;
     }
 
-    public void ApplyModuleEvent(TacticalLinkModuleEvent e)
+    private void OnClientStateChanged(AarState state)
     {
-        if (e.Module != "aar" || e.Kind.StartsWith("POSE_", StringComparison.Ordinal)) return;
-        Application.Current.Dispatcher.Invoke(() =>
+        if (!Application.Current.Dispatcher.CheckAccess())
         {
-            ApplyModuleEventCore(e);
-            _stateChanged();
-        });
+            Application.Current.Dispatcher.BeginInvoke(() => ApplyClientState(state));
+            return;
+        }
+        ApplyClientState(state);
     }
 
-    private void ApplyModuleEventCore(TacticalLinkModuleEvent e)
+    private void ApplyClientState(AarState state)
     {
-        var fuel = e.Payload.TryGetProperty("fuel", out var nested) ? nested : e.Payload;
-        if (fuel.TryGetProperty("protectedReserveKg", out var reserve) && reserve.TryGetDouble(out var reserveKg) && reserveKg >= 0) _protectedReserveKg = reserveKg;
-        if (e.OperationId is { } opId && e.Payload.TryGetProperty("transferredKg", out var watermark) && watermark.TryGetDouble(out var cumulative)) _fuelCoordinator.RecordWatermark(opId, cumulative);
-        if (e.OperationId is { } id)
+        _activeOperations.Clear();
+        foreach (var operation in state.Operations.Values.Where(operation => !AarState.IsTerminal(operation.Phase)))
+            _activeOperations.Add(operation.OperationId);
+        var active = state.ActiveOperation;
+        _activeOperationId = active?.OperationId;
+        _activeIsLocalTanker = active?.TankerParticipantId == _link.LocalParticipantId;
+        if (active is not null) AarOperationStateText = active.Phase.ToString().ToUpperInvariant();
+        else if (state.LastEventKind is "OPERATION_COMPLETE" or "OPERATION_FAILED" or "BREAKAWAY" or "OPERATION_CANCELLED")
+            AarOperationStateText = state.Operations.Values.OrderByDescending(operation => operation.Revision).FirstOrDefault()?.Phase.ToString().ToUpperInvariant() ?? "No active operation";
+
+        _transferMode = state.TransferMode == global::TacticalDisplay.App.TacticalLink.AarTransferMode.DryHookup ? "DryHookup" : "Fuel";
+        _protectedReserveKg = state.FuelSummary?.ProtectedReserveKg ?? _protectedReserveKg;
+        _ownPendingRequestId = state.OwnPendingRequestId;
+        _committedNextOperationId = state.CommittedNext?.OperationId;
+        _pendingRequests.Clear();
+        foreach (var request in state.PendingQueue)
         {
-            if (e.Payload.TryGetProperty("transferMode", out var mode) && mode.GetString() is { } value) { _transferMode = value; Raise(nameof(AarTransferMode)); }
-            var state = e.Payload.TryGetProperty("state", out var stateNode) ? stateNode.GetString() :
-                e.Payload.TryGetProperty("operation", out var operation) && operation.TryGetProperty("state", out var nestedState) ? nestedState.GetString() : null;
-            var slot = e.Payload.TryGetProperty("slot", out var slotNode) ? slotNode.GetString() :
-                e.Payload.TryGetProperty("operation", out var operation2) && operation2.TryGetProperty("slot", out var nestedSlot) ? nestedSlot.GetString() : null;
-            var live = state is "Accepted" or "PreContact" or "Astern" or "ClearedContact" or "Contact" or "Refueling" or "Suspended";
-            if (live && (slot == "Active" || _activeOperationId is null))
-            {
-                _activeOperationId = id;
-                _activeIsLocalTanker = e.Payload.TryGetProperty("tankerParticipantId", out var tankerId) && tankerId.GetString() == _link.LocalParticipantId;
-            }
-            if (live) _activeOperations.Add(id);
-            if (state is not null)
-            {
-                AarOperationStateText = state.Replace('_', ' ').ToUpperInvariant();
-                if (state is "Complete" or "Failed" or "Breakaway" or "Cancelled")
-                {
-                    _activeOperations.Remove(id);
-                    if (_activeOperationId == id) { _activeOperationId = null; _activeIsLocalTanker = false; }
-                }
-            }
+            var callsign = _link.NearbyPeers.FirstOrDefault(peer => peer.ParticipantId == request.ReceiverParticipantId)?.Callsign ?? "Receiver";
+            _pendingRequests.Add(new AarPendingRequestDisplay(request.RequestId, callsign, request.Status,
+                request.Source == "TankerAdded" ? "Tanker added" : "Receiver request", request.RequestMode,
+                request.RequestedKg));
         }
-        if (e.Kind == "AAR_STATE" && e.Payload.TryGetProperty("operations", out var operations) && operations.ValueKind == JsonValueKind.Array)
-        {
-            _activeOperations.Clear(); _activeOperationId = null;
-            foreach (var operation in operations.EnumerateArray())
-            {
-                if (!operation.TryGetProperty("operationId", out var idNode) || idNode.GetString() is not { } currentId || !operation.TryGetProperty("state", out var stateNode) || stateNode.GetString() is not { } currentState) continue;
-                if (currentState is "Accepted" or "PreContact" or "Astern" or "ClearedContact" or "Contact" or "Refueling" or "Suspended") _activeOperations.Add(currentId);
-                if (operation.TryGetProperty("slot", out var slot) && slot.GetString() == "Active")
-                {
-                    _activeOperationId = currentId; _activeIsLocalTanker = operation.TryGetProperty("tankerParticipantId", out var tanker) && tanker.GetString() == _link.LocalParticipantId;
-                    AarOperationStateText = currentState.Replace('_', ' ').ToUpperInvariant();
-                }
-            }
-        }
-        if (e.Kind == "REQUEST_QUEUED" && e.Payload.TryGetProperty("requestId", out var requestId) && requestId.GetString() is { } queuedId)
-        {
-            var receiverId = e.Payload.TryGetProperty("receiverParticipantId", out var receiver) ? receiver.GetString() : null;
-            var callsign = _link.NearbyPeers.FirstOrDefault(peer => peer.ParticipantId == receiverId)?.Callsign ?? "Receiver";
-            _pendingRequests.Add(new AarPendingRequestDisplay(queuedId, callsign, "Pending"));
-            if (receiverId == _link.LocalParticipantId) _ownPendingRequestId = queuedId;
-        }
-        else if ((e.Kind is "TANKER_ADDED_RECEIVER" or "REQUEST_PENDING") && e.Payload.TryGetProperty("requestId", out var ownRequest) && ownRequest.GetString() is { } ownId) _ownPendingRequestId = ownId;
-        else if ((e.Kind is "AAR_STATE" or "QUEUE_UPDATED") && e.Payload.TryGetProperty("queue", out var queue) && queue.ValueKind == JsonValueKind.Object && queue.TryGetProperty("pending", out var pending) && pending.ValueKind == JsonValueKind.Array)
-        {
-            _committedNextOperationId = queue.TryGetProperty("committedNext", out var committed) && committed.ValueKind == JsonValueKind.Object && committed.TryGetProperty("operationId", out var committedId) ? committedId.GetString() : null;
-            _pendingRequests.Clear();
-            foreach (var item in pending.EnumerateArray())
-            {
-                if (!item.TryGetProperty("requestId", out var idNode) || idNode.GetString() is not { } pendingId) continue;
-                var participant = item.TryGetProperty("receiverParticipantId", out var receiverId) ? receiverId.GetString() : null;
-                _pendingRequests.Add(new AarPendingRequestDisplay(pendingId, _link.NearbyPeers.FirstOrDefault(peer => peer.ParticipantId == participant)?.Callsign ?? "Receiver", "Pending"));
-            }
-        }
-        else if ((e.Kind is "REQUEST_CANCELLED" or "REQUEST_REJECTED" or "REQUEST_ACCEPTED") && e.Payload.TryGetProperty("requestId", out var ended) && ended.GetString() is { } endedId)
-        {
-            var item = _pendingRequests.FirstOrDefault(request => request.RequestId == endedId);
-            if (item is not null) _pendingRequests.Remove(item);
-            if (_ownPendingRequestId == endedId) _ownPendingRequestId = null;
-        }
-        AarStatusText = e.Kind switch
+
+        AarStatusText = state.LastEventKind switch
         {
             "TANKER_MODE_JOINED" => "Tanker joined; set reserve and check adapter readiness",
             "TANKER_MODE_LEFT" => "Tanker mode off",
             "RESERVE_UPDATED" => "Protected reserve updated",
-            "TANKER_AVAILABILITY_UPDATED" => _client.IsTankerAvailable ? "Tanker available for requests" : "Tanker unavailable",
-            "MODULE_ERROR" => e.Payload.TryGetProperty("message", out var message) ? message.GetString() ?? "AAR command failed" : "AAR command failed",
+            "TANKER_AVAILABILITY_UPDATED" => state.TankerAvailability == "Available" ? "Tanker available for requests" : "Tanker unavailable",
+            "MODULE_ERROR" => state.MaxAllowedKg is { } maximum
+                ? $"Plan exceeds the safe maximum of {FormatAmount(maximum):0.##} {_unit}."
+                : state.LastError ?? "AAR command failed",
             "OPERATION_SUSPENDED" => "AAR stopped; reconnect and reconcile before continuing",
             "OPERATION_FAILED" => "AAR operation failed",
-            _ => e.Kind.Replace('_', ' ')
+            { } kind => kind.Replace('_', ' '),
+            _ => AarStatusText
         };
-        if (_isTankerCapable() && e.Payload.TryGetProperty("fuel", out var summary)) { _fuelSummary = summary.Clone(); AarTankerMetricsText = FormatFuelSummary(summary); }
-        else if (_isTankerCapable() && e.Kind == "RESERVE_UPDATED") { _fuelSummary = e.Payload.Clone(); AarTankerMetricsText = FormatFuelSummary(e.Payload); }
-        if (_isTankerCapable() && e.Payload.TryGetProperty("transferredKg", out var transferredNode) && transferredNode.TryGetDouble(out var transferred) &&
-            e.Payload.TryGetProperty("remainingKg", out var remainingNode) && remainingNode.TryGetDouble(out var remaining) &&
-            e.Payload.TryGetProperty("effectiveFlowKgPerSecond", out var flowNode) && flowNode.TryGetDouble(out var flow))
+        if (_isTankerCapable())
         {
-            var refueling = e.Payload.TryGetProperty("state", out var state) && state.GetString() == "Refueling" && flow > 0;
-            _transferMetrics = (transferred, remaining, flow, refueling);
-            AarTankerMetricsText = FormatMetrics(transferred, remaining, flow, refueling);
+            _fuelSummary = state.FuelSummary;
+            if (state.FuelSummary is not null) AarTankerMetricsText = FormatFuelSummary(_fuelSummary);
+            if (active is { } op && op.Phase == AarOperationPhase.Refueling && op.EffectiveFlowKgPerSecond is > 0)
+            {
+                _transferMetrics = (op.TransferredKg, op.RemainingKg, op.EffectiveFlowKgPerSecond.Value, true);
+                AarTankerMetricsText = FormatMetrics(op.TransferredKg, op.RemainingKg, op.EffectiveFlowKgPerSecond.Value, true);
+            }
+            else if (active is { } stopped && stopped.Phase is AarOperationPhase.Contact or AarOperationPhase.Astern)
+            {
+                _transferMetrics = (stopped.TransferredKg, stopped.RemainingKg, 0, false);
+                AarTankerMetricsText = FormatMetrics(stopped.TransferredKg, stopped.RemainingKg, 0, false);
+            }
         }
+
+        Raise(nameof(AarTransferMode));
         Raise(nameof(AvailableAarTankers)); Raise(nameof(AvailableAarReceivers)); Raise(nameof(HasOwnAarPendingRequest));
         Raise(nameof(HasAarCommittedNext)); Raise(nameof(HasAarOperation)); Raise(nameof(IsLocalTankerForActiveOperation));
         Raise(nameof(IsLocalTankerJoined)); Raise(nameof(AarAvailabilityButtonText)); Raise(nameof(TankerButtonText));
+        Raise(nameof(HasActiveOperations));
+        RaiseOperationCommandStates();
+        _stateChanged();
     }
 }

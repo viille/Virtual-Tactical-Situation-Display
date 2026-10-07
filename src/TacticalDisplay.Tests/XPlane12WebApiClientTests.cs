@@ -55,6 +55,18 @@ public sealed class XPlane12WebApiClientTests
     }
 
     [Fact]
+    public async Task MalformedCapabilitiesAndDataRefResponsesFailClosed()
+    {
+        using var malformedCapabilities = new XPlane12WebApiClient("http://xp.test", new HttpClient(
+            new FakeHandler(_ => Json(HttpStatusCode.OK, "{broken"))));
+        await Assert.ThrowsAnyAsync<JsonException>(() => malformedCapabilities.DiscoverApiVersionAsync(CancellationToken.None));
+
+        using var malformedDataRefs = new XPlane12WebApiClient("http://xp.test", new HttpClient(
+            new FakeHandler(_ => Json(HttpStatusCode.OK, "{\"data\":[{\"id\":\"bad\"}]}"))));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => malformedDataRefs.ResolveDataRefIdAsync("test", CancellationToken.None));
+    }
+
+    [Fact]
     public async Task RequestTimeoutPropagatesToCaller()
     {
         using var client = new XPlane12WebApiClient("http://xp.test", new HttpClient(new TimeoutHandler()));

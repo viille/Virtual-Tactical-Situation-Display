@@ -116,6 +116,20 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task PendingReceiverRequestIsNotifiedAndRestoredByGetState()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+
+        var request = await rig.Request("receiver", "tanker", 100);
+        var pendingEvent = Assert.Single(request.Events, item => item.Recipient == "receiver" && item.Kind == "REQUEST_PENDING");
+        var restored = await rig.Send("receiver", "GET_STATE", new { });
+
+        Assert.Equal(rig.RequestIdFrom(request), pendingEvent.Payload.GetProperty("requestId").GetString());
+        Assert.Equal(rig.RequestIdFrom(request), restored.LastPayload.GetProperty("ownPendingRequestId").GetString());
+    }
+
+    [Fact]
     public async Task TankerSelectedPlannedKgIsTheInitialCommitmentAndSafeMaximumIsReturned()
     {
         var rig = new Rig();

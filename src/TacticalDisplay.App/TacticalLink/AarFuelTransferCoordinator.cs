@@ -25,10 +25,18 @@ internal sealed class AarFuelTransferCoordinator : IDisposable
         _protectedReserveKg = protectedReserveKg;
         _applicationToken = applicationToken;
         _client.EventReceived += OnEventReceived;
+        _client.StateChanged += OnStateChanged;
+        OnStateChanged(_client.State);
     }
 
     public double GetWatermark(string operationId) => _processor.GetWatermark(operationId);
     public void RecordWatermark(string operationId, double cumulativeKg) => _processor.RecordWatermark(operationId, cumulativeKg);
+
+    private void OnStateChanged(AarState state)
+    {
+        foreach (var operation in state.Operations.Values)
+            _processor.RecordWatermark(operation.OperationId, operation.TransferredKg);
+    }
 
     private void OnEventReceived(object? sender, TacticalLinkModuleEvent message)
     {
@@ -107,5 +115,6 @@ internal sealed class AarFuelTransferCoordinator : IDisposable
             _inFlight.Clear();
         }
         _client.EventReceived -= OnEventReceived;
+        _client.StateChanged -= OnStateChanged;
     }
 }

@@ -1046,7 +1046,7 @@
                                     </Style.Triggers>
                                 </Style>
                             </StackPanel.Style>
-                            <TextBlock Text="PENDING FIFO REQUESTS" Foreground="#83F2D0" Margin="0,0,0,4" />
+                            <TextBlock Text="AAR QUEUE" Foreground="#83F2D0" Margin="0,0,0,4" />
                             <TextBlock Text="Optional planned onload; blank accepts the safe maximum" Foreground="#7CB9A9" TextWrapping="Wrap" Margin="0,0,0,4" />
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                                 <TextBox Text="{Binding Path=Aar.AarPlannedAmountText, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,0,6,0" ToolTip="Optional tanker-selected plan" />
@@ -1066,13 +1066,15 @@
                                     </Style>
                                 </Button.Style>
                             </Button>
-                            <ListBox ItemsSource="{Binding Path=Aar.AarPendingRequests}" SelectedItem="{Binding Path=Aar.SelectedAarRequest}" DisplayMemberPath="Callsign" MaxHeight="110" />
+                            <ListBox ItemsSource="{Binding Path=Aar.AarPendingRequests}" SelectedItem="{Binding Path=Aar.SelectedAarRequest}" DisplayMemberPath="DisplayText" MaxHeight="110" />
                             <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
                                 <Button Content="ACCEPT" Command="{Binding Path=Aar.AcceptAarRequestCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                                 <Button Content="REJECT" Command="{Binding Path=Aar.RejectAarRequestCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                                 <Button Content="REMOVE" Command="{Binding Path=Aar.RemoveAarQueueEntryCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                                 <Button Content="UP" Command="{Binding Path=Aar.MoveAarQueueEntryUpCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="DOWN" Command="{Binding Path=Aar.MoveAarQueueEntryDownCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="DOWN" Command="{Binding Path=Aar.MoveAarQueueEntryDownCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="TOP" Command="{Binding Path=Aar.MoveAarQueueEntryTopCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="BOTTOM" Command="{Binding Path=Aar.MoveAarQueueEntryBottomCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             </StackPanel>
                         </StackPanel>
                         <StackPanel Margin="0,0,0,8">
@@ -1115,7 +1117,6 @@
                                         </Style.Triggers>
                                     </Style>
                                 </WrapPanel.Style>
-                                <Button Content="PRECONTACT" Command="{Binding Path=Aar.StartAarPrecontactCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                                 <Button Content="CLEAR ASTERN" Command="{Binding Path=Aar.ClearAarAsternCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                                 <Button Content="HOLD" Command="{Binding Path=Aar.HoldAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                                 <Button Content="CLEAR CONTACT" Command="{Binding Path=Aar.ClearAarContactCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
@@ -1284,6 +1285,10 @@
                                 <TextBlock Text="Default: http://localhost:8086/"
                                            Foreground="#7CB9A9"
                                            Margin="0,2,0,0" />
+                                <TextBlock Text="{Binding XPlane12AarStatusText}"
+                                           Foreground="#D9F2EC"
+                                           TextWrapping="Wrap"
+                                           Margin="0,6,0,0" />
                             </StackPanel>
                             <StackPanel Margin="0,8,0,0">
                                 <StackPanel.Style>

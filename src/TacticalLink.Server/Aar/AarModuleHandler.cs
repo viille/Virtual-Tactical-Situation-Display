@@ -510,6 +510,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var item = new AarRequest(id, peer.ParticipantId, tankerId, requestAmount, _clock.GetUtcNow(), ++_nextQueueOrder) { TransferMode = transferMode };
         _requests.Add(id, item);
         Notify(context, tankerId, "REQUEST_QUEUED", null, null, RequestView(item));
+        Notify(context, peer.ParticipantId, "REQUEST_PENDING", null, null, RequestView(item));
         return Result("REQUEST_QUEUED", null, null, RequestView(item), id);
     }
 
@@ -989,7 +990,13 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var ops = _operations.Values.Where(operation => operation.TankerId == peer.ParticipantId || operation.ReceiverId == peer.ParticipantId)
             .Select(operation => peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation)).ToArray();
         return Result("AAR_STATE", context.OperationId, null,
-            new { queue = tankerMode ? QueueView(peer.ParticipantId) : null, operations = ops, fuel = tankerMode ? FuelSummary(peer.ParticipantId) : null });
+            new
+            {
+                queue = tankerMode ? QueueView(peer.ParticipantId) : null,
+                operations = ops,
+                fuel = tankerMode ? FuelSummary(peer.ParticipantId) : null,
+                ownPendingRequestId = _requests.Values.FirstOrDefault(request => request.ReceiverId == peer.ParticipantId && request.Status == "Pending")?.Id
+            });
     }
 
     private void PromoteCommittedNext(ModuleCommandContext context, string tankerId)
