@@ -10,8 +10,11 @@ services:
       TACTICAL_LINK_LISTEN_URL: http://0.0.0.0:8080
       TACTICAL_LINK_INTEREST_RADIUS_NM: ${TACTICAL_LINK_INTEREST_RADIUS_NM:-200}
       TACTICAL_LINK_MAX_INTEREST_RADIUS_NM: ${TACTICAL_LINK_MAX_INTEREST_RADIUS_NM:-500}
+      TACTICAL_LINK_AAR_REGISTRY_CACHE_PATH: ${TACTICAL_LINK_AAR_REGISTRY_CACHE_PATH:-/var/lib/tactical-link/aar-registry-cache.json}
     expose:
       - "8080"
+    volumes:
+      - tactical_link_data:/var/lib/tactical-link
     logging:
       driver: json-file
       options:
@@ -39,3 +42,4 @@ services:
 volumes:
   caddy_data:
   caddy_config:
+  tactical_link_data:

@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace TacticalDisplay.Core.Models;
 
 public static class TacticalLinkProtocol
@@ -52,3 +54,12 @@ public sealed record TacticalLinkState(
 {
     public static TacticalLinkState Disconnected { get; } = new(TacticalLinkConnectionState.Disconnected, null, null, []);
 }
+
+public sealed record TacticalLinkModuleEvent(
+    string Module,
+    int ModuleProtocolVersion,
+    long TransportSequence,
+    string Kind,
+    string? OperationId,
+    long? OperationRevision,
+    JsonElement Payload);

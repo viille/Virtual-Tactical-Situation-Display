@@ -15,15 +15,19 @@ public sealed class TacticalLinkClient : IAsyncDisposable
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly VtsdCloudClient _cloud;
     private readonly Uri _serverUri;
+    private readonly string _clientInstanceId = Guid.NewGuid().ToString("N");
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly object _telemetryLock = new();
     private readonly object _peerLock = new();
     private readonly Dictionary<string, TacticalPeer> _peers = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, PendingModuleMessage> _pendingModuleMessages = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, (long Revision, string Fingerprint)> _operationRevisions = new(StringComparer.Ordinal);
     private ClientWebSocket? _socket;
     private CancellationTokenSource? _connectionCts;
     private Task? _receiveTask;
     private Task? _ageRefreshTask;
     private long _sequence;
+    private long _moduleTransportSequence;
     private string? _participantId;
     private string? _callsign;
     private DateTimeOffset _authExpiresAt;
@@ -53,7 +57,10 @@ public sealed class TacticalLinkClient : IAsyncDisposable
     public IReadOnlySet<string> LocalCapabilities => _localCapabilities;
     public IReadOnlyDictionary<string, string> LocalOperationalStates => _localOperationalStates;
     public bool LocalTankerAvailable => _localOperationalStates.TryGetValue("tankerAvailability", out var state) && state == "Available";
+    public bool LocalTankerJoined => _localOperationalStates.TryGetValue("tankerAvailability", out var state) && state != "Off";
     public event EventHandler? StateChanged;
+    public event EventHandler<TacticalLinkModuleEvent>? ModuleEventReceived;
+    public event EventHandler<string>? ModuleProtocolError;
 
     public async Task ConnectAsync(CancellationToken cancellationToken, bool autoReconnect = true, double interestRadiusNm = 200, bool debugDiagnostics = false)
     {
@@ -82,13 +89,14 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         var socket = new ClientWebSocket();
         socket.Options.SetRequestHeader("Authorization", $"Bearer {token.Token}");
         _socket = socket;
+        Interlocked.Exchange(ref _moduleTransportSequence, 0);
         await socket.ConnectAsync(_serverUri, cancellationToken).ConfigureAwait(false);
         _callsign = token.Callsign;
         _authExpiresAt = token.ExpiresAt;
         _connectionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         SetState(TacticalLinkConnectionState.Connected);
         LocalAircraftType = token.AircraftType;
-        await SendAsync(new { type = "CONNECT" }, cancellationToken).ConfigureAwait(false);
+        await SendAsync(new { type = "CONNECT", clientInstanceId = _clientInstanceId }, cancellationToken).ConfigureAwait(false);
         await SendAsync(new { type = "INTEREST_UPDATE", radiusNm = _interestRadiusNm }, cancellationToken).ConfigureAwait(false);
         if (_debugDiagnostics) DataSourceDebugLog.Info("TacticalLink", $"Connected | callsign={token.Callsign} interestRadiusNm={_interestRadiusNm:0}");
         _receiveTask = ReceiveLoopAsync(socket, _connectionCts.Token);
@@ -144,10 +152,82 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         finally { _sendLock.Release(); }
     }
 
+    public Task PublishAarPoseAsync(OwnshipState ownship, CancellationToken cancellationToken)
+    {
+        if (ConnectionState != TacticalLinkConnectionState.Connected) return Task.CompletedTask;
+        var groundTrack = ownship.GroundTrackDeg ?? ownship.HeadingDeg;
+        var speedMps = ownship.SpeedKt * 0.514444;
+        var trackRadians = groundTrack * (System.Math.PI / 180.0);
+        double? verticalSpeedMps = null;
+        lock (_telemetryLock)
+        {
+            if (_previousOwnship is { } previous)
+            {
+                var elapsed = (ownship.Timestamp - previous.Timestamp).TotalSeconds;
+                if (elapsed is > 0.05 and <= 3)
+                {
+                    var value = (ownship.AltitudeFt - previous.AltitudeFt) * 0.3048 / elapsed;
+                    if (double.IsFinite(value) && System.Math.Abs(value) <= 100) verticalSpeedMps = -value;
+                }
+            }
+        }
+        var messageId = Guid.NewGuid().ToString("N");
+        return SendAsync(new
+        {
+            type = "MODULE_MESSAGE",
+            module = "aar",
+            moduleProtocolVersion = 1,
+            messageId,
+            kind = "POSE_UPDATE",
+            operationId = (string?)null,
+            payload = new
+            {
+                timestampUtc = ownship.Timestamp,
+                latitudeDeg = ownship.LatitudeDeg,
+                longitudeDeg = ownship.LongitudeDeg,
+                altitudeMeters = ownship.AltitudeFt * 0.3048,
+                headingDeg = ownship.HeadingDeg,
+                velocityNorthMps = speedMps * System.Math.Cos(trackRadians),
+                velocityEastMps = speedMps * System.Math.Sin(trackRadians),
+                velocityDownMps = verticalSpeedMps ?? 0
+            }
+        }, cancellationToken);
+    }
+
     public async Task SetTankerAvailabilityAsync(bool available, CancellationToken cancellationToken)
     {
         if (ConnectionState != TacticalLinkConnectionState.Connected) return;
-        await SendAsync(new { type = "CAPABILITY_UPDATE", operationalStates = new { tankerAvailability = available ? "Available" : "Off" } }, cancellationToken).ConfigureAwait(false);
+        await SendModuleMessageAsync("aar", 1, "SET_TANKER_AVAILABILITY", null,
+            new { availability = available ? "Available" : "Unavailable" }, cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task JoinTankerModeAsync(CancellationToken cancellationToken) =>
+        SendModuleMessageAsync("aar", 1, "JOIN_AS_TANKER", null, new { }, cancellationToken);
+
+    public Task LeaveTankerModeAsync(CancellationToken cancellationToken) =>
+        SendModuleMessageAsync("aar", 1, "LEAVE_TANKER_MODE", null, new { }, cancellationToken);
+
+    public Task SetProtectedReserveAsync(double reserveKg, CancellationToken cancellationToken) =>
+        SendModuleMessageAsync("aar", 1, "SET_PROTECTED_RESERVE", null, new { protectedReserveKg = reserveKg }, cancellationToken);
+
+    public async Task<string> SendModuleMessageAsync(string module, int moduleProtocolVersion, string kind, string? operationId,
+        object payload, CancellationToken cancellationToken, string? messageId = null)
+    {
+        if (ConnectionState != TacticalLinkConnectionState.Connected) throw new InvalidOperationException("TacticalLink must be connected to send a module command.");
+        var id = string.IsNullOrWhiteSpace(messageId) ? Guid.NewGuid().ToString("N") : messageId;
+        if (id.Length > 80 || id.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_' and not '.'))
+            throw new ArgumentException("The module message ID contains unsupported characters.", nameof(messageId));
+        var payloadElement = JsonSerializer.SerializeToElement(payload, Json);
+        var pendingKey = module + "\n" + id;
+        lock (_pendingModuleMessages)
+        {
+            PrunePendingModuleMessages();
+            if (!_pendingModuleMessages.ContainsKey(pendingKey) && _pendingModuleMessages.Count >= 256)
+                throw new InvalidOperationException("The pending module command limit has been reached.");
+            _pendingModuleMessages[pendingKey] = new PendingModuleMessage(id, module, moduleProtocolVersion, kind, operationId, payloadElement, DateTimeOffset.UtcNow);
+        }
+        await SendPendingModuleMessageAsync(pendingKey, cancellationToken).ConfigureAwait(false);
+        return id;
     }
 
     public void SetAutoReconnect(bool enabled) => _autoReconnect = enabled;
@@ -372,6 +452,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
             if (root.TryGetProperty("callsign", out var callsign)) _callsign = callsign.GetString() ?? _callsign;
             if (root.TryGetProperty("aircraftType", out var aircraftType)) LocalAircraftType = aircraftType.GetString();
             UpdateLocalCapabilities(root);
+            _ = ResendPendingModuleMessagesAsync(_connectionCts?.Token ?? CancellationToken.None);
         }
         else if (type == "AUTH_REFRESHED")
         {
@@ -384,6 +465,10 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         else if (type == "CAPABILITY_UPDATED")
         {
             UpdateLocalCapabilities(root);
+        }
+        else if (type == "MODULE_EVENT")
+        {
+            HandleModuleEvent(root);
         }
         else if (type == "ERROR" && root.TryGetProperty("code", out var codeNode) && codeNode.GetString() is "AUTH_REFRESH_REJECTED" or "IDENTITY_MISMATCH")
         {
@@ -402,6 +487,101 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { await socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false); }
         finally { _sendLock.Release(); }
+    }
+
+    private void HandleModuleEvent(JsonElement root)
+    {
+        if (!root.TryGetProperty("module", out var moduleNode) || moduleNode.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("moduleProtocolVersion", out var versionNode) || !versionNode.TryGetInt32(out var version) ||
+            !root.TryGetProperty("transportSequence", out var sequenceNode) || !sequenceNode.TryGetInt64(out var transportSequence) ||
+            !root.TryGetProperty("kind", out var kindNode) || kindNode.ValueKind != JsonValueKind.String ||
+            !root.TryGetProperty("payload", out var payload))
+        {
+            ModuleProtocolError?.Invoke(this, "Malformed module event envelope.");
+            return;
+        }
+        var lastTransport = Interlocked.Read(ref _moduleTransportSequence);
+        if (transportSequence <= lastTransport) return;
+        Interlocked.Exchange(ref _moduleTransportSequence, transportSequence);
+        var module = moduleNode.GetString()!;
+        var kind = kindNode.GetString()!;
+        var operationId = root.TryGetProperty("operationId", out var opNode) && opNode.ValueKind == JsonValueKind.String ? opNode.GetString() : null;
+        if (root.TryGetProperty("messageId", out var messageNode) && messageNode.ValueKind == JsonValueKind.String && messageNode.GetString() is { } messageId)
+        {
+            lock (_pendingModuleMessages) _pendingModuleMessages.Remove(module + "\n" + messageId);
+        }
+        long? revision = root.TryGetProperty("operationRevision", out var revisionNode) && revisionNode.ValueKind == JsonValueKind.Number && revisionNode.TryGetInt64(out var parsedRevision)
+            ? parsedRevision : null;
+        if (revision is < 1 || (revision.HasValue && string.IsNullOrWhiteSpace(operationId)))
+        {
+            ModuleProtocolError?.Invoke(this, "Operation events require an operation ID and positive revision.");
+            return;
+        }
+        if (revision is { } currentRevision)
+        {
+            var key = module + ":" + operationId;
+            var fingerprint = kind + "\n" + CanonicalJson(payload);
+            if (_operationRevisions.TryGetValue(key, out var previous))
+            {
+                if (currentRevision < previous.Revision) return;
+                if (currentRevision == previous.Revision)
+                {
+                    if (!StringComparer.Ordinal.Equals(previous.Fingerprint, fingerprint))
+                        ModuleProtocolError?.Invoke(this, $"Conflicting AAR event content at operation revision {currentRevision}; request a fresh snapshot.");
+                    return;
+                }
+            }
+            _operationRevisions[key] = (currentRevision, fingerprint);
+        }
+        ModuleEventReceived?.Invoke(this, new TacticalLinkModuleEvent(module, version, transportSequence, kind, operationId, revision, payload.Clone()));
+    }
+
+    private async Task ResendPendingModuleMessagesAsync(CancellationToken cancellationToken)
+    {
+        string[] ids;
+        lock (_pendingModuleMessages)
+        {
+            PrunePendingModuleMessages();
+            ids = _pendingModuleMessages.Keys.ToArray();
+        }
+        foreach (var id in ids)
+        {
+            if (cancellationToken.IsCancellationRequested) return;
+            await SendPendingModuleMessageAsync(id, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task SendPendingModuleMessageAsync(string id, CancellationToken cancellationToken)
+    {
+        PendingModuleMessage? message;
+        lock (_pendingModuleMessages) _pendingModuleMessages.TryGetValue(id, out message);
+        if (message is null || ConnectionState != TacticalLinkConnectionState.Connected) return;
+        await SendAsync(new
+        {
+            type = "MODULE_MESSAGE",
+            module = message.Module,
+            moduleProtocolVersion = message.ProtocolVersion,
+            messageId = message.MessageId,
+            kind = message.Kind,
+            operationId = message.OperationId,
+            payload = message.Payload
+        }, cancellationToken).ConfigureAwait(false);
+    }
+
+    private void PrunePendingModuleMessages()
+    {
+        var threshold = DateTimeOffset.UtcNow - TimeSpan.FromHours(24);
+        foreach (var id in _pendingModuleMessages.Where(pair => pair.Value.CreatedAt < threshold).Select(pair => pair.Key).ToArray())
+            _pendingModuleMessages.Remove(id);
+    }
+
+    private static string CanonicalJson(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Object)
+            return "{" + string.Join(",", element.EnumerateObject().OrderBy(property => property.Name, StringComparer.Ordinal)
+                .Select(property => JsonSerializer.Serialize(property.Name) + ":" + CanonicalJson(property.Value))) + "}";
+        if (element.ValueKind == JsonValueKind.Array) return "[" + string.Join(",", element.EnumerateArray().Select(CanonicalJson)) + "]";
+        return element.GetRawText();
     }
 
     internal static byte[] SerializeVersioned(object message)
@@ -442,6 +622,8 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         await DisconnectAsync().ConfigureAwait(false);
         _sendLock.Dispose();
     }
+
+    private sealed record PendingModuleMessage(string MessageId, string Module, int ProtocolVersion, string Kind, string? OperationId, JsonElement Payload, DateTimeOffset CreatedAt);
 
     private sealed class TacticalPeerWire
     {

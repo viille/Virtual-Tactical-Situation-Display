@@ -7,7 +7,7 @@ using TacticalDisplay.Core.Services;
 
 namespace TacticalDisplay.App.Data;
 
-public sealed class SimConnectTrafficFeed : ITrafficDataFeed
+public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource
 {
     private const string NativeSimConnectDllName = "SimConnect.dll";
     private const string LogSource = "MSFS";
@@ -35,6 +35,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
     private DateTimeOffset _lastTrafficRequestAt = DateTimeOffset.MinValue;
     private DateTimeOffset _lastTrafficSampleAt = DateTimeOffset.MinValue;
     private bool _hasReceivedTrafficThisSession;
+    private bool _aarSamplingEnabled;
 
     public SimConnectTrafficFeed(TacticalDisplaySettings settings)
     {
@@ -43,6 +44,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
 
     public event EventHandler<TrafficSnapshot>? SnapshotReceived;
     public event EventHandler<bool>? ConnectionChanged;
+    public event EventHandler<OwnshipState>? AarPoseSampled;
+    public bool AarSamplingEnabled { get => Volatile.Read(ref _aarSamplingEnabled); set => Volatile.Write(ref _aarSamplingEnabled, value); }
     public bool IsConnected { get; private set; }
 
     public Task StartAsync(CancellationToken cancellationToken)
@@ -147,28 +150,35 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
             SetConnected(true);
 
             var pollMs = (int)System.Math.Clamp(1000.0 / System.Math.Max(_settings.PollRateHz, 1), 100, 1000);
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(pollMs));
+            var lastOwnshipRequestAt = DateTimeOffset.MinValue;
+            var lastSnapshotAt = DateTimeOffset.MinValue;
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(50));
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                var ownshipRequestHr = api.RequestDataOnSimObject(
-                    simHandle,
-                    (uint)RequestId.Ownship,
-                    (uint)DefinitionId.Ownship,
-                    0,
-                    (uint)SimConnectPeriod.Once,
-                    0,
-                    0,
-                    0,
-                    0);
-                if (ownshipRequestHr != 0)
+                var now = DateTimeOffset.UtcNow;
+                var ownshipIntervalMs = AarSamplingEnabled ? 50 : pollMs;
+                if ((now - lastOwnshipRequestAt).TotalMilliseconds >= ownshipIntervalMs)
                 {
-                    DataSourceDebugLog.Warn(
-                        LogSource,
-                        $"Ownship request failed; recycling SimConnect session | hresult=0x{ownshipRequestHr:X8}");
-                    return;
+                    var ownshipRequestHr = api.RequestDataOnSimObject(
+                        simHandle,
+                        (uint)RequestId.Ownship,
+                        (uint)DefinitionId.Ownship,
+                        0,
+                        (uint)SimConnectPeriod.Once,
+                        0,
+                        0,
+                        0,
+                        0);
+                    if (ownshipRequestHr != 0)
+                    {
+                        DataSourceDebugLog.Warn(
+                            LogSource,
+                            $"Ownship request failed; recycling SimConnect session | hresult=0x{ownshipRequestHr:X8}");
+                        return;
+                    }
+                    lastOwnshipRequestAt = now;
                 }
 
-                var now = DateTimeOffset.UtcNow;
                 if ((now - _lastTrafficRequestAt).TotalMilliseconds >= 500)
                 {
                     var radiusMeters = (uint)System.Math.Clamp(
@@ -210,7 +220,11 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     return;
                 }
 
-                EmitSnapshot();
+                if ((now - lastSnapshotAt).TotalMilliseconds >= pollMs)
+                {
+                    EmitSnapshot();
+                    lastSnapshotAt = now;
+                }
             }
         }
         finally
@@ -299,11 +313,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
         {
             var ownshipRaw = Marshal.PtrToStructure<OwnshipRaw>(payloadPtr);
             var now = DateTimeOffset.UtcNow;
+            OwnshipState ownship;
             lock (_stateLock)
             {
                 var trueHeading = GeoMath.NormalizeDegrees(ownshipRaw.HeadingDeg);
                 _lastOwnshipSampleAt = now;
-                _latestOwnship = new OwnshipState(
+                ownship = new OwnshipState(
                     "OWN",
                     ownshipRaw.Latitude,
                     ownshipRaw.Longitude,
@@ -314,7 +329,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed
                     ownshipRaw.MagneticVariationDeg,
                     GeoMath.NormalizeDegrees(ownshipRaw.GroundTrackDeg),
                     _sessionGeneration);
+                _latestOwnship = ownship;
             }
+            if (AarSamplingEnabled) AarPoseSampled?.Invoke(this, ownship);
 
             DataSourceDebugLog.ThrottledDebug(
                 LogSource,

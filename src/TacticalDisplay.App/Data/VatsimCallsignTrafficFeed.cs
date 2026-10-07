@@ -8,7 +8,7 @@ using TacticalDisplay.Core.Services;
 
 namespace TacticalDisplay.App.Data;
 
-public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
+public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed, IAarPoseSource
 {
     private const string LogSource = "VATSIM";
     private const int RequiredStableCallsignMatches = 2;
@@ -61,11 +61,18 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display");
         _inner.SnapshotReceived += OnInnerSnapshotReceived;
         _inner.ConnectionChanged += OnInnerConnectionChanged;
+        if (_inner is IAarPoseSource poseSource) poseSource.AarPoseSampled += OnAarPoseSampled;
         DataSourceDebugLog.Info(LogSource, $"VATSIM callsign lookup enabled | feed={GetFeedUri()} refreshSeconds={Math.Clamp(_settings.VatsimCallsignRefreshSeconds, 15, 300):0}");
     }
 
     public event EventHandler<TrafficSnapshot>? SnapshotReceived;
     public event EventHandler<bool>? ConnectionChanged;
+    public event EventHandler<OwnshipState>? AarPoseSampled;
+    public bool AarSamplingEnabled
+    {
+        get => _inner is IAarPoseSource poseSource && poseSource.AarSamplingEnabled;
+        set { if (_inner is IAarPoseSource poseSource) poseSource.AarSamplingEnabled = value; }
+    }
     public bool IsConnected => _inner.IsConnected;
 
     public Task StartAsync(CancellationToken cancellationToken) =>
@@ -78,6 +85,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     {
         _inner.SnapshotReceived -= OnInnerSnapshotReceived;
         _inner.ConnectionChanged -= OnInnerConnectionChanged;
+        if (_inner is IAarPoseSource poseSource) poseSource.AarPoseSampled -= OnAarPoseSampled;
         await _inner.DisposeAsync();
         _refreshLock.Dispose();
         _httpClient.Dispose();
@@ -107,6 +115,8 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 
         ConnectionChanged?.Invoke(sender, connected);
     }
+
+    private void OnAarPoseSampled(object? sender, OwnshipState sample) => AarPoseSampled?.Invoke(this, sample);
 
     private void OnInnerSnapshotReceived(object? sender, TrafficSnapshot snapshot)
     {

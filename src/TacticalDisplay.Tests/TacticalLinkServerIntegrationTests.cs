@@ -121,7 +121,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task AuthRefreshUpdatesAircraftIdentityAndClearsTankerAvailabilityAfterDowngrade()
+    public async Task LegacyCapabilityUpdateCannotSetTankerAvailabilityAndAuthRefreshClearsItAfterDowngrade()
     {
         using var rsa = RSA.Create(2048);
         var oldKey = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY");
@@ -144,9 +144,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
 
             await tanker.SendAsync(new { type = "CAPABILITY_UPDATE", operationalStates = new { tankerAvailability = "Available" } });
             using var capabilityUpdate = await tanker.ReadTypeAsync("CAPABILITY_UPDATED");
-            Assert.Equal("Available", capabilityUpdate.RootElement.GetProperty("operationalStates").GetProperty("tankerAvailability").GetString());
-            using (var stateUpdate = await observer.ReadTypeAsync("PEER_UPDATE"))
-                Assert.Equal("Available", stateUpdate.RootElement.GetProperty("operationalStates").GetProperty("tankerAvailability").GetString());
+            Assert.DoesNotContain(capabilityUpdate.RootElement.GetProperty("operationalStates").EnumerateObject(), property => property.Name == "tankerAvailability");
 
             var refreshedToken = CreateToken(rsa, userId, "test-key", "F35A");
             await tanker.SendAsync(new { type = "AUTH_REFRESH", token = refreshedToken });

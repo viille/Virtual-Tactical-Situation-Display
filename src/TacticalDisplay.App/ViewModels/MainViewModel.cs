@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Text.Json;
 using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Threading;
@@ -32,7 +33,13 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private readonly AuthService _auth;
     private bool _showTacticalLinkMenu;
     private string _tacticalLinkMessage = "TacticalLink is disconnected.";
+    private string _aarProtectedReserveKgText = "0";
+    private string _aarStatusText = "AAR unavailable";
     private readonly DispatcherTimer _tacticalTelemetryTimer;
+    private readonly HashSet<string> _activeAarOperations = new(StringComparer.Ordinal);
+    private readonly ObservableCollection<AarPendingRequestDisplay> _aarPendingRequests = [];
+    private TacticalLinkPeerDisplay? _selectedAarTanker;
+    private AarPendingRequestDisplay? _selectedAarRequest;
     private OwnshipState? _latestOwnship;
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _airspaceTimer;
@@ -85,9 +92,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _auth.StateChanged += OnCloudAuthStateChanged;
         _tacticalLink = new TacticalLinkClient(CloudBootstrapper.Provider.GetRequiredService<VtsdCloudClient>());
         _tacticalLink.StateChanged += OnTacticalLinkStateChanged;
+        _tacticalLink.ModuleEventReceived += OnTacticalLinkModuleEventReceived;
         _feed = TrafficFeedFactory.Create(Settings, () => _tacticalLink.NearbyPeers);
         _feed.ConnectionChanged += OnConnectionChanged;
         _feed.SnapshotReceived += OnSnapshotReceived;
+        if (_feed is IAarPoseSource initialPoseSource) initialPoseSource.AarPoseSampled += OnAarPoseSampled;
 
         ToggleOrientationCommand = CreateUiCommand(nameof(ToggleOrientationCommand), ToggleOrientation);
         IncreaseRangeCommand = CreateUiCommand(nameof(IncreaseRangeCommand), IncreaseRange);
@@ -116,6 +125,10 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ConnectTacticalLinkCommand = CreateUiCommand(nameof(ConnectTacticalLinkCommand), () => _ = ConnectTacticalLinkAsync());
         DisconnectTacticalLinkCommand = CreateUiCommand(nameof(DisconnectTacticalLinkCommand), () => _ = DisconnectTacticalLinkAsync());
         ToggleTankerAvailabilityCommand = CreateUiCommand(nameof(ToggleTankerAvailabilityCommand), () => _ = ToggleTankerAvailabilityAsync());
+        SetAarProtectedReserveCommand = CreateUiCommand(nameof(SetAarProtectedReserveCommand), () => _ = SetAarProtectedReserveAsync());
+        RequestFullAarCommand = CreateUiCommand(nameof(RequestFullAarCommand), () => _ = RequestFullAarAsync());
+        AcceptAarRequestCommand = CreateUiCommand(nameof(AcceptAarRequestCommand), () => _ = RespondToAarRequestAsync(true));
+        RejectAarRequestCommand = CreateUiCommand(nameof(RejectAarRequestCommand), () => _ = RespondToAarRequestAsync(false));
         ToggleAlwaysOnTopCommand = CreateUiCommand(nameof(ToggleAlwaysOnTopCommand), ToggleAlwaysOnTop);
         ToggleKneepadCommand = CreateUiCommand(nameof(ToggleKneepadCommand), ToggleKneepad);
         PreviousKneepadPageCommand = CreateUiCommand(nameof(PreviousKneepadPageCommand), PreviousKneepadPage);
@@ -532,11 +545,26 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         var range = _repository.Ownship is { } ownship && peer.LatestTelemetry is { } state
             ? GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, state.LatitudeDeg, state.LongitudeDeg)
             : (double?)null;
-        return new TacticalLinkPeerDisplay(peer.Callsign, peer.AircraftType ?? "Aircraft", range is { } nm ? $"{nm:0} NM" : "--- NM", peer.StatusText);
+        return new TacticalLinkPeerDisplay(peer.ParticipantId, peer.Callsign, peer.AircraftType ?? "Aircraft", range is { } nm ? $"{nm:0} NM" : "--- NM", peer.StatusText);
     }).ToArray();
-    public string TankerButtonText => _tacticalLink.LocalTankerAvailable ? "LEAVE TANKER MODE" : "JOIN AS TANKER";
+    public IReadOnlyList<TacticalLinkPeerDisplay> AvailableAarTankers => TacticalLinkPeers.Where(display =>
+    {
+        var peer = _tacticalLink.NearbyPeers.FirstOrDefault(candidate => candidate.ParticipantId == display.ParticipantId);
+        return peer is not null && peer.Capabilities.Contains("aar.tanker") &&
+            peer.OperationalStates.TryGetValue("tankerAvailability", out var availability) && availability == "Available";
+    }).ToArray();
+    public string TankerButtonText => _tacticalLink.LocalTankerJoined ? "LEAVE TANKER MODE" : "JOIN AS TANKER";
+    public string AarProtectedReserveKgText { get => _aarProtectedReserveKgText; set => SetField(ref _aarProtectedReserveKgText, value); }
+    public string AarStatusText { get => _aarStatusText; private set => SetField(ref _aarStatusText, value); }
+    public TacticalLinkPeerDisplay? SelectedAarTanker { get => _selectedAarTanker; set => SetField(ref _selectedAarTanker, value); }
+    public IReadOnlyList<AarPendingRequestDisplay> AarPendingRequests => _aarPendingRequests;
+    public AarPendingRequestDisplay? SelectedAarRequest { get => _selectedAarRequest; set => SetField(ref _selectedAarRequest, value); }
+    public bool IsAarReceiverCapable => IsTankerReceiverCapable && IsTacticalLinkConnected && DataSourceModes.IsMsfs(Settings.DataSourceMode);
+    public bool IsAarTankerModeJoined => IsLocalTankerJoined;
     public bool IsTankerCapable => _tacticalLink.LocalCapabilities.Contains("aar.tanker");
+    public bool IsLocalTankerJoined => _tacticalLink.LocalTankerJoined;
     public bool IsTankerReceiverCapable => _tacticalLink.LocalCapabilities.Contains("aar.receiver");
+    public bool CanUseAar => IsTacticalLinkConnected && (IsTankerCapable || IsTankerReceiverCapable);
     public bool CanOfferTanker => IsTankerCapable && IsTacticalLinkConnected;
     public bool IsTacticalLinkConnected => _tacticalLink.ConnectionState == TacticalLinkConnectionState.Connected;
 
@@ -803,6 +831,10 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ConnectTacticalLinkCommand { get; }
     public RelayCommand DisconnectTacticalLinkCommand { get; }
     public RelayCommand ToggleTankerAvailabilityCommand { get; }
+    public RelayCommand SetAarProtectedReserveCommand { get; }
+    public RelayCommand RequestFullAarCommand { get; }
+    public RelayCommand AcceptAarRequestCommand { get; }
+    public RelayCommand RejectAarRequestCommand { get; }
     public RelayCommand ToggleAlwaysOnTopCommand { get; }
     public RelayCommand ToggleKneepadCommand { get; }
     public RelayCommand PreviousKneepadPageCommand { get; }
@@ -1639,6 +1671,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
         _feed.ConnectionChanged -= OnConnectionChanged;
         _feed.SnapshotReceived -= OnSnapshotReceived;
+        if (_feed is IAarPoseSource oldPoseSource) oldPoseSource.AarPoseSampled -= OnAarPoseSampled;
         await _feed.StopAsync();
         await _feed.DisposeAsync();
 
@@ -1653,6 +1686,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _feed = TrafficFeedFactory.Create(Settings, () => _tacticalLink.NearbyPeers);
         _feed.ConnectionChanged += OnConnectionChanged;
         _feed.SnapshotReceived += OnSnapshotReceived;
+        if (_feed is IAarPoseSource newPoseSource) newPoseSource.AarPoseSampled += OnAarPoseSampled;
+        UpdateAarSampling();
         await _feed.StartAsync(_runCts.Token);
 
         UpdateSourceState(Settings.DataSourceMode);
@@ -1788,14 +1823,19 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
         if (!IsTacticalLinkConnected) _repository.RemoveTacticalLinkContacts();
+        UpdateAarSampling();
         Raise(nameof(TacticalLinkStatusText));
         Raise(nameof(TacticalLinkIdentityText));
         Raise(nameof(TacticalLinkAircraftTypeText));
         Raise(nameof(IsTankerCapable));
+        Raise(nameof(IsLocalTankerJoined));
         Raise(nameof(IsTankerReceiverCapable));
+        Raise(nameof(CanUseAar));
+        Raise(nameof(IsAarReceiverCapable));
         Raise(nameof(IsCloudSignedIn));
         Raise(nameof(TacticalLinkPeerCountText));
         Raise(nameof(TacticalLinkPeers));
+        Raise(nameof(AvailableAarTankers));
         Raise(nameof(TacticalLinkState));
         Raise(nameof(IsTacticalLinkConnected));
         Raise(nameof(TankerButtonText));
@@ -1863,10 +1903,115 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private async Task ToggleTankerAvailabilityAsync()
     {
         if (!IsTankerCapable || !IsTacticalLinkConnected) return;
-        await _tacticalLink.SetTankerAvailabilityAsync(!_tacticalLink.LocalTankerAvailable, _runCts.Token);
+        if (_tacticalLink.LocalTankerJoined)
+        {
+            await _tacticalLink.LeaveTankerModeAsync(_runCts.Token);
+            AarStatusText = "Tanker mode off";
+        }
+        else
+        {
+            await _tacticalLink.JoinTankerModeAsync(_runCts.Token);
+            await _tacticalLink.SendModuleMessageAsync("aar", 1, "GET_STATE", null, new { }, _runCts.Token);
+            AarStatusText = "Tanker joined; set reserve and check adapter readiness";
+        }
+        UpdateAarSampling();
         Raise(nameof(TankerButtonText));
         Raise(nameof(CanOfferTanker));
         Raise(nameof(IsTankerCapable));
+    }
+
+    private async Task SetAarProtectedReserveAsync()
+    {
+        if (!IsTankerCapable || !IsTacticalLinkConnected || !_tacticalLink.LocalTankerJoined) return;
+        if (!double.TryParse(AarProtectedReserveKgText, NumberStyles.Float, CultureInfo.InvariantCulture, out var reserveKg) || !double.IsFinite(reserveKg) || reserveKg < 0)
+        {
+            AarStatusText = "Enter reserve fuel in kg";
+            return;
+        }
+        await _tacticalLink.SetProtectedReserveAsync(reserveKg, _runCts.Token);
+        AarStatusText = $"Protected reserve set: {reserveKg:0} kg";
+    }
+
+    private void OnTacticalLinkModuleEventReceived(object? sender, TacticalLinkModuleEvent e)
+    {
+        if (e.Module != "aar") return;
+        if (e.Kind.StartsWith("POSE_", StringComparison.Ordinal)) return;
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            if (e.OperationId is { } operationId)
+            {
+                var state = e.Payload.TryGetProperty("state", out var stateValue) ? stateValue.GetString() :
+                    e.Payload.TryGetProperty("operation", out var operationValue) && operationValue.TryGetProperty("state", out var nestedState) ? nestedState.GetString() : null;
+                if (state is "Accepted" or "PreContact" or "ClearedContact" or "Contact" or "Refueling" or "Suspended") _activeAarOperations.Add(operationId);
+                else if (state is "Complete" or "Failed" or "Breakaway" or "Cancelled") _activeAarOperations.Remove(operationId);
+            }
+            if (e.Kind == "REQUEST_QUEUED" && e.Payload.TryGetProperty("requestId", out var requestIdNode) && requestIdNode.GetString() is { } requestId)
+            {
+                var callsign = e.Payload.TryGetProperty("receiverParticipantId", out var receiverNode) ?
+                    _tacticalLink.NearbyPeers.FirstOrDefault(peer => peer.ParticipantId == receiverNode.GetString())?.Callsign ?? "Receiver" : "Receiver";
+                _aarPendingRequests.Add(new AarPendingRequestDisplay(requestId, callsign, "Pending"));
+                Raise(nameof(AarPendingRequests));
+            }
+            else if (e.Kind == "AAR_STATE" && e.Payload.TryGetProperty("queue", out var queue) && queue.ValueKind == JsonValueKind.Object && queue.TryGetProperty("pending", out var pending) && pending.ValueKind == JsonValueKind.Array)
+            {
+                _aarPendingRequests.Clear();
+                foreach (var item in pending.EnumerateArray())
+                {
+                    if (!item.TryGetProperty("requestId", out var idNode) || idNode.GetString() is not { } pendingId) continue;
+                    var participantId = item.TryGetProperty("receiverParticipantId", out var receiverIdNode) ? receiverIdNode.GetString() : null;
+                    var callsign = _tacticalLink.NearbyPeers.FirstOrDefault(peer => peer.ParticipantId == participantId)?.Callsign ?? "Receiver";
+                    _aarPendingRequests.Add(new AarPendingRequestDisplay(pendingId, callsign, "Pending"));
+                }
+                Raise(nameof(AarPendingRequests));
+            }
+            else if ((e.Kind is "REQUEST_CANCELLED" or "REQUEST_REJECTED" or "REQUEST_ACCEPTED") && e.Payload.TryGetProperty("requestId", out var endedRequest) && endedRequest.GetString() is { } endedId)
+            {
+                var item = _aarPendingRequests.FirstOrDefault(request => request.RequestId == endedId);
+                if (item is not null) _aarPendingRequests.Remove(item);
+            }
+            AarStatusText = e.Kind switch
+            {
+                "TANKER_MODE_JOINED" => "Tanker joined; set reserve and check adapter readiness",
+                "TANKER_MODE_LEFT" => "Tanker mode off",
+                "RESERVE_UPDATED" => "Protected reserve updated",
+                "TANKER_AVAILABILITY_UPDATED" => _tacticalLink.LocalTankerAvailable ? "Tanker available for requests" : "Tanker unavailable",
+                "MODULE_ERROR" => e.Payload.TryGetProperty("message", out var message) ? message.GetString() ?? "AAR command failed" : "AAR command failed",
+                "OPERATION_SUSPENDED" => "AAR stopped; reconnect and reconcile before continuing",
+                "OPERATION_FAILED" => "AAR operation failed",
+                _ => e.Kind.Replace('_', ' ')
+            };
+            Raise(nameof(TankerButtonText));
+            Raise(nameof(IsLocalTankerJoined));
+            UpdateAarSampling();
+        });
+    }
+
+    private async Task RequestFullAarAsync()
+    {
+        if (!IsAarReceiverCapable || SelectedAarTanker is null) return;
+        await _tacticalLink.SendModuleMessageAsync("aar", 1, "REQUEST_REFUEL", null,
+            new { tankerParticipantId = SelectedAarTanker.ParticipantId, full = true }, _runCts.Token);
+        AarStatusText = "FULL request sent";
+    }
+
+    private async Task RespondToAarRequestAsync(bool accept)
+    {
+        if (!IsTankerCapable || !IsTacticalLinkConnected || !IsLocalTankerJoined || SelectedAarRequest is null) return;
+        await _tacticalLink.SendModuleMessageAsync("aar", 1, accept ? "ACCEPT_REQUEST" : "REJECT_REQUEST", null,
+            new { requestId = SelectedAarRequest.RequestId }, _runCts.Token);
+        AarStatusText = accept ? "Request accepted" : "Request rejected";
+        if (!accept) _aarPendingRequests.Remove(SelectedAarRequest);
+        SelectedAarRequest = null;
+    }
+
+    private void OnAarPoseSampled(object? sender, OwnshipState sample) =>
+        _ = _tacticalLink.PublishAarPoseAsync(sample, _runCts.Token);
+
+    private void UpdateAarSampling()
+    {
+        if (_feed is not IAarPoseSource poseSource) return;
+        poseSource.AarSamplingEnabled = IsTacticalLinkConnected && DataSourceModes.IsMsfs(Settings.DataSourceMode) &&
+            (_tacticalLink.LocalTankerJoined || _activeAarOperations.Count > 0);
     }
 
     private void PublishLatestTacticalTelemetry()
@@ -2153,7 +2298,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     }
 }
 
-public sealed record TacticalLinkPeerDisplay(string Callsign, string AircraftType, string RangeText, string StatusText);
+public sealed record TacticalLinkPeerDisplay(string ParticipantId, string Callsign, string AircraftType, string RangeText, string StatusText);
+public sealed record AarPendingRequestDisplay(string RequestId, string Callsign, string StatusText);
 
 public sealed class AirspaceRegionOptionViewModel : ViewModelBase
 {

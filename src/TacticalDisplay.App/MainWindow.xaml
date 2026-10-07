@@ -985,6 +985,66 @@
                                 </Style>
                             </Button.Style>
                         </Button>
+                        <TextBlock Text="AAR STATUS" Foreground="#83F2D0" Margin="0,0,0,4" FontWeight="Bold">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding CanUseAar}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <TextBlock Text="{Binding AarStatusText}" TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8">
+                            <TextBlock.Style>
+                                <Style TargetType="TextBlock">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding CanUseAar}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </TextBlock.Style>
+                        </TextBlock>
+                        <StackPanel Margin="0,0,0,8">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsAarReceiverCapable}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <ComboBox ItemsSource="{Binding AvailableAarTankers}" SelectedItem="{Binding SelectedAarTanker}" DisplayMemberPath="Callsign" IsEditable="False" MinWidth="180" Margin="0,0,0,4" />
+                            <Button Content="REQUEST FULL" Command="{Binding RequestFullAarCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                        </StackPanel>
+                        <StackPanel Margin="0,0,0,8">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLocalTankerJoined}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="PENDING FIFO REQUESTS" Foreground="#83F2D0" Margin="0,0,0,4" />
+                            <ListBox ItemsSource="{Binding AarPendingRequests}" SelectedItem="{Binding SelectedAarRequest}" DisplayMemberPath="Callsign" MaxHeight="110" />
+                            <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                <Button Content="ACCEPT" Command="{Binding AcceptAarRequestCommand}" Margin="0,0,6,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="REJECT" Command="{Binding RejectAarRequestCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLocalTankerJoined}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBox Text="{Binding AarProtectedReserveKgText, UpdateSourceTrigger=PropertyChanged}" Width="80" Margin="0,0,6,0" ToolTip="Protected reserve (kg)" />
+                            <Button Content="SET RESERVE (KG)" Command="{Binding SetAarProtectedReserveCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                        </StackPanel>
                         <Button Content="OPEN VTSD CLOUD" Click="OnOpenCloudClick" Margin="0,0,0,12">
                             <Button.Style>
                                 <Style TargetType="Button">
