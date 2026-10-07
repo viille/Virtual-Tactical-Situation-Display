@@ -95,6 +95,41 @@ public sealed class MsfsAarFuelAdapterTests
     }
 
     [Fact]
+    public async Task BridgeReadbackConfirmsFullReceiverAdditionAndTankerRemoval()
+    {
+        var receiver = new MsfsAarFuelAdapter(new FakeTransport(
+            initialFuelKg: 100, capacityKg: 500, applyStatus: "Success", applyDelta: requested => requested));
+        var tanker = new MsfsAarFuelAdapter(new FakeTransport(
+            initialFuelKg: 400, capacityKg: 500, applyStatus: "Success", applyDelta: requested => requested));
+        await receiver.ConnectAsync(CancellationToken.None);
+        await tanker.ConnectAsync(CancellationToken.None);
+
+        var receiverResult = await receiver.ApplyFuelDeltaKgAsync(100, CancellationToken.None);
+        var tankerResult = await tanker.ApplyFuelDeltaKgAsync(-100, CancellationToken.None);
+
+        Assert.Equal(AarFuelApplyStatus.Success, receiverResult.Status);
+        Assert.Equal(100, receiverResult.AppliedKg);
+        Assert.Equal(200, receiver.ReadFuel()!.CurrentFuelKg);
+        Assert.Equal(AarFuelApplyStatus.Success, tankerResult.Status);
+        Assert.Equal(-100, tankerResult.AppliedKg);
+        Assert.Equal(300, tanker.ReadFuel()!.CurrentFuelKg);
+    }
+
+    [Fact]
+    public async Task BridgePartialReadbackReportsOnlyActualFuelChange()
+    {
+        var adapter = new MsfsAarFuelAdapter(new FakeTransport(
+            initialFuelKg: 100, capacityKg: 500, applyStatus: "Partial", applyDelta: requested => requested * 0.4));
+        await adapter.ConnectAsync(CancellationToken.None);
+
+        var result = await adapter.ApplyFuelDeltaKgAsync(100, CancellationToken.None);
+
+        Assert.Equal(AarFuelApplyStatus.Partial, result.Status);
+        Assert.Equal(40, result.AppliedKg);
+        Assert.Equal(140, adapter.ReadFuel()!.CurrentFuelKg);
+    }
+
+    [Fact]
     public void TankDistributionIsProportionalAndClampedToCapacityOrFuel()
     {
         var tanks = new[]
@@ -116,9 +151,13 @@ public sealed class MsfsAarFuelAdapterTests
         bool timeoutHello = false,
         bool invalidReply = false,
         bool tankWritable = true,
-        bool omitAppliedKg = false) : IAarBridgeTransport
+        bool omitAppliedKg = false,
+        double initialFuelKg = 100,
+        double capacityKg = 500,
+        string applyStatus = "Failed",
+        Func<double, double>? applyDelta = null) : IAarBridgeTransport
     {
-        private int _fuelKg = 100;
+        private double _fuelKg = initialFuelKg;
         public bool IsConnected => true;
         public void SimulateFuelBurn(int amountKg) => _fuelKg -= amountKg;
 
@@ -133,29 +172,37 @@ public sealed class MsfsAarFuelAdapterTests
                 "HELLO" => new AarBridgeResponse { RequestId = responseRequestId, Action = request.Action, ProtocolVersion = protocolVersion, BridgeVersion = "1.0.0", Status = "Success" },
                 "GET_CAPABILITIES" => new AarBridgeResponse { RequestId = request.RequestId, Action = request.Action, ProtocolVersion = 1, Capabilities = writable ? ["fuel.read", "fuel.write"] : ["fuel.read"], Status = "Success" },
                 "GET_FUEL_STATE" => new AarBridgeResponse { RequestId = request.RequestId, Action = request.Action, ProtocolVersion = 1, FuelState = State(_fuelKg), Status = "Success" },
-                "APPLY_FUEL_DELTA" => new AarBridgeResponse
-                {
-                    RequestId = request.RequestId,
-                    Action = request.Action,
-                    ProtocolVersion = 1,
-                    Status = "Failed",
-                    Error = "Simulator only applied part of the requested update.",
-                    RequestedKg = request.DeltaKg,
-                    AppliedKg = omitAppliedKg ? null : 3,
-                    FuelState = State(_fuelKg += 3)
-                },
+                "APPLY_FUEL_DELTA" => Apply(request),
                 _ => throw new InvalidOperationException("Unexpected bridge action: " + request.Action)
             };
             return Task.FromResult(response);
+        }
+
+        private AarBridgeResponse Apply(AarBridgeRequest request)
+        {
+            var requestedKg = request.DeltaKg ?? 0;
+            var appliedKg = applyDelta?.Invoke(requestedKg) ?? 3;
+            _fuelKg += appliedKg;
+            return new AarBridgeResponse
+            {
+                RequestId = request.RequestId,
+                Action = request.Action,
+                ProtocolVersion = 1,
+                Status = applyStatus,
+                Error = applyStatus == "Failed" ? "Simulator only applied part of the requested update." : null,
+                RequestedKg = request.DeltaKg,
+                AppliedKg = omitAppliedKg ? null : appliedKg,
+                FuelState = State(_fuelKg)
+            };
         }
 
         private AarBridgeFuelState State(double fuelKg) => new()
         {
             SampledAtUtc = DateTimeOffset.UtcNow,
             CurrentFuelKg = fuelKg,
-            CapacityKg = 500,
+            CapacityKg = capacityKg,
             FuelWeightPerGallonLb = 6.7,
-            Tanks = [new AarBridgeFuelTank { TankId = "main", CurrentKg = fuelKg, CapacityKg = 500, Writable = tankWritable }]
+            Tanks = [new AarBridgeFuelTank { TankId = "main", CurrentKg = fuelKg, CapacityKg = capacityKg, Writable = tankWritable }]
         };
     }
 }
