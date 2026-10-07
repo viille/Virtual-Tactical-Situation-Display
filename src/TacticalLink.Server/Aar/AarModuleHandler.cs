@@ -378,7 +378,24 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             return;
         }
         if (now - operation.LastTransferProposalAt < TimeSpan.FromSeconds(1)) return;
-        var amount = Math.Min(operation.EffectiveFlowKgPerSecond, operation.PlannedKg - operation.TransferredKg);
+        var tanker = GetParticipant(operation.TankerId);
+        var receiver = GetParticipant(operation.ReceiverId);
+        if (tanker.CurrentFuelKg is null || receiver.CurrentFuelKg is null || receiver.FuelCapacityKg is null)
+        {
+            Suspend(operation, "FUEL_STATE_UNAVAILABLE", TimeSpan.FromSeconds(5));
+            return;
+        }
+        var otherTankerCommitments = _operations.Values.Where(candidate => candidate.TankerId == operation.TankerId && candidate.Id != operation.Id && !IsTerminal(candidate.State))
+            .Sum(candidate => Math.Max(0, candidate.PlannedKg - candidate.TransferredKg));
+        var tankerHeadroom = tanker.CurrentFuelKg.Value - tanker.ProtectedReserveKg - otherTankerCommitments;
+        var receiverHeadroom = receiver.FuelCapacityKg.Value - receiver.CurrentFuelKg.Value;
+        var remaining = operation.PlannedKg - operation.TransferredKg;
+        if (tankerHeadroom <= 0.01 || receiverHeadroom <= 0.01 || remaining <= 0.01)
+        {
+            Suspend(operation, tankerHeadroom <= 0.01 ? "TANKER_RESERVE_BOUNDARY" : receiverHeadroom <= 0.01 ? "RECEIVER_CAPACITY_BOUNDARY" : "PLANNED_AMOUNT_REACHED", TimeSpan.FromSeconds(5));
+            return;
+        }
+        var amount = Math.Min(operation.EffectiveFlowKgPerSecond, Math.Min(remaining, Math.Min(tankerHeadroom, receiverHeadroom)));
         if (amount <= 0) return;
         var proposal = new AarTransferProposal(Guid.NewGuid().ToString("N"), operation.TransferredKg + amount, now);
         operation.PendingTransfer = proposal;

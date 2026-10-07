@@ -1033,6 +1033,24 @@
                                 <Button Content="REJECT" Command="{Binding RejectAarRequestCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             </StackPanel>
                         </StackPanel>
+                        <StackPanel Margin="0,0,0,8">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding HasAarOperation}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="{Binding AarOperationStateText}" Foreground="#83F2D0" Margin="0,0,0,4" FontWeight="Bold" />
+                            <WrapPanel>
+                                <Button Content="PRECONTACT" Command="{Binding StartAarPrecontactCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="CLEAR CONTACT" Command="{Binding ClearAarContactCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="DISCONNECT" Command="{Binding DisconnectAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="BREAKAWAY" Command="{Binding BreakawayAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#FFD0C8" Background="#472C30" BorderBrush="#A05252" />
+                                <Button Content="RECONCILE" Command="{Binding ReconcileAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                            </WrapPanel>
+                        </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                             <StackPanel.Style>
                                 <Style TargetType="StackPanel">

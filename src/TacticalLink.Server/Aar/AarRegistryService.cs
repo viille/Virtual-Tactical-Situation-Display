@@ -12,10 +12,8 @@ public sealed class AarRegistryService : IAarRegistryProvider, IHostedService, I
     private static readonly TimeSpan RefreshInterval = TimeSpan.FromMinutes(5);
     private readonly IHttpClientFactory _clients;
     private readonly ILogger<AarRegistryService> _logger;
-    private readonly string _endpoint = Environment.GetEnvironmentVariable("TACTICAL_LINK_AAR_REGISTRY_URL")?.Trim()
-        is { Length: > 0 } endpoint ? endpoint : "https://www.vtsd.app/api/v1/tactical-link/aar/registry";
-    private readonly string _cachePath = Environment.GetEnvironmentVariable("TACTICAL_LINK_AAR_REGISTRY_CACHE_PATH")?.Trim()
-        is { Length: > 0 } path ? path : "/var/lib/tactical-link/aar-registry-cache.json";
+    private readonly string _endpoint;
+    private readonly string _cachePath;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
     private CancellationTokenSource? _loopCts;
     private Task? _loop;
@@ -24,9 +22,18 @@ public sealed class AarRegistryService : IAarRegistryProvider, IHostedService, I
     private string? _status = "Registry has not been loaded.";
 
     public AarRegistryService(IHttpClientFactory clients, ILogger<AarRegistryService> logger)
+        : this(clients, logger,
+            Environment.GetEnvironmentVariable("TACTICAL_LINK_AAR_REGISTRY_URL")?.Trim() is { Length: > 0 } endpoint ? endpoint : "https://www.vtsd.app/api/v1/tactical-link/aar/registry",
+            Environment.GetEnvironmentVariable("TACTICAL_LINK_AAR_REGISTRY_CACHE_PATH")?.Trim() is { Length: > 0 } path ? path : "/var/lib/tactical-link/aar-registry-cache.json")
+    {
+    }
+
+    internal AarRegistryService(IHttpClientFactory clients, ILogger<AarRegistryService> logger, string endpoint, string cachePath)
     {
         _clients = clients;
         _logger = logger;
+        _endpoint = endpoint;
+        _cachePath = cachePath;
     }
 
     public AarRegistrySnapshot? Current => Volatile.Read(ref _current);
@@ -115,7 +122,7 @@ public sealed class AarRegistryService : IAarRegistryProvider, IHostedService, I
         finally { _refreshLock.Release(); }
     }
 
-    private async Task LoadCacheAsync(CancellationToken cancellationToken)
+    internal async Task LoadCacheAsync(CancellationToken cancellationToken)
     {
         try
         {
@@ -142,7 +149,7 @@ public sealed class AarRegistryService : IAarRegistryProvider, IHostedService, I
 
     }
 
-    private async Task PersistAsync(AarRegistrySnapshot snapshot, CancellationToken cancellationToken)
+    internal async Task PersistAsync(AarRegistrySnapshot snapshot, CancellationToken cancellationToken)
     {
         var directory = Path.GetDirectoryName(Path.GetFullPath(_cachePath)) ?? throw new InvalidOperationException("Registry cache directory is invalid.");
         Directory.CreateDirectory(directory);

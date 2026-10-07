@@ -40,6 +40,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private readonly ObservableCollection<AarPendingRequestDisplay> _aarPendingRequests = [];
     private TacticalLinkPeerDisplay? _selectedAarTanker;
     private AarPendingRequestDisplay? _selectedAarRequest;
+    private string? _aarActiveOperationId;
+    private string _aarOperationStateText = "No active operation";
     private OwnshipState? _latestOwnship;
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _airspaceTimer;
@@ -129,6 +131,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         RequestFullAarCommand = CreateUiCommand(nameof(RequestFullAarCommand), () => _ = RequestFullAarAsync());
         AcceptAarRequestCommand = CreateUiCommand(nameof(AcceptAarRequestCommand), () => _ = RespondToAarRequestAsync(true));
         RejectAarRequestCommand = CreateUiCommand(nameof(RejectAarRequestCommand), () => _ = RespondToAarRequestAsync(false));
+        StartAarPrecontactCommand = CreateUiCommand(nameof(StartAarPrecontactCommand), () => _ = SendAarOperationCommandAsync("PROCEED_TO_PRECONTACT"));
+        ClearAarContactCommand = CreateUiCommand(nameof(ClearAarContactCommand), () => _ = SendAarOperationCommandAsync("CLEAR_CONTACT"));
+        DisconnectAarOperationCommand = CreateUiCommand(nameof(DisconnectAarOperationCommand), () => _ = SendAarOperationCommandAsync("DISCONNECT"));
+        BreakawayAarOperationCommand = CreateUiCommand(nameof(BreakawayAarOperationCommand), () => _ = SendAarOperationCommandAsync("BREAKAWAY"));
+        ReconcileAarOperationCommand = CreateUiCommand(nameof(ReconcileAarOperationCommand), () => _ = SendAarOperationCommandAsync("RECONCILE"));
         ToggleAlwaysOnTopCommand = CreateUiCommand(nameof(ToggleAlwaysOnTopCommand), ToggleAlwaysOnTop);
         ToggleKneepadCommand = CreateUiCommand(nameof(ToggleKneepadCommand), ToggleKneepad);
         PreviousKneepadPageCommand = CreateUiCommand(nameof(PreviousKneepadPageCommand), PreviousKneepadPage);
@@ -556,6 +563,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string TankerButtonText => _tacticalLink.LocalTankerJoined ? "LEAVE TANKER MODE" : "JOIN AS TANKER";
     public string AarProtectedReserveKgText { get => _aarProtectedReserveKgText; set => SetField(ref _aarProtectedReserveKgText, value); }
     public string AarStatusText { get => _aarStatusText; private set => SetField(ref _aarStatusText, value); }
+    public string AarOperationStateText { get => _aarOperationStateText; private set => SetField(ref _aarOperationStateText, value); }
+    public bool HasAarOperation => _aarActiveOperationId is not null;
     public TacticalLinkPeerDisplay? SelectedAarTanker { get => _selectedAarTanker; set => SetField(ref _selectedAarTanker, value); }
     public IReadOnlyList<AarPendingRequestDisplay> AarPendingRequests => _aarPendingRequests;
     public AarPendingRequestDisplay? SelectedAarRequest { get => _selectedAarRequest; set => SetField(ref _selectedAarRequest, value); }
@@ -835,6 +844,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand RequestFullAarCommand { get; }
     public RelayCommand AcceptAarRequestCommand { get; }
     public RelayCommand RejectAarRequestCommand { get; }
+    public RelayCommand StartAarPrecontactCommand { get; }
+    public RelayCommand ClearAarContactCommand { get; }
+    public RelayCommand DisconnectAarOperationCommand { get; }
+    public RelayCommand BreakawayAarOperationCommand { get; }
+    public RelayCommand ReconcileAarOperationCommand { get; }
     public RelayCommand ToggleAlwaysOnTopCommand { get; }
     public RelayCommand ToggleKneepadCommand { get; }
     public RelayCommand PreviousKneepadPageCommand { get; }
@@ -1942,8 +1956,19 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             {
                 var state = e.Payload.TryGetProperty("state", out var stateValue) ? stateValue.GetString() :
                     e.Payload.TryGetProperty("operation", out var operationValue) && operationValue.TryGetProperty("state", out var nestedState) ? nestedState.GetString() : null;
+                var slot = e.Payload.TryGetProperty("slot", out var slotValue) ? slotValue.GetString() :
+                    e.Payload.TryGetProperty("operation", out var nestedOperation) && nestedOperation.TryGetProperty("slot", out var nestedSlot) ? nestedSlot.GetString() : null;
+                if (slot == "Active" || _aarActiveOperationId is null) _aarActiveOperationId = operationId;
                 if (state is "Accepted" or "PreContact" or "ClearedContact" or "Contact" or "Refueling" or "Suspended") _activeAarOperations.Add(operationId);
-                else if (state is "Complete" or "Failed" or "Breakaway" or "Cancelled") _activeAarOperations.Remove(operationId);
+                if (state is not null)
+                {
+                    AarOperationStateText = state.Replace('_', ' ').ToUpperInvariant();
+                    if (state is "Complete" or "Failed" or "Breakaway" or "Cancelled")
+                    {
+                        _activeAarOperations.Remove(operationId);
+                        if (_aarActiveOperationId == operationId) _aarActiveOperationId = null;
+                    }
+                }
             }
             if (e.Kind == "REQUEST_QUEUED" && e.Payload.TryGetProperty("requestId", out var requestIdNode) && requestIdNode.GetString() is { } requestId)
             {
@@ -1982,8 +2007,15 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             };
             Raise(nameof(TankerButtonText));
             Raise(nameof(IsLocalTankerJoined));
+            Raise(nameof(HasAarOperation));
             UpdateAarSampling();
         });
+    }
+
+    private async Task SendAarOperationCommandAsync(string kind)
+    {
+        if (!IsTacticalLinkConnected || _aarActiveOperationId is not { } operationId) return;
+        await _tacticalLink.SendModuleMessageAsync("aar", 1, kind, operationId, new { operationId }, _runCts.Token);
     }
 
     private async Task RequestFullAarAsync()
