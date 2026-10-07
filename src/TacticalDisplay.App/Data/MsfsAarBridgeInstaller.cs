@@ -7,6 +7,8 @@ using System.Text.RegularExpressions;
 namespace TacticalDisplay.App.Data;
 
 public sealed record AarBridgePackageInfo(string Version, string PackageDirectory);
+public enum AarBridgeInstallationState { NotInstalled, Installed, Invalid }
+public sealed record AarBridgeInstallationInfo(AarBridgeInstallationState State, AarBridgePackageInfo? Package);
 
 public sealed class Msfs2024PackagePathResolver
 {
@@ -50,11 +52,19 @@ public sealed class MsfsAarBridgeInstaller
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public AarBridgePackageInfo? InspectInstalled(string community2024Folder)
+        => InspectInstallation(community2024Folder).Package;
+
+    public AarBridgeInstallationState GetInstallationState(string community2024Folder)
+        => InspectInstallation(community2024Folder).State;
+
+    public AarBridgeInstallationInfo InspectInstallation(string community2024Folder)
     {
         var packagePath = GetPackagePath(community2024Folder);
-        return Directory.Exists(packagePath) && TryValidatePackage(packagePath, out var version)
-            ? new AarBridgePackageInfo(version, packagePath)
-            : null;
+        if (!Directory.Exists(packagePath) && !File.Exists(packagePath))
+            return new AarBridgeInstallationInfo(AarBridgeInstallationState.NotInstalled, null);
+        if (Directory.Exists(packagePath) && TryValidatePackage(packagePath, out var version))
+            return new AarBridgeInstallationInfo(AarBridgeInstallationState.Installed, new AarBridgePackageInfo(version, packagePath));
+        return new AarBridgeInstallationInfo(AarBridgeInstallationState.Invalid, null);
     }
 
     public Task<AarBridgePackageInfo> InstallOrUpdateAsync(string sourcePackageDirectory, string community2024Folder, CancellationToken cancellationToken) =>
@@ -134,20 +144,33 @@ public sealed class MsfsAarBridgeInstaller
             stagedPackagePromoted = true;
             if (!TryValidatePackage(destination, out var installedVersion) || installedVersion != sourceVersion)
                 throw new InvalidDataException("The installed AAR Bridge package failed verification.");
-            if (previousMoved) Directory.Delete(backup, recursive: true);
-            return new AarBridgePackageInfo(installedVersion, destination);
         }
-        catch
+        catch (Exception installError)
         {
-            if (Directory.Exists(destination) && stagedPackagePromoted) Directory.Delete(destination, recursive: true);
-            if (previousMoved && Directory.Exists(backup) && !Directory.Exists(destination)) Directory.Move(backup, destination);
+            try
+            {
+                if (Directory.Exists(destination) && stagedPackagePromoted) Directory.Delete(destination, recursive: true);
+                if (previousMoved && Directory.Exists(backup) && !Directory.Exists(destination)) Directory.Move(backup, destination);
+            }
+            catch (Exception rollbackError)
+            {
+                throw new IOException($"Bridge installation failed and rollback could not restore the previous package. Its backup remains at '{backup}'.",
+                    new AggregateException(installError, rollbackError));
+            }
             throw;
         }
         finally
         {
             if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true);
-            if (Directory.Exists(backup) && Directory.Exists(destination)) Directory.Delete(backup, recursive: true);
         }
+
+        if (previousMoved && Directory.Exists(backup))
+        {
+            try { Directory.Delete(backup, recursive: true); }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        return new AarBridgePackageInfo(sourceVersion, destination);
     }
 
     public bool Uninstall(string community2024Folder)

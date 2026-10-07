@@ -2384,14 +2384,21 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
         Settings.Msfs2024CommunityFolder = community;
-        var installed = _msfsAarBridgeInstaller.InspectInstalled(community);
+        var installation = _msfsAarBridgeInstaller.InspectInstallation(community);
+        var installationState = installation.State;
+        var installed = installation.Package;
         var bridgeStatus = _feed as IAarBridgeRuntimeStatusSource;
         var runtimeState = bridgeStatus?.BridgeRuntimeState;
         var installedVersion = installed?.Version;
         var runningVersion = bridgeStatus?.BridgeVersion;
         var version = runningVersion ?? installedVersion;
         var name = version is null ? "MSFS AAR Bridge" : $"MSFS AAR Bridge {version}";
-        if (installed is null && runtimeState is not (AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable))
+        if (installationState == AarBridgeInstallationState.Invalid && runtimeState is not (AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable))
+        {
+            MsfsAarBridgeStatusText = "An invalid MSFS AAR Bridge package is present. Use INSTALL / UPDATE to repair it; live fuel transfer is unavailable. Dry Hookup remains available.";
+            return;
+        }
+        if (installationState == AarBridgeInstallationState.NotInstalled && runtimeState is not (AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable))
         {
             MsfsAarBridgeStatusText = "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not.";
             return;
@@ -2404,21 +2411,27 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             var versionMismatch = installedVersion is not null && runningVersion is not null &&
                 !string.Equals(installedVersion, runningVersion, StringComparison.OrdinalIgnoreCase);
             var restartNotice = versionMismatch ? $" Installed {installedVersion}, running {runningVersion}; restart MSFS 2024 to activate the installed version." : string.Empty;
+            var invalidPackageNotice = installationState == AarBridgeInstallationState.Invalid
+                ? " The package on disk is invalid; live fuel transfer will stop after an MSFS restart. Repair it with INSTALL / UPDATE."
+                : string.Empty;
             MsfsAarBridgeStatusText = state switch
             {
-                AarBridgeRuntimeState.NotInstalled => "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not.",
-                AarBridgeRuntimeState.InstalledNotRunning => $"{name} installed. Restart MSFS 2024 to activate it.",
-                AarBridgeRuntimeState.Connecting => $"{name} connecting to MSFS 2024.",
-                AarBridgeRuntimeState.ConnectedReadOnly => $"{name} connected. Fuel read {fuelRead}; fuel write unavailable.{restartNotice} {bridgeStatus?.BridgeDiagnostic ?? "Dry Hookup remains available."}",
-                AarBridgeRuntimeState.ConnectedWritable => $"{name} connected. Fuel read {fuelRead}; fuel write {fuelWrite}.{restartNotice}",
-                AarBridgeRuntimeState.ProtocolMismatch => $"{name} protocol is incompatible. Update the bridge.{restartNotice} {bridgeStatus?.BridgeDiagnostic}",
-                _ => $"{name} error. {bridgeStatus?.BridgeDiagnostic ?? "Fuel transfer is stopped; Dry Hookup remains available."}"
+                AarBridgeRuntimeState.NotInstalled => "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not." + invalidPackageNotice,
+                AarBridgeRuntimeState.InstalledNotRunning => $"{name} installed. Restart MSFS 2024 to activate it.{invalidPackageNotice}",
+                AarBridgeRuntimeState.Connecting => $"{name} connecting to MSFS 2024.{invalidPackageNotice}",
+                AarBridgeRuntimeState.ConnectedReadOnly => $"{name} connected. Fuel read {fuelRead}; fuel write unavailable.{restartNotice} {bridgeStatus?.BridgeDiagnostic ?? "Dry Hookup remains available."}{invalidPackageNotice}",
+                AarBridgeRuntimeState.ConnectedWritable => $"{name} connected. Fuel read {fuelRead}; fuel write {fuelWrite}.{restartNotice}{invalidPackageNotice}",
+                AarBridgeRuntimeState.ProtocolMismatch => $"{name} protocol is incompatible. Update the bridge.{restartNotice} {bridgeStatus?.BridgeDiagnostic}{invalidPackageNotice}",
+                _ => $"{name} error. {bridgeStatus?.BridgeDiagnostic ?? "Fuel transfer is stopped; Dry Hookup remains available."}{invalidPackageNotice}"
             };
             return;
         }
-        MsfsAarBridgeStatusText = installed is null
-            ? "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not."
-            : $"{name} installed. Start MSFS 2024 to connect the runtime bridge.";
+        MsfsAarBridgeStatusText = installationState switch
+        {
+            AarBridgeInstallationState.NotInstalled => "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not.",
+            AarBridgeInstallationState.Invalid => "An invalid MSFS AAR Bridge package is present. Use INSTALL / UPDATE to repair it; live fuel transfer is unavailable. Dry Hookup remains available.",
+            _ => $"{name} installed. Start MSFS 2024 to connect the runtime bridge."
+        };
     }
 
     private void OnAarBridgeRuntimeStateChanged(object? sender, AarBridgeRuntimeState state)

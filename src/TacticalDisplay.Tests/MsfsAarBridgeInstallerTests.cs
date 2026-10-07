@@ -76,6 +76,43 @@ public sealed class MsfsAarBridgeInstallerTests
     }
 
     [Fact]
+    public async Task InvalidInstalledPackageIsReportedAndCanBeRepaired()
+    {
+        using var temp = new TempDirectory();
+        var community = Directory.CreateDirectory(Path.Combine(temp.Path, "Community2024")).FullName;
+        var source = CreatePackage(temp.Path, "repair-source", "1.0.0");
+        var installer = new MsfsAarBridgeInstaller();
+        var installed = await installer.InstallOrUpdateAsync(source, community, CancellationToken.None);
+        File.AppendAllText(Path.Combine(installed.PackageDirectory, "modules", "vtsd_aar_bridge.wasm"), "tampered");
+
+        var invalid = installer.InspectInstallation(community);
+        Assert.Equal(AarBridgeInstallationState.Invalid, invalid.State);
+        Assert.Null(invalid.Package);
+
+        await installer.InstallOrUpdateAsync(source, community, CancellationToken.None);
+
+        var repaired = installer.InspectInstallation(community);
+        Assert.Equal(AarBridgeInstallationState.Installed, repaired.State);
+        Assert.Equal("1.0.0", repaired.Package!.Version);
+    }
+
+    [Fact]
+    public async Task PackageNameFileCollisionIsReportedAndPreserved()
+    {
+        using var temp = new TempDirectory();
+        var community = Directory.CreateDirectory(Path.Combine(temp.Path, "Community2024")).FullName;
+        var packagePath = Path.Combine(community, MsfsAarBridgeInstaller.PackageName);
+        File.WriteAllText(packagePath, "unrelated collision");
+        var source = CreatePackage(temp.Path, "collision-source", "1.0.0");
+        var installer = new MsfsAarBridgeInstaller();
+
+        Assert.Equal(AarBridgeInstallationState.Invalid, installer.GetInstallationState(community));
+        await Assert.ThrowsAsync<IOException>(() => installer.InstallOrUpdateAsync(source, community, CancellationToken.None));
+
+        Assert.Equal("unrelated collision", File.ReadAllText(packagePath));
+    }
+
+    [Fact]
     public async Task InstallArchiveExtractsAndValidatesBundledPackage()
     {
         using var temp = new TempDirectory();
