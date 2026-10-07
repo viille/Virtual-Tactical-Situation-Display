@@ -71,6 +71,32 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task PromotedCommittedReceiverMustBeClearedAsternBeforePreContact()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        rig.AddReceiver("receiver-2");
+        await rig.Send("receiver-2", "FUEL_STATUS", new { currentFuelKg = 100, capacityKg = 500, adapterReady = true });
+
+        var firstRequest = await rig.Request("receiver", "tanker", 100);
+        var first = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(firstRequest) });
+        var nextRequest = await rig.Request("receiver-2", "tanker", 100);
+        var next = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(nextRequest) });
+        var firstId = first.LastPayload.GetProperty("operationId").GetString()!;
+        var nextId = next.LastPayload.GetProperty("operationId").GetString()!;
+
+        await rig.Send("tanker", "DISCONNECT", new { }, operationId: firstId);
+        Assert.Equal("Accepted", rig.OperationState(nextId));
+
+        var bypass = await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: nextId);
+        Assert.Equal("MODULE_ERROR", bypass.LastKind);
+        await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: nextId);
+        var precontact = await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: nextId);
+
+        Assert.Equal("PreContact", precontact.LastPayload.GetProperty("state").GetString());
+    }
+
+    [Fact]
     public async Task ReceiverCannotJoinMultiplePendingQueues()
     {
         var rig = new Rig();
@@ -321,7 +347,7 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
-    public async Task NetworkReconnectSuspendsThenRecoversOnlyToPreContact()
+    public async Task NetworkReconnectSuspendsAndRequiresFreshClearAstern()
     {
         var rig = new Rig();
         await rig.PrepareTankerAndReceiver();
@@ -339,7 +365,7 @@ public sealed class AarModuleHandlerTests
         await rig.Send("receiver", "FUEL_STATUS", new { currentFuelKg = 100, capacityKg = 500, adapterReady = true, lastAppliedTransferredKg = 0 });
         var reconciled = await rig.Send("receiver", "RECONCILE", new { operationId }, operationId: operationId);
 
-        Assert.Equal("PreContact", reconciled.LastPayload.GetProperty("state").GetString());
+        Assert.Equal("Accepted", reconciled.LastPayload.GetProperty("state").GetString());
         Assert.False(reconciled.LastPayload.TryGetProperty("clearanceValid", out _));
         Assert.False(reconciled.LastPayload.TryGetProperty("plannedKg", out _));
         Assert.False(reconciled.LastPayload.TryGetProperty("transferredKg", out _));
@@ -482,7 +508,7 @@ public sealed class AarModuleHandlerTests
 
         public string OperationState(string operationId)
         {
-            var result = Send("receiver", "GET_STATE", new { }).GetAwaiter().GetResult();
+            var result = Send("tanker", "GET_STATE", new { }).GetAwaiter().GetResult();
             return result.LastPayload.GetProperty("operations").EnumerateArray()
                 .Single(operation => operation.GetProperty("operationId").GetString() == operationId)
                 .GetProperty("state").GetString()!;

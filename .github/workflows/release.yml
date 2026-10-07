@@ -49,8 +49,9 @@ jobs:
           if ([version]$numericVersion -ge [version]'0.16.0') {
             $package = 'src/TacticalDisplay.App/Resources/MSFS/vtsd-aar-bridge'
             $module = Join-Path $package 'modules/vtsd_aar_bridge.wasm'
-            if (-not (Test-Path (Join-Path $package 'manifest.json')) -or -not (Test-Path (Join-Path $package 'layout.json')) -or -not (Test-Path $module)) {
-              throw 'VTSD v0.16.0 and newer releases require the built MSFS 2024 AAR Bridge package. Build it with src/MSFS.AarBridge/Build-MsfsAarBridge.ps1 and include the generated package.'
+            $archive = 'src/TacticalDisplay.App/Resources/MSFS/vtsd-aar-bridge.zip'
+            if (-not (Test-Path (Join-Path $package 'manifest.json')) -or -not (Test-Path (Join-Path $package 'layout.json')) -or -not (Test-Path $module) -or -not (Test-Path $archive)) {
+              throw 'VTSD v0.16.0 and newer releases require the built and embedded MSFS 2024 AAR Bridge package. Build it with src/MSFS.AarBridge/Build-MsfsAarBridge.ps1 and include the generated package and archive.'
             }
           }
 

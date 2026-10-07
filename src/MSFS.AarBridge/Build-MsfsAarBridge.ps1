@@ -92,3 +92,15 @@ if ($movedPrevious) {
 }
 
 Write-Host "Built VTSD AAR Bridge package at $package"
+
+$archivePath = Join-Path $resourcesRoot 'vtsd-aar-bridge.zip'
+$archiveStaging = Join-Path $resourcesRoot ".vtsd-aar-bridge.staging-$([guid]::NewGuid().ToString('N')).zip"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+[System.IO.Compression.ZipFile]::CreateFromDirectory($package, $archiveStaging)
+try {
+    Move-Item -LiteralPath $archiveStaging -Destination $archivePath -Force
+}
+finally {
+    if (Test-Path -LiteralPath $archiveStaging) { Remove-Item -LiteralPath $archiveStaging -Force }
+}
+Write-Host "Embedded release archive staged at $archivePath"

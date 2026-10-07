@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text.Json;
 using TacticalDisplay.App.Data;
 using Xunit;
@@ -72,6 +73,44 @@ public sealed class MsfsAarBridgeInstallerTests
         await Assert.ThrowsAsync<InvalidDataException>(() => installer.InstallOrUpdateAsync(tamperedSource, community, CancellationToken.None));
 
         Assert.Equal("1.0.0", installer.InspectInstalled(community)!.Version);
+    }
+
+    [Fact]
+    public async Task InstallArchiveExtractsAndValidatesBundledPackage()
+    {
+        using var temp = new TempDirectory();
+        var community = Directory.CreateDirectory(Path.Combine(temp.Path, "Community2024")).FullName;
+        var package = CreatePackage(temp.Path, "archive-source", "1.2.0");
+        using var archiveStream = new MemoryStream();
+        using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var file in Directory.EnumerateFiles(package, "*", SearchOption.AllDirectories))
+                archive.CreateEntryFromFile(file, Path.GetRelativePath(package, file).Replace('\\', '/'));
+        }
+        archiveStream.Position = 0;
+
+        var installed = await new MsfsAarBridgeInstaller().InstallArchiveAsync(archiveStream, community, CancellationToken.None);
+
+        Assert.Equal("1.2.0", installed.Version);
+        Assert.True(File.Exists(Path.Combine(installed.PackageDirectory, "modules", "vtsd_aar_bridge.wasm")));
+    }
+
+    [Fact]
+    public async Task InstallArchiveRejectsPathTraversal()
+    {
+        using var temp = new TempDirectory();
+        var community = Directory.CreateDirectory(Path.Combine(temp.Path, "Community2024")).FullName;
+        using var archiveStream = new MemoryStream();
+        using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Create, leaveOpen: true))
+        using (var writer = new StreamWriter(archive.CreateEntry("../escaped.txt").Open()))
+            writer.Write("invalid");
+        archiveStream.Position = 0;
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => new MsfsAarBridgeInstaller()
+            .InstallArchiveAsync(archiveStream, community, CancellationToken.None));
+
+        Assert.False(File.Exists(Path.Combine(temp.Path, "escaped.txt")));
+        Assert.False(Directory.Exists(Path.Combine(community, MsfsAarBridgeInstaller.PackageName)));
     }
 
     private static string CreatePackage(string root, string name, string version)

@@ -2345,20 +2345,14 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             MsfsAarBridgeStatusText = "MSFS 2024 Community2024 folder could not be located. Select it first.";
             return;
         }
-        var bundledPackage = Path.Combine(AppContext.BaseDirectory, "Resources", "MSFS", MsfsAarBridgeInstaller.PackageName);
-        if (!Directory.Exists(bundledPackage))
-        {
-            MsfsAarBridgeStatusText = "This VTSD build does not contain the compiled MSFS AAR Bridge package.";
-            return;
-        }
         try
         {
-            var package = await _msfsAarBridgeInstaller.InstallOrUpdateAsync(bundledPackage, community, _runCts.Token);
+            var package = await _msfsAarBridgeInstaller.InstallBundledAsync(typeof(MainViewModel).Assembly, community, _runCts.Token);
             Settings.Msfs2024CommunityFolder = community;
             _configStore.SaveDisplaySettings(Settings);
             MsfsAarBridgeStatusText = $"Bridge {package.Version} installed. Restart Microsoft Flight Simulator 2024 to load it.";
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
         {
             MsfsAarBridgeStatusText = $"Bridge installation failed: {ex.Message}";
         }

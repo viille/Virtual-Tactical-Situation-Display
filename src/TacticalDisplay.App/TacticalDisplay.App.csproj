@@ -37,12 +37,10 @@
     <Content Include="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
-    <Content Include="Resources\MSFS\vtsd-aar-bridge\**\*"
-             Condition="Exists('Resources\MSFS\vtsd-aar-bridge\manifest.json')">
-      <Link>Resources\MSFS\vtsd-aar-bridge\%(RecursiveDir)%(Filename)%(Extension)</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
-    </Content>
+    <EmbeddedResource Include="Resources\MSFS\vtsd-aar-bridge.zip"
+                      Condition="Exists('Resources\MSFS\vtsd-aar-bridge.zip')">
+      <LogicalName>TacticalDisplay.App.Resources.MSFS.vtsd-aar-bridge.zip</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>

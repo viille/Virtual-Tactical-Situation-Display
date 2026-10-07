@@ -1,4 +1,6 @@
 using System.IO;
+using System.IO.Compression;
+using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -43,6 +45,7 @@ public sealed class Msfs2024PackagePathResolver
 public sealed class MsfsAarBridgeInstaller
 {
     public const string PackageName = "vtsd-aar-bridge";
+    public const string BundledArchiveResourceName = "TacticalDisplay.App.Resources.MSFS.vtsd-aar-bridge.zip";
     private const string ModuleRelativePath = "modules/vtsd_aar_bridge.wasm";
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
@@ -57,6 +60,50 @@ public sealed class MsfsAarBridgeInstaller
     public Task<AarBridgePackageInfo> InstallOrUpdateAsync(string sourcePackageDirectory, string community2024Folder, CancellationToken cancellationToken) =>
         Task.Run(() => InstallOrUpdate(sourcePackageDirectory, community2024Folder, cancellationToken), cancellationToken);
 
+    public async Task<AarBridgePackageInfo> InstallBundledAsync(Assembly assembly, string community2024Folder, CancellationToken cancellationToken)
+    {
+        await using var archiveStream = assembly.GetManifestResourceStream(BundledArchiveResourceName)
+            ?? throw new FileNotFoundException("This VTSD build does not contain the compiled MSFS AAR Bridge package.");
+        return await InstallArchiveAsync(archiveStream, community2024Folder, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<AarBridgePackageInfo> InstallArchiveAsync(Stream archiveStream, string community2024Folder, CancellationToken cancellationToken)
+    {
+        ArgumentNullException.ThrowIfNull(archiveStream);
+        var extractionRoot = Path.Combine(Path.GetTempPath(), "VTSD", "AARBridge", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(extractionRoot);
+        try
+        {
+            using (var archive = new ZipArchive(archiveStream, ZipArchiveMode.Read, leaveOpen: true))
+            {
+                var rootWithSeparator = Path.GetFullPath(extractionRoot) + Path.DirectorySeparatorChar;
+                foreach (var entry in archive.Entries)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var relative = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+                    var target = Path.GetFullPath(Path.Combine(extractionRoot, relative));
+                    if (!target.StartsWith(rootWithSeparator, StringComparison.OrdinalIgnoreCase))
+                        throw new InvalidDataException("The bundled AAR Bridge archive contains an invalid path.");
+                    if (entry.FullName.EndsWith('/'))
+                    {
+                        Directory.CreateDirectory(target);
+                        continue;
+                    }
+                    Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                    await using var output = new FileStream(target, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                    await using var input = entry.Open();
+                    await input.CopyToAsync(output, cancellationToken).ConfigureAwait(false);
+                }
+            }
+
+            return await InstallOrUpdateAsync(extractionRoot, community2024Folder, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            if (Directory.Exists(extractionRoot)) Directory.Delete(extractionRoot, recursive: true);
+        }
+    }
+
     private AarBridgePackageInfo InstallOrUpdate(string sourcePackageDirectory, string community2024Folder, CancellationToken cancellationToken)
     {
         if (!Directory.Exists(community2024Folder) || !Msfs2024PackagePathResolver.IsCommunity2024Folder(community2024Folder))
@@ -70,6 +117,7 @@ public sealed class MsfsAarBridgeInstaller
         var backup = Path.Combine(root, $".{PackageName}.backup-{Guid.NewGuid():N}");
         var hasPrevious = Directory.Exists(destination);
         var previousMoved = false;
+        var stagedPackagePromoted = false;
         try
         {
             CopyDirectory(sourcePackageDirectory, staging, cancellationToken);
@@ -83,6 +131,7 @@ public sealed class MsfsAarBridgeInstaller
                 previousMoved = true;
             }
             Directory.Move(staging, destination);
+            stagedPackagePromoted = true;
             if (!TryValidatePackage(destination, out var installedVersion) || installedVersion != sourceVersion)
                 throw new InvalidDataException("The installed AAR Bridge package failed verification.");
             if (previousMoved) Directory.Delete(backup, recursive: true);
@@ -90,7 +139,7 @@ public sealed class MsfsAarBridgeInstaller
         }
         catch
         {
-            if (Directory.Exists(destination) && previousMoved) Directory.Delete(destination, recursive: true);
+            if (Directory.Exists(destination) && stagedPackagePromoted) Directory.Delete(destination, recursive: true);
             if (previousMoved && Directory.Exists(backup) && !Directory.Exists(destination)) Directory.Move(backup, destination);
             throw;
         }

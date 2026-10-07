@@ -934,8 +934,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             _requests[operation.RequestId].Status = "Complete";
             _requests[operation.RequestId].TerminalAt = operation.TerminalAt;
         }
-        else if (operation.Slot == "CommittedNext") operation.State = "Accepted";
-        else operation.State = "PreContact";
+        else operation.State = "Accepted";
         operation.Revision++;
         Publish(operation.TankerId, "OPERATION_RECONCILED", operation.Id, operation.Revision, OperationView(operation));
         Publish(operation.ReceiverId, "OPERATION_RECONCILED", operation.Id, operation.Revision, ReceiverOperationView(operation));
@@ -968,7 +967,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             return;
         }
         next.Slot = "Active";
-        next.State = "PreContact";
+        next.State = "Accepted";
         next.Revision++;
         Notify(context, next.TankerId, "OPERATION_STATE", next.Id, next.Revision, OperationView(next));
         Notify(context, next.ReceiverId, "OPERATION_STATE", next.Id, next.Revision, ReceiverOperationView(next));
