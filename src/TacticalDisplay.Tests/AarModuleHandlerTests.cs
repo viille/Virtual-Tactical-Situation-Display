@@ -330,6 +330,36 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task ContactLossBeforeTransferRevokesClearanceAndBlocksStart()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Request("receiver", "tanker", 100);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+        var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
+        await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
+        await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: operationId);
+        await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
+
+        var start = DateTimeOffset.UtcNow.AddMilliseconds(-500);
+        var tankerPose = new { timestampUtc = start, latitudeDeg = 60d, longitudeDeg = 25d, altitudeMeters = 10000d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        var receiverPose = new { timestampUtc = start.AddMilliseconds(5), latitudeDeg = 60d - (30d / 111000d), longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose);
+        await rig.Send("receiver", "POSE_UPDATE", receiverPose);
+        Assert.Equal("Contact", rig.OperationState(operationId));
+
+        var lost = receiverPose with { latitudeDeg = 60d - (500d / 111000d) };
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose with { timestampUtc = start.AddMilliseconds(305) });
+        await rig.Send("receiver", "POSE_UPDATE", lost with { timestampUtc = start.AddMilliseconds(305) });
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose with { timestampUtc = start.AddMilliseconds(605) });
+        await rig.Send("receiver", "POSE_UPDATE", lost with { timestampUtc = start.AddMilliseconds(605) });
+
+        Assert.Equal("Astern", rig.OperationState(operationId));
+        var startTransfer = await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId);
+        Assert.Equal("MODULE_ERROR", startTransfer.LastKind);
+    }
+
+    [Fact]
     public async Task ReceiverStateContainsNoFuelAmountsRatesOrProgress()
     {
         var rig = new Rig();

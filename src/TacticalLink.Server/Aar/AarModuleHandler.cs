@@ -326,6 +326,10 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             {
                 if (capture) operation.ReleaseSince = null;
                 else operation.ReleaseSince ??= now;
+                if (operation.ReleaseSince is { } released && now - released >= _contactConfiguration.EffectiveReleaseDebounce)
+                {
+                    ReturnToAstern(operation);
+                }
             }
             else if (operation.State == "Refueling")
             {
@@ -337,14 +341,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                         Suspend(operation, "CONTACT_LOST_DURING_UNCONFIRMED_TRANSFER", TimeSpan.FromSeconds(5));
                         continue;
                     }
-                    operation.State = "Astern";
-                    operation.ClearanceValid = false;
-                    operation.FuelOnAuthorized = false;
-                    operation.CaptureSince = null;
-                    operation.ReleaseSince = null;
-                    operation.Revision++;
-                    Publish(operation.TankerId, "CONTACT_RELEASED", operation.Id, operation.Revision, OperationView(operation));
-                    Publish(operation.ReceiverId, "CONTACT_RELEASED", operation.Id, operation.Revision, ReceiverOperationView(operation));
+                    ReturnToAstern(operation);
                 }
             }
         }
@@ -757,6 +754,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         if (!_operations.TryGetValue(operationId, out var operation) || operation.TankerId != peer.ParticipantId || operation.State != "Contact" || !operation.ClearanceValid)
             throw new InvalidOperationException("START_TRANSFER requires a live tanker-cleared Contact state.");
         if (operation.TransferMode == "DryHookup") throw new InvalidOperationException("Fuel transfer cannot start during DryHookup.");
+        if (!IsInsideCurrentCapture(operation)) throw new InvalidOperationException("Fresh contact geometry is required before fuel transfer can start.");
         var tanker = GetParticipant(operation.TankerId);
         var receiver = GetParticipant(operation.ReceiverId);
         EnsureFreshFuelState(tanker);
@@ -788,6 +786,33 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         Publish(operation.TankerId, "TRANSFER_STOPPED", operation.Id, operation.Revision, OperationView(operation));
         Publish(operation.ReceiverId, "TRANSFER_STOPPED", operation.Id, operation.Revision, ReceiverOperationView(operation));
         return Result("TRANSFER_STOPPED", operation.Id, operation.Revision, OperationView(operation));
+    }
+
+    private void ReturnToAstern(AarOperation operation)
+    {
+        operation.State = "Astern";
+        operation.ClearanceValid = false;
+        operation.FuelOnAuthorized = false;
+        operation.CaptureSince = null;
+        operation.ReleaseSince = null;
+        operation.Revision++;
+        Publish(operation.TankerId, "CONTACT_RELEASED", operation.Id, operation.Revision, OperationView(operation));
+        Publish(operation.ReceiverId, "CONTACT_RELEASED", operation.Id, operation.Revision, ReceiverOperationView(operation));
+    }
+
+    private bool IsInsideCurrentCapture(AarOperation operation)
+    {
+        var tankerPoses = GetParticipant(operation.TankerId).Poses;
+        var receiverPoses = GetParticipant(operation.ReceiverId).Poses;
+        if (tankerPoses.Count == 0 || receiverPoses.Count == 0) return false;
+        var timestamp = tankerPoses.Last().TimestampUtc < receiverPoses.Last().TimestampUtc
+            ? tankerPoses.Last().TimestampUtc
+            : receiverPoses.Last().TimestampUtc;
+        var tankerPose = At(tankerPoses, timestamp);
+        var receiverPose = At(receiverPoses, timestamp);
+        return tankerPose is not null && receiverPose is not null &&
+            AarContactGeometry.TryMeasure(tankerPose, receiverPose, _contactConfiguration, _clock.GetUtcNow(), out var relative) &&
+            AarContactGeometry.IsInsideCapture(relative, _contactConfiguration);
     }
 
     private CommandResponse CancelCommitment(ModuleCommandContext context, AarPeerSnapshot peer)
