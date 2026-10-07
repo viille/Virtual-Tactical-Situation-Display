@@ -30,6 +30,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private TrafficRepository _repository = new();
     private ITrafficDataFeed _feed;
     private readonly TacticalLinkClient _tacticalLink;
+    private readonly AarClient _aarClient;
+    private readonly AarFuelTransferCoordinator _aarFuelTransferCoordinator;
     private readonly AuthService _auth;
     private bool _showTacticalLinkMenu;
     private string _tacticalLinkMessage = "TacticalLink is disconnected.";
@@ -42,7 +44,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private readonly MsfsAarBridgeInstaller _msfsAarBridgeInstaller = new();
     private readonly DispatcherTimer _tacticalTelemetryTimer;
     private readonly HashSet<string> _activeAarOperations = new(StringComparer.Ordinal);
-    private readonly AarFuelProposalProcessor _aarFuelProposalProcessor = new();
     private readonly ObservableCollection<AarPendingRequestDisplay> _aarPendingRequests = [];
     private TacticalLinkPeerDisplay? _selectedAarTanker;
     private TacticalLinkPeerDisplay? _selectedAarReceiver;
@@ -111,9 +112,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _auth = CloudBootstrapper.Provider.GetRequiredService<AuthService>();
         _auth.StateChanged += OnCloudAuthStateChanged;
         _tacticalLink = new TacticalLinkClient(CloudBootstrapper.Provider.GetRequiredService<VtsdCloudClient>());
+        _aarClient = new AarClient(_tacticalLink, _runCts.Token);
         _tacticalLink.StateChanged += OnTacticalLinkStateChanged;
-        _tacticalLink.ModuleEventReceived += OnTacticalLinkModuleEventReceived;
+        _aarClient.EventReceived += OnTacticalLinkModuleEventReceived;
         _feed = TrafficFeedFactory.Create(Settings, () => _tacticalLink.NearbyPeers);
+        _aarFuelTransferCoordinator = new AarFuelTransferCoordinator(_aarClient, () => _feed as IAarFuelAdapter,
+            () => _aarProtectedReserveKg, _runCts.Token);
         _feed.ConnectionChanged += OnConnectionChanged;
         _feed.SnapshotReceived += OnSnapshotReceived;
         if (_feed is IAarPoseSource initialPoseSource) initialPoseSource.AarPoseSampled += OnAarPoseSampled;
@@ -606,7 +610,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         var peer = _tacticalLink.NearbyPeers.FirstOrDefault(candidate => candidate.ParticipantId == display.ParticipantId);
         return peer is not null && peer.Capabilities.Contains("aar.receiver");
     }).ToArray();
-    public string TankerButtonText => _tacticalLink.LocalTankerJoined ? "LEAVE TANKER MODE" : "JOIN AS TANKER";
+    public string TankerButtonText => _aarClient.IsTankerJoined ? "LEAVE TANKER MODE" : "JOIN AS TANKER";
     public string AarProtectedReserveKgText { get => _aarProtectedReserveKgText; set => SetField(ref _aarProtectedReserveKgText, value); }
     public string AarRequestedAmountText { get => _aarRequestedAmountText; set => SetField(ref _aarRequestedAmountText, value); }
     public string AarPlannedAmountText { get => _aarPlannedAmountText; set => SetField(ref _aarPlannedAmountText, value); }
@@ -637,7 +641,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string AarTransferMode => _aarTransferMode;
     public string MsfsAarBridgeStatusText { get => _msfsAarBridgeStatusText; private set => SetField(ref _msfsAarBridgeStatusText, value); }
     public string AarTankerMetricsText { get => _aarTankerMetricsText; private set => SetField(ref _aarTankerMetricsText, value); }
-    public string AarAvailabilityButtonText => _tacticalLink.LocalTankerAvailable ? "SET UNAVAILABLE" : "SET AVAILABLE";
+    public string AarAvailabilityButtonText => _aarClient.IsTankerAvailable ? "SET UNAVAILABLE" : "SET AVAILABLE";
     public bool HasAarOperation => _aarActiveOperationId is not null;
     public bool IsLocalTankerForActiveOperation => _aarActiveIsLocalTanker;
     public bool HasAarCommittedNext => _aarCommittedNextOperationId is not null;
@@ -649,7 +653,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public bool IsAarReceiverCapable => IsTankerReceiverCapable && IsTacticalLinkConnected && DataSourceModes.IsMsfs(Settings.DataSourceMode);
     public bool IsAarTankerModeJoined => IsLocalTankerJoined;
     public bool IsTankerCapable => _tacticalLink.LocalCapabilities.Contains("aar.tanker");
-    public bool IsLocalTankerJoined => _tacticalLink.LocalTankerJoined;
+    public bool IsLocalTankerJoined => _aarClient.IsTankerJoined;
     public bool IsTankerReceiverCapable => _tacticalLink.LocalCapabilities.Contains("aar.receiver");
     public bool CanUseAar => IsTacticalLinkConnected && (IsTankerCapable || IsTankerReceiverCapable);
     public bool CanOfferTanker => IsTankerCapable && IsTacticalLinkConnected;
@@ -996,6 +1000,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             _tacticalTelemetryTimer.Stop();
             _airspaceTimer.Stop();
             _runCts.Cancel();
+            _aarFuelTransferCoordinator.Dispose();
+            _aarClient.Dispose();
             await _tacticalLink.DisposeAsync();
             await _feed.StopAsync();
             if (_feed is IAarBridgeRuntimeStatusSource bridgeStatus) bridgeStatus.BridgeRuntimeStateChanged -= OnAarBridgeRuntimeStateChanged;
@@ -2019,15 +2025,14 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private async Task ToggleTankerAvailabilityAsync()
     {
         if (!IsTankerCapable || !IsTacticalLinkConnected) return;
-        if (_tacticalLink.LocalTankerJoined)
+        if (_aarClient.IsTankerJoined)
         {
-            await _tacticalLink.LeaveTankerModeAsync(_runCts.Token);
+            await _aarClient.LeaveTankerAsync(_runCts.Token);
             AarStatusText = "Tanker mode off";
         }
         else
         {
-            await _tacticalLink.JoinTankerModeAsync(_runCts.Token);
-            await _tacticalLink.SendModuleMessageAsync("aar", 1, "GET_STATE", null, new { }, _runCts.Token);
+            await _aarClient.JoinTankerAsync(_runCts.Token);
             AarStatusText = "Tanker joined; set reserve and check adapter readiness";
         }
         UpdateAarSampling();
@@ -2038,21 +2043,21 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private async Task SetAarProtectedReserveAsync()
     {
-        if (!IsTankerCapable || !IsTacticalLinkConnected || !_tacticalLink.LocalTankerJoined) return;
+        if (!IsTankerCapable || !IsTacticalLinkConnected || !_aarClient.IsTankerJoined) return;
         if (!TryParseAarDisplayedAmount(AarProtectedReserveKgText, out var reserveKg) || reserveKg < 0)
         {
             AarStatusText = $"Enter reserve fuel in {AarFuelUnit}";
             return;
         }
-        await _tacticalLink.SetProtectedReserveAsync(reserveKg, _runCts.Token);
+        await _aarClient.SetProtectedReserveAsync(reserveKg, _runCts.Token);
         _aarProtectedReserveKg = reserveKg;
         AarStatusText = $"Protected reserve set: {FormatAarAmount(reserveKg)} {AarFuelUnit}";
     }
 
     private async Task ToggleAarAvailabilityAsync()
     {
-        if (!IsTankerCapable || !IsTacticalLinkConnected || !_tacticalLink.LocalTankerJoined) return;
-        await _tacticalLink.SetTankerAvailabilityAsync(!_tacticalLink.LocalTankerAvailable, _runCts.Token);
+        if (!IsTankerCapable || !IsTacticalLinkConnected || !_aarClient.IsTankerJoined) return;
+        await _aarClient.SetTankerAvailabilityAsync(!_aarClient.IsTankerAvailable, _runCts.Token);
     }
 
     private string FormatAarFuelSummary(JsonElement fuel)
@@ -2068,7 +2073,6 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         if (e.Module != "aar") return;
         if (e.Kind.StartsWith("POSE_", StringComparison.Ordinal)) return;
-        if (e.Kind == "TRANSFER_PROPOSAL") _ = ApplyAarTransferProposalAsync(e);
         Application.Current.Dispatcher.Invoke(() =>
         {
             var fuelSummary = e.Payload.TryGetProperty("fuel", out var nestedFuel) ? nestedFuel : e.Payload;
@@ -2077,7 +2081,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             if (e.OperationId is { } watermarkOperation && e.Payload.TryGetProperty("transferredKg", out var transferredWatermark) &&
                 transferredWatermark.ValueKind == JsonValueKind.Number && transferredWatermark.TryGetDouble(out var cumulativeWatermark))
             {
-                _aarFuelProposalProcessor.RecordWatermark(watermarkOperation, cumulativeWatermark);
+                _aarFuelTransferCoordinator.RecordWatermark(watermarkOperation, cumulativeWatermark);
             }
             if (e.OperationId is { } operationId)
             {
@@ -2182,7 +2186,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
                 "TANKER_MODE_JOINED" => "Tanker joined; set reserve and check adapter readiness",
                 "TANKER_MODE_LEFT" => "Tanker mode off",
                 "RESERVE_UPDATED" => "Protected reserve updated",
-                "TANKER_AVAILABILITY_UPDATED" => _tacticalLink.LocalTankerAvailable ? "Tanker available for requests" : "Tanker unavailable",
+                "TANKER_AVAILABILITY_UPDATED" => _aarClient.IsTankerAvailable ? "Tanker available for requests" : "Tanker unavailable",
                 "MODULE_ERROR" => e.Payload.TryGetProperty("message", out var message) ? message.GetString() ?? "AAR command failed" : "AAR command failed",
                 "OPERATION_SUSPENDED" => "AAR stopped; reconnect and reconcile before continuing",
                 "OPERATION_FAILED" => "AAR operation failed",
@@ -2218,14 +2222,25 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private async Task SendAarOperationCommandAsync(string kind)
     {
         if (!IsTacticalLinkConnected || _aarActiveOperationId is not { } operationId) return;
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, kind, operationId, new { operationId }, _runCts.Token);
+        var command = kind switch
+        {
+            "CLEAR_ASTERN" => _aarClient.ClearAsternAsync(operationId, _runCts.Token),
+            "HOLD" => _aarClient.HoldAsync(operationId, _runCts.Token),
+            "CLEAR_CONTACT" => _aarClient.ClearContactAsync(operationId, _runCts.Token),
+            "START_TRANSFER" => _aarClient.StartTransferAsync(operationId, _runCts.Token),
+            "STOP_TRANSFER" => _aarClient.StopTransferAsync(operationId, _runCts.Token),
+            "DISCONNECT" => _aarClient.DisconnectAsync(operationId, _runCts.Token),
+            "BREAKAWAY" => _aarClient.BreakawayAsync(operationId, _runCts.Token),
+            "RECONCILE" => _aarClient.ReconcileAsync(operationId, _runCts.Token),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "Unknown AAR operation command.")
+        };
+        await command;
     }
 
     private async Task RequestFullAarAsync()
     {
         if (!IsAarReceiverCapable || SelectedAarTanker is null) return;
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, "REQUEST_REFUEL", null,
-            new { tankerParticipantId = SelectedAarTanker.ParticipantId, full = true, transferMode = AarTransferMode }, _runCts.Token);
+        await _aarClient.RequestRefuelAsync(SelectedAarTanker.ParticipantId, null, full: true, AarTransferMode, _runCts.Token);
         AarStatusText = "FULL request sent";
     }
 
@@ -2234,8 +2249,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         if (!IsAarReceiverCapable || SelectedAarTanker is null) return;
         if (AarTransferMode == "DryHookup")
         {
-            await _tacticalLink.SendModuleMessageAsync("aar", 1, "REQUEST_REFUEL", null,
-                new { tankerParticipantId = SelectedAarTanker.ParticipantId, full = true, transferMode = AarTransferMode }, _runCts.Token);
+            await _aarClient.RequestRefuelAsync(SelectedAarTanker.ParticipantId, null, full: true, AarTransferMode, _runCts.Token);
             AarStatusText = "Dry Hookup request sent";
             return;
         }
@@ -2244,23 +2258,20 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             AarStatusText = $"Enter a positive request amount in {AarFuelUnit}";
             return;
         }
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, "REQUEST_REFUEL", null,
-            new { tankerParticipantId = SelectedAarTanker.ParticipantId, full = false, requestedKg, transferMode = AarTransferMode }, _runCts.Token);
+        await _aarClient.RequestRefuelAsync(SelectedAarTanker.ParticipantId, requestedKg, full: false, AarTransferMode, _runCts.Token);
         AarStatusText = "Refuel request sent";
     }
 
     private async Task AddAarReceiverAsync()
     {
         if (!IsLocalTankerJoined || SelectedAarReceiver is null) return;
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, "ADD_RECEIVER_TO_QUEUE", null,
-            new { receiverParticipantId = SelectedAarReceiver.ParticipantId, transferMode = AarTransferMode }, _runCts.Token);
+        await _aarClient.AddReceiverAsync(SelectedAarReceiver.ParticipantId, AarTransferMode, _runCts.Token);
     }
 
     private async Task RemoveAarQueueEntryAsync()
     {
         if (SelectedAarRequest is null) return;
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, "REMOVE_QUEUE_ENTRY", null,
-            new { requestId = SelectedAarRequest.RequestId }, _runCts.Token);
+        await _aarClient.RemoveQueueEntryAsync(SelectedAarRequest.RequestId, _runCts.Token);
         _aarPendingRequests.Remove(SelectedAarRequest);
         SelectedAarRequest = null;
         Raise(nameof(AarPendingRequests));
@@ -2272,14 +2283,13 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         var currentPosition = _aarPendingRequests.IndexOf(SelectedAarRequest);
         if (currentPosition < 0) return;
         var position = Math.Clamp(currentPosition + offset, 0, Math.Max(0, _aarPendingRequests.Count - 1));
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, "MOVE_QUEUE_ENTRY", null,
-            new { requestId = SelectedAarRequest.RequestId, position }, _runCts.Token);
+        await _aarClient.MoveQueueEntryAsync(SelectedAarRequest.RequestId, position, _runCts.Token);
     }
 
     private async Task ReturnAarCommittedToPendingAsync()
     {
         if (!IsLocalTankerJoined || _aarCommittedNextOperationId is not { } operationId) return;
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, "RETURN_TO_PENDING", operationId, new { operationId }, _runCts.Token);
+        await _aarClient.ReturnCommittedToPendingAsync(operationId, _runCts.Token);
         _aarCommittedNextOperationId = null;
         Raise(nameof(HasAarCommittedNext));
     }
@@ -2287,8 +2297,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private async Task CancelOwnAarRequestAsync()
     {
         if (_aarOwnPendingRequestId is not { } requestId) return;
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, "CANCEL_REQUEST", null,
-            new { requestId }, _runCts.Token);
+        await _aarClient.CancelRequestAsync(requestId, _runCts.Token);
         _aarOwnPendingRequestId = null;
         Raise(nameof(HasOwnAarPendingRequest));
     }
@@ -2296,8 +2305,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private async Task SetAarPlannedOnloadAsync()
     {
         if (_aarActiveOperationId is not { } operationId || !TryParseAarDisplayedAmount(AarPlannedAmountText, out var plannedKg) || plannedKg <= 0) return;
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, "SET_PLANNED_ONLOAD", operationId,
-            new { plannedKg }, _runCts.Token);
+        await _aarClient.SetPlannedOnloadAsync(operationId, plannedKg, _runCts.Token);
     }
 
     private async Task ToggleAarTransferModeAsync()
@@ -2310,8 +2318,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             AarStatusText = mode == "DryHookup" ? "Dry Hookup selected; no bridge or fuel transfer is required" : "Live fuel transfer selected";
             return;
         }
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, "SET_TRANSFER_MODE", operationId,
-            new { transferMode = mode }, _runCts.Token);
+        await _aarClient.SetTransferModeAsync(operationId, mode, _runCts.Token);
     }
 
     private void SelectMsfs2024CommunityFolder()
@@ -2471,76 +2478,37 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private async Task RespondToAarRequestAsync(bool accept)
     {
         if (!IsTankerCapable || !IsTacticalLinkConnected || !IsLocalTankerJoined || SelectedAarRequest is null) return;
-        var payload = new Dictionary<string, object>
-        {
-            ["requestId"] = SelectedAarRequest.RequestId,
-            ["transferMode"] = AarTransferMode
-        };
+        double? planKg = null;
         if (accept && !string.IsNullOrWhiteSpace(AarPlannedAmountText))
         {
-            if (!TryParseAarDisplayedAmount(AarPlannedAmountText, out var planKg) || planKg <= 0)
+            if (!TryParseAarDisplayedAmount(AarPlannedAmountText, out var parsedPlanKg) || parsedPlanKg <= 0)
             {
                 AarStatusText = $"Enter a positive planned amount in {AarFuelUnit}, or leave it blank to use the safe maximum";
                 return;
             }
-            payload["plannedKg"] = planKg;
+            planKg = parsedPlanKg;
         }
-        await _tacticalLink.SendModuleMessageAsync("aar", 1, accept ? "ACCEPT_REQUEST" : "REJECT_REQUEST", null,
-            payload, _runCts.Token);
+        await _aarClient.RespondToRequestAsync(SelectedAarRequest.RequestId, accept, AarTransferMode, planKg, _runCts.Token);
         AarStatusText = accept ? "Request accepted" : "Request rejected";
         if (!accept) _aarPendingRequests.Remove(SelectedAarRequest);
         SelectedAarRequest = null;
     }
 
     private void OnAarPoseSampled(object? sender, OwnshipState sample) =>
-        _ = _tacticalLink.PublishAarPoseAsync(sample, _runCts.Token);
+        _ = _aarClient.PublishPoseAsync(sample, _runCts.Token);
 
     private void OnAarFuelSampled(object? sender, AarFuelReading reading)
     {
         if (!IsTacticalLinkConnected || (!IsTankerCapable && !IsTankerReceiverCapable)) return;
         var adapter = _feed as IAarFuelAdapter;
         var ready = adapter is { IsAvailable: true, CanReadFuel: true, CanWriteFuel: true };
-        var watermark = _aarActiveOperationId is { } activeId ? _aarFuelProposalProcessor.GetWatermark(activeId) : 0;
-        _ = _tacticalLink.SendModuleMessageAsync("aar", 1, "FUEL_STATUS", null,
-            new { currentFuelKg = reading.CurrentFuelKg, capacityKg = reading.CapacityKg, adapterReady = ready, lastAppliedTransferredKg = watermark }, _runCts.Token)
+        var watermark = _aarActiveOperationId is { } activeId ? _aarFuelTransferCoordinator.GetWatermark(activeId) : 0;
+        _ = _aarClient.PublishFuelStatusAsync(reading.CurrentFuelKg, reading.CapacityKg, ready, watermark, _runCts.Token)
             .ContinueWith(task =>
             {
                 if (task.Exception is { } error)
                     DataSourceDebugLog.ThrottledDebug("AAR", "fuel-status-send", TimeSpan.FromSeconds(10), () => $"Fuel status send failed: {error.GetBaseException().Message}");
             }, TaskContinuationOptions.OnlyOnFaulted);
-    }
-
-    private async Task ApplyAarTransferProposalAsync(TacticalLinkModuleEvent moduleEvent)
-    {
-        if (moduleEvent.OperationId is not { } operationId || moduleEvent.OperationRevision is not { } revision ||
-            !moduleEvent.Payload.TryGetProperty("proposalId", out var proposalNode) || proposalNode.GetString() is not { } proposalId ||
-            !moduleEvent.Payload.TryGetProperty("deltaKg", out var deltaNode) || !deltaNode.TryGetDouble(out var deltaKg) || deltaKg <= 0 ||
-            !moduleEvent.Payload.TryGetProperty("targetCumulativeKg", out var targetNode) || !targetNode.TryGetDouble(out var targetKg)) return;
-
-        var role = moduleEvent.Payload.TryGetProperty("participantRole", out var roleNode) ? roleNode.GetString() : null;
-        if (role is not ("Tanker" or "Receiver")) return;
-        AarFuelProposalResult? application;
-        try
-        {
-            application = await _aarFuelProposalProcessor.ApplyAsync(proposalId, operationId, role, deltaKg, targetKg,
-                _aarProtectedReserveKg, _feed as IAarFuelAdapter, _runCts.Token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (_runCts.IsCancellationRequested) { return; }
-        catch (InvalidOperationException ex)
-        {
-            DataSourceDebugLog.ThrottledDebug("AAR", "proposal-conflict", TimeSpan.FromSeconds(10), () => ex.Message);
-            return;
-        }
-        if (application is null) return;
-
-        try
-        {
-            await _tacticalLink.SendModuleMessageAsync("aar", 1, "TRANSFER_ACK", operationId,
-                new { operationId, proposalId, appliedCumulativeKg = application.AppliedCumulativeKg, operationRevision = revision, appliedKg = application.AppliedKg, status = application.Status.ToString() },
-                _runCts.Token, "transfer-ack-" + proposalId).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (_runCts.IsCancellationRequested) { }
-        catch (InvalidOperationException) when (_tacticalLink.ConnectionState != TacticalLinkConnectionState.Connected) { }
     }
 
     private void UpdateAarSampling()

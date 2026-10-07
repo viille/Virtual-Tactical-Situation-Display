@@ -71,7 +71,7 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
-    public async Task PromotedCommittedReceiverMustBeClearedAsternBeforePreContact()
+    public async Task PromotedCommittedReceiverMustFollowAsternThenTankerClearsContact()
     {
         var rig = new Rig();
         await rig.PrepareTankerAndReceiver();
@@ -91,9 +91,9 @@ public sealed class AarModuleHandlerTests
         var bypass = await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: nextId);
         Assert.Equal("MODULE_ERROR", bypass.LastKind);
         await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: nextId);
-        var precontact = await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: nextId);
+        var clearContact = await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: nextId);
 
-        Assert.Equal("PreContact", precontact.LastPayload.GetProperty("state").GetString());
+        Assert.Equal("ClearedContact", clearContact.LastPayload.GetProperty("state").GetString());
     }
 
     [Fact]
@@ -113,6 +113,40 @@ public sealed class AarModuleHandlerTests
         Assert.Equal("REQUEST_QUEUED", first.LastKind);
         Assert.Equal("MODULE_ERROR", duplicate.LastKind);
         Assert.Equal(1, rig.RequestCount);
+    }
+
+    [Fact]
+    public async Task TankerSelectedPlannedKgIsTheInitialCommitmentAndSafeMaximumIsReturned()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Request("receiver", "tanker", 100);
+        var requestId = rig.RequestIdFrom(request);
+
+        var overMaximum = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId, plannedKg = 101 });
+        Assert.Equal("MODULE_ERROR", overMaximum.LastKind);
+        Assert.Equal("PLANNED_AMOUNT_EXCEEDS_SAFE_MAXIMUM", overMaximum.LastPayload.GetProperty("code").GetString());
+        Assert.Equal(100, overMaximum.LastPayload.GetProperty("maxAllowedKg").GetDouble());
+        Assert.Equal("Pending", rig.RequestStatusFrom(request));
+
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId, plannedKg = 60 });
+        Assert.Equal(100, accepted.LastPayload.GetProperty("requestedKg").GetDouble());
+        Assert.Equal(60, accepted.LastPayload.GetProperty("plannedKg").GetDouble());
+        Assert.Equal(60, rig.FuelSummary("tanker").GetProperty("committedFuelKg").GetDouble());
+    }
+
+    [Fact]
+    public async Task TankerAddedQueueEntryHasNoReceiverRequestIntent()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+
+        var added = await rig.Send("tanker", "ADD_RECEIVER_TO_QUEUE", new { receiverParticipantId = "receiver" });
+
+        Assert.Equal("TankerAdded", added.LastPayload.GetProperty("source").GetString());
+        Assert.Equal("None", added.LastPayload.GetProperty("requestMode").GetString());
+        Assert.False(added.LastPayload.GetProperty("full").GetBoolean());
+        Assert.True(added.LastPayload.GetProperty("requestedKg").ValueKind == JsonValueKind.Null);
     }
 
     [Fact]
@@ -151,7 +185,8 @@ public sealed class AarModuleHandlerTests
 
         Assert.Equal("RECEIVER_ADDED_TO_QUEUE", added.LastKind);
         Assert.Equal("TankerAdded", pending.GetProperty("source").GetString());
-        Assert.True(pending.GetProperty("full").GetBoolean());
+        Assert.False(pending.GetProperty("full").GetBoolean());
+        Assert.Equal("None", pending.GetProperty("requestMode").GetString());
         Assert.Contains(added.Events, item => item.Recipient == "receiver" && item.Kind == "TANKER_ADDED_RECEIVER");
     }
 
@@ -209,17 +244,17 @@ public sealed class AarModuleHandlerTests
         var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
 
         var receiverClear = await rig.Send("receiver", "CLEAR_ASTERN", new { }, operationId: operationId);
-        var clearedAstern = await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
         var bypass = await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
-        var precontact = await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: operationId);
+        var legacy = await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: operationId);
+        var clearedAstern = await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
         var clearedContact = await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
         var receiverStart = await rig.Send("receiver", "START_TRANSFER", new { }, operationId: operationId);
 
         Assert.Equal("MODULE_ERROR", receiverClear.LastKind);
         Assert.Equal("CLEARED_ASTERN", clearedAstern.LastKind);
         Assert.Equal("MODULE_ERROR", bypass.LastKind);
-        Assert.Equal("PRECONTACT_STARTED", precontact.LastKind);
-        Assert.Equal("CLEAR_CONTACTED", clearedContact.LastKind);
+        Assert.Equal("MODULE_ERROR", legacy.LastKind);
+        Assert.Equal("CLEARED_CONTACT", clearedContact.LastKind);
         Assert.Equal("ClearedContact", clearedContact.LastPayload.GetProperty("state").GetString());
         Assert.Equal("MODULE_ERROR", receiverStart.LastKind);
         Assert.Equal(0, clearedContact.LastPayload.GetProperty("transferredKg").GetDouble());
@@ -236,7 +271,6 @@ public sealed class AarModuleHandlerTests
 
         var mode = await rig.Send("tanker", "SET_TRANSFER_MODE", new { transferMode = "DryHookup" }, operationId: operationId);
         var astern = await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
-        await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: operationId);
         var clearance = await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
         var start = await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId);
         var receiverState = await rig.Send("receiver", "GET_STATE", new { });
@@ -244,7 +278,7 @@ public sealed class AarModuleHandlerTests
 
         Assert.Equal("DryHookup", mode.LastPayload.GetProperty("transferMode").GetString());
         Assert.Equal("CLEARED_ASTERN", astern.LastKind);
-        Assert.Equal("CLEAR_CONTACTED", clearance.LastKind);
+        Assert.Equal("CLEARED_CONTACT", clearance.LastKind);
         Assert.Equal("MODULE_ERROR", start.LastKind);
         Assert.DoesNotContain("plannedKg", serialized);
         Assert.DoesNotContain("transferredKg", serialized);
@@ -277,7 +311,6 @@ public sealed class AarModuleHandlerTests
         var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
         var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
         await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
-        await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: operationId);
         await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
 
         var now = DateTimeOffset.UtcNow;
@@ -285,6 +318,7 @@ public sealed class AarModuleHandlerTests
         var receiverPose = new { timestampUtc = now.AddMilliseconds(5), latitudeDeg = 60d - (30d / 111000d), longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
         await rig.Send("tanker", "POSE_UPDATE", tankerPose);
         var contact = await rig.Send("receiver", "POSE_UPDATE", receiverPose);
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose with { timestampUtc = now.AddMilliseconds(10) });
 
         Assert.Equal("Contact", rig.OperationState(operationId));
         Assert.DoesNotContain(contact.Events, item => item.Kind == "TRANSFER_PROPOSAL");
@@ -306,7 +340,6 @@ public sealed class AarModuleHandlerTests
         var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
         var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
         await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
-        await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: operationId);
         await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
 
         var now = DateTimeOffset.UtcNow;
@@ -314,6 +347,7 @@ public sealed class AarModuleHandlerTests
         var receiverPose = new { timestampUtc = now.AddMilliseconds(5), latitudeDeg = 60d - (30d / 111000d), longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
         await rig.Send("tanker", "POSE_UPDATE", tankerPose);
         await rig.Send("receiver", "POSE_UPDATE", receiverPose);
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose with { timestampUtc = now.AddMilliseconds(10) });
         await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId);
 
         var lost = new { timestampUtc = now.AddSeconds(1), latitudeDeg = 60d - (500d / 111000d), longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
@@ -338,7 +372,6 @@ public sealed class AarModuleHandlerTests
         var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
         var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
         await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
-        await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: operationId);
         await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
 
         var start = DateTimeOffset.UtcNow.AddMilliseconds(-500);
@@ -346,6 +379,7 @@ public sealed class AarModuleHandlerTests
         var receiverPose = new { timestampUtc = start.AddMilliseconds(5), latitudeDeg = 60d - (30d / 111000d), longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
         await rig.Send("tanker", "POSE_UPDATE", tankerPose);
         await rig.Send("receiver", "POSE_UPDATE", receiverPose);
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose with { timestampUtc = start.AddMilliseconds(10) });
         Assert.Equal("Contact", rig.OperationState(operationId));
 
         var lost = receiverPose with { latitudeDeg = 60d - (500d / 111000d) };
@@ -385,7 +419,6 @@ public sealed class AarModuleHandlerTests
         var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
         var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
         await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
-        await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: operationId);
 
         rig.Handler.OnParticipantDisconnected("user-r", "receiver", explicitDisconnect: false);
         Assert.Equal("Suspended", rig.OperationState(operationId));
@@ -399,7 +432,7 @@ public sealed class AarModuleHandlerTests
         Assert.False(reconciled.LastPayload.TryGetProperty("clearanceValid", out _));
         Assert.False(reconciled.LastPayload.TryGetProperty("plannedKg", out _));
         Assert.False(reconciled.LastPayload.TryGetProperty("transferredKg", out _));
-        Assert.Equal(5, reconciled.LastPayload.GetProperty("operationRevision").GetInt64());
+        Assert.Equal(4, reconciled.LastPayload.GetProperty("operationRevision").GetInt64());
     }
 
     [Fact]

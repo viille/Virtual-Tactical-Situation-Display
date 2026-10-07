@@ -172,13 +172,12 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                 "HOLD" => Hold(context, peer),
                 "START_TRANSFER" => StartTransfer(context, peer),
                 "STOP_TRANSFER" => StopTransfer(context, peer),
-                "PROCEED_TO_PRECONTACT" => ChangeActiveState(context, peer, "PreContact", "PRECONTACT_STARTED"),
                 "REQUEST_REFUEL" => RequestRefuel(context, peer),
                 "ACCEPT_REQUEST" => AcceptRequest(context, peer),
                 "REJECT_REQUEST" => RejectRequest(context, peer),
                 "CANCEL_REQUEST" => CancelRequest(context, peer),
                 "CANCEL_COMMITMENT" => CancelCommitment(context, peer),
-                "CLEAR_CONTACT" => ChangeActiveState(context, peer, "ClearedContact", "CLEAR_CONTACTED"),
+                "CLEAR_CONTACT" => ClearContact(context, peer),
                 "DISCONNECT" => ChangeActiveState(context, peer, "Complete", "OPERATION_COMPLETE"),
                 "BREAKAWAY" => ChangeActiveState(context, peer, "Breakaway", "BREAKAWAY"),
                 "GET_STATE" => GetState(context, peer),
@@ -188,6 +187,11 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         catch (ArgumentException ex)
         {
             return Result("MODULE_ERROR", context.OperationId, null, new { messageId = context.MessageId, code = "INVALID_AAR_COMMAND", message = ex.Message });
+        }
+        catch (AarLimitExceededException ex)
+        {
+            return Result("MODULE_ERROR", context.OperationId, null,
+                new { messageId = context.MessageId, code = "PLANNED_AMOUNT_EXCEEDS_SAFE_MAXIMUM", message = ex.Message, maxAllowedKg = ex.MaximumKg });
         }
         catch (InvalidOperationException ex)
         {
@@ -305,7 +309,10 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             var receiverPose = At(receiverHistory, commonTime);
             if (tankerPose is null || receiverPose is null ||
                 !AarContactGeometry.TryMeasure(tankerPose, receiverPose, _contactConfiguration, _clock.GetUtcNow(), out var relative))
+            {
+                if (operation.State is "Contact" or "Refueling") ReturnToAstern(operation);
                 continue;
+            }
 
             var capture = AarContactGeometry.IsInsideCapture(relative, _contactConfiguration);
             var release = AarContactGeometry.IsInsideRelease(relative, _contactConfiguration);
@@ -336,11 +343,6 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                 operation.ReleaseSince = release ? null : operation.ReleaseSince ?? now;
                 if (operation.ReleaseSince is { } released && now - released >= _contactConfiguration.EffectiveReleaseDebounce)
                 {
-                    if (operation.PendingTransfer is not null)
-                    {
-                        Suspend(operation, "CONTACT_LOST_DURING_UNCONFIRMED_TRANSFER", TimeSpan.FromSeconds(5));
-                        continue;
-                    }
                     ReturnToAstern(operation);
                 }
             }
@@ -385,7 +387,14 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             operation.Revision++;
             Publish(operation.TankerId, "TRANSFER_CONFIRMED", operation.Id, operation.Revision, OperationView(operation));
             Publish(operation.ReceiverId, "TRANSFER_CONFIRMED", operation.Id, operation.Revision, ReceiverOperationView(operation));
-            if (operation.TransferredKg >= operation.PlannedKg - 0.01) CompleteOperation(context, operation, "TRANSFER_COMPLETE");
+            if (operation.TransferredKg >= operation.PlannedKg - 0.01)
+            {
+                operation.FuelOnAuthorized = false;
+                operation.State = "Contact";
+                operation.Revision++;
+                Publish(operation.TankerId, "PLANNED_AMOUNT_REACHED", operation.Id, operation.Revision, OperationView(operation));
+                Publish(operation.ReceiverId, "PLANNED_AMOUNT_REACHED", operation.Id, operation.Revision, ReceiverOperationView(operation));
+            }
         }
         return Result("TRANSFER_ACK_ACCEPTED", operation.Id, operation.Revision,
             peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation));
@@ -452,8 +461,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             }
         }
 
-        return ordered.OrderBy(pose => Math.Abs((pose.TimestampUtc - timestamp).TotalMilliseconds)).FirstOrDefault(pose =>
-            Math.Abs((pose.TimestampUtc - timestamp).TotalMilliseconds) <= _contactConfiguration.EffectiveMaximumAlignmentGap.TotalMilliseconds);
+        return null;
     }
 
     private void CompleteOperation(ModuleCommandContext context, AarOperation operation, string terminalKind)
@@ -532,12 +540,13 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var planned = 0d;
         if (transferMode == "Fuel")
         {
-            var committed = tankerOps.Sum(operation => Math.Max(0, operation.PlannedKg - operation.TransferredKg));
+            var committed = tankerOps.Where(operation => operation.TransferMode == "Fuel")
+                .Sum(operation => Math.Max(0, operation.PlannedKg - operation.TransferredKg));
             var available = Math.Max(0, tankerState.CurrentFuelKg!.Value - tankerState.ProtectedReserveKg - committed);
             var receiverFree = Math.Max(0, receiverState.FuelCapacityKg!.Value - receiverState.CurrentFuelKg!.Value);
-            var desired = request.RequestedKg ?? receiverFree;
-            if (TryNumber(context.Payload, "plannedKg", out var selectedPlan)) desired = Math.Min(desired, selectedPlan);
-            planned = Math.Min(desired, Math.Min(receiverFree, available));
+            var maxAllowed = Math.Min(request.RequestedKg ?? receiverFree, Math.Min(receiverFree, available));
+            planned = TryNumber(context.Payload, "plannedKg", out var selectedPlan) ? selectedPlan : maxAllowed;
+            if (planned > maxAllowed + 0.01) throw new AarLimitExceededException(maxAllowed);
             if (planned <= 0) throw new InvalidOperationException("No safe positive fuel commitment is available; request remains Pending.");
         }
         var registrySnapshot = registry.Current ?? throw new InvalidOperationException("AAR registry is unavailable.");
@@ -661,11 +670,11 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         EnsureFreshFuelState(receiver);
         EnsureFreshFuelState(tanker);
         var receiverMaximum = Math.Max(0, (receiver.FuelCapacityKg ?? 0) - (receiver.CurrentFuelKg ?? 0) + operation.TransferredKg);
-        var otherCommitments = _operations.Values.Where(item => item.TankerId == operation.TankerId && item.Id != operation.Id && !IsTerminal(item.State))
+        var otherCommitments = _operations.Values.Where(item => item.TankerId == operation.TankerId && item.Id != operation.Id && !IsTerminal(item.State) && item.TransferMode == "Fuel")
             .Sum(item => Math.Max(0, item.PlannedKg - item.TransferredKg));
         var tankerMaximum = Math.Max(0, (tanker.CurrentFuelKg ?? 0) - tanker.ProtectedReserveKg - otherCommitments + operation.TransferredKg);
-        if (planned > Math.Min(receiverMaximum, tankerMaximum) + 0.01)
-            throw new InvalidOperationException("PlannedKg exceeds receiver capacity or tanker fuel above protected reserve and other commitments.");
+        var maxAllowed = Math.Min(receiverMaximum, tankerMaximum);
+        if (planned > maxAllowed + 0.01) throw new AarLimitExceededException(maxAllowed);
         operation.PlannedKg = planned;
         operation.Revision++;
         Notify(context, operation.TankerId, "PLANNED_ONLOAD_UPDATED", operation.Id, operation.Revision, OperationView(operation));
@@ -695,7 +704,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             EnsureFreshFuelState(tanker);
             EnsureFreshFuelState(receiver);
             if (!tanker.AdapterReady || !receiver.AdapterReady) throw new InvalidOperationException("Both writable fuel adapters must be ready for live fuel transfer.");
-            var otherCommitments = _operations.Values.Where(item => item.TankerId == operation.TankerId && item.Id != operation.Id && !IsTerminal(item.State))
+            var otherCommitments = _operations.Values.Where(item => item.TankerId == operation.TankerId && item.Id != operation.Id && !IsTerminal(item.State) && item.TransferMode == "Fuel")
                 .Sum(item => Math.Max(0, item.PlannedKg - item.TransferredKg));
             var available = Math.Max(0, tanker.CurrentFuelKg!.Value - tanker.ProtectedReserveKg - otherCommitments);
             var receiverFree = Math.Max(0, receiver.FuelCapacityKg!.Value - receiver.CurrentFuelKg!.Value);
@@ -730,17 +739,12 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var operationId = context.OperationId ?? String(context.Payload, "operationId");
         if (!_operations.TryGetValue(operationId, out var operation) || operation.TankerId != peer.ParticipantId || operation.Slot != "Active" || operation.State is not ("Astern" or "PreContact" or "ClearedContact" or "Contact" or "Refueling"))
             throw new InvalidOperationException("HOLD is available only for the tanker active receiver.");
-        if (operation.PendingTransfer is not null)
-        {
-            Suspend(operation, "HOLD_DURING_UNCONFIRMED_TRANSFER", TimeSpan.FromSeconds(5));
-            return Result("OPERATION_SUSPENDED", operation.Id, operation.Revision, OperationView(operation));
-        }
         operation.PendingTransfer = null;
         operation.ClearanceValid = false;
         operation.CaptureSince = null;
         operation.ReleaseSince = null;
         operation.FuelOnAuthorized = false;
-        operation.State = operation.State is "Contact" or "Refueling" or "ClearedContact" ? "Astern" : "Accepted";
+        operation.State = operation.State is "Contact" or "Refueling" or "ClearedContact" or "PreContact" ? "Astern" : operation.State;
         operation.Revision++;
         Publish(operation.TankerId, "HOLD", operation.Id, operation.Revision, OperationView(operation));
         Publish(operation.ReceiverId, "HOLD", operation.Id, operation.Revision, ReceiverOperationView(operation));
@@ -774,11 +778,6 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var operationId = context.OperationId ?? String(context.Payload, "operationId");
         if (!_operations.TryGetValue(operationId, out var operation) || operation.TankerId != peer.ParticipantId || operation.State != "Refueling")
             throw new InvalidOperationException("There is no active transfer to stop.");
-        if (operation.PendingTransfer is not null)
-        {
-            Suspend(operation, "STOP_DURING_UNCONFIRMED_TRANSFER", TimeSpan.FromSeconds(5));
-            return Result("OPERATION_SUSPENDED", operation.Id, operation.Revision, OperationView(operation));
-        }
         operation.PendingTransfer = null;
         operation.FuelOnAuthorized = false;
         operation.State = "Contact";
@@ -793,11 +792,28 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         operation.State = "Astern";
         operation.ClearanceValid = false;
         operation.FuelOnAuthorized = false;
+        operation.PendingTransfer = null;
         operation.CaptureSince = null;
         operation.ReleaseSince = null;
         operation.Revision++;
         Publish(operation.TankerId, "CONTACT_RELEASED", operation.Id, operation.Revision, OperationView(operation));
         Publish(operation.ReceiverId, "CONTACT_RELEASED", operation.Id, operation.Revision, ReceiverOperationView(operation));
+    }
+
+    private CommandResponse ClearContact(ModuleCommandContext context, AarPeerSnapshot peer)
+    {
+        RequireTanker(peer);
+        var operationId = context.OperationId ?? String(context.Payload, "operationId");
+        if (!_operations.TryGetValue(operationId, out var operation) || operation.TankerId != peer.ParticipantId ||
+            operation.Slot != "Active" || operation.State != "Astern")
+            throw new InvalidOperationException("Only the tanker may clear contact from Astern.");
+        operation.State = "ClearedContact";
+        operation.ClearanceValid = true;
+        operation.CaptureSince = null;
+        operation.Revision++;
+        Publish(operation.TankerId, "CLEARED_CONTACT", operation.Id, operation.Revision, OperationView(operation));
+        Publish(operation.ReceiverId, "CLEARED_CONTACT", operation.Id, operation.Revision, ReceiverOperationView(operation));
+        return Result("CLEARED_CONTACT", operation.Id, operation.Revision, OperationView(operation));
     }
 
     private bool IsInsideCurrentCapture(AarOperation operation)
@@ -839,6 +855,15 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var operationId = context.OperationId ?? String(context.Payload, "operationId");
         if (!_operations.TryGetValue(operationId, out var operation) || operation.TankerId != peer.ParticipantId || operation.Slot != "CommittedNext" || operation.State != "Accepted")
             throw new InvalidOperationException("Only the unstarted CommittedNext receiver can be returned to Pending.");
+        var pending = _requests.Values.Where(item => item.TankerId == operation.TankerId && item.Status == "Pending")
+            .OrderBy(item => item.QueueOrder).ToList();
+        var position = pending.Count;
+        if (TryNumber(context.Payload, "position", out var requestedPosition))
+        {
+            if (requestedPosition != Math.Truncate(requestedPosition) || requestedPosition < 0 || requestedPosition > pending.Count)
+                throw new ArgumentException("position must be an integer between zero and the pending queue length.");
+            position = (int)requestedPosition;
+        }
         operation.State = "Cancelled";
         operation.Slot = "Terminal";
         operation.Revision++;
@@ -847,6 +872,9 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         request.Status = "Pending";
         request.OperationId = null;
         request.TerminalAt = null;
+        pending.Insert(position, request);
+        for (var index = 0; index < pending.Count; index++) pending[index].QueueOrder = index;
+        _nextQueueOrder = Math.Max(_nextQueueOrder, pending.Count);
         Notify(context, operation.TankerId, "OPERATION_CANCELLED", operation.Id, operation.Revision, OperationView(operation));
         Notify(context, operation.ReceiverId, "REQUEST_PENDING", operation.Id, operation.Revision, new { requestId = request.Id, status = "Pending" });
         Notify(context, operation.TankerId, "QUEUE_UPDATED", null, null, QueueView(operation.TankerId));
@@ -860,23 +888,15 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             throw new InvalidOperationException("No active operation matches this command.");
         if (peer.ParticipantId != operation.TankerId && peer.ParticipantId != operation.ReceiverId)
             throw new InvalidOperationException("The participant does not own this operation.");
-        if (target == "PreContact")
+        if (target == "Complete")
         {
-            if (peer.ParticipantId != operation.TankerId || operation.State != "Astern") throw new InvalidOperationException("Only the tanker can start PreContact after clearing the receiver astern.");
-        }
-        else if (target == "ClearedContact")
-        {
-            if (peer.ParticipantId != operation.TankerId || operation.State != "PreContact") throw new InvalidOperationException("Only the tanker can clear contact after CLEAR ASTERN and PreContact.");
-            operation.ClearanceValid = true;
-        }
-        else if (target == "Complete")
-        {
-            if (operation.State is not ("Accepted" or "Astern" or "PreContact" or "ClearedContact" or "Contact" or "Refueling"))
+            if (operation.State is not ("Accepted" or "Astern" or "ClearedContact" or "Contact" or "Refueling" or "Suspended"))
                 throw new InvalidOperationException("The active operation cannot disconnect from its current state.");
             if (operation.PendingTransfer is not null)
             {
-                FailOperation(operation, "DISCONNECT_DURING_UNCONFIRMED_TRANSFER");
-                return Result("OPERATION_FAILED", operation.Id, operation.Revision,
+                operation.State = "Disconnecting";
+                Suspend(operation, "DISCONNECT_DURING_UNCONFIRMED_TRANSFER", TimeSpan.FromSeconds(5));
+                return Result("OPERATION_SUSPENDED", operation.Id, operation.Revision,
                     peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation), operation.RequestId);
             }
             operation.State = "Disconnecting";
@@ -885,12 +905,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             Notify(context, operation.ReceiverId, "OPERATION_STATE", operation.Id, operation.Revision, ReceiverOperationView(operation));
             target = "Complete";
         }
-        if (target == "Breakaway" && operation.PendingTransfer is not null)
-        {
-            FailOperation(operation, "BREAKAWAY_DURING_UNCONFIRMED_TRANSFER");
-            return Result("OPERATION_FAILED", operation.Id, operation.Revision,
-                peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation), operation.RequestId);
-        }
+        if (target == "Breakaway") operation.PendingTransfer = null;
         operation.State = target;
         operation.Revision++;
         if (target is "Breakaway" or "Complete") operation.ClearanceValid = false;
@@ -1018,7 +1033,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     private object FuelSummary(string participantId)
     {
         var state = GetParticipant(participantId);
-        var commitments = _operations.Values.Where(operation => operation.TankerId == participantId && !IsTerminal(operation.State))
+        var commitments = _operations.Values.Where(operation => operation.TankerId == participantId && operation.TransferMode == "Fuel" && !IsTerminal(operation.State))
             .Sum(operation => Math.Max(0, operation.PlannedKg - operation.TransferredKg));
         var current = state.CurrentFuelKg ?? 0;
         return new { currentFuelKg = state.CurrentFuelKg, protectedReserveKg = state.ProtectedReserveKg, committedFuelKg = commitments, availableToPromiseKg = Math.Max(0, current - state.ProtectedReserveKg - commitments) };
@@ -1027,7 +1042,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     private double AvailableToPromise(string tankerId)
     {
         var state = GetParticipant(tankerId);
-        var commitments = _operations.Values.Where(operation => operation.TankerId == tankerId && !IsTerminal(operation.State))
+        var commitments = _operations.Values.Where(operation => operation.TankerId == tankerId && operation.TransferMode == "Fuel" && !IsTerminal(operation.State))
             .Sum(operation => Math.Max(0, operation.PlannedKg - operation.TransferredKg));
         return Math.Max(0, (state.CurrentFuelKg ?? 0) - state.ProtectedReserveKg - commitments);
     }
@@ -1227,7 +1242,8 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         receiverParticipantId = request.ReceiverId,
         tankerParticipantId = request.TankerId,
         requestedKg = request.RequestedKg,
-        full = request.RequestedKg is null,
+        requestMode = request.Source == "TankerAdded" ? "None" : request.RequestedKg is null ? "Full" : "Fixed",
+        full = request.Source == "ReceiverRequest" && request.RequestedKg is null,
         source = request.Source,
         queueOrder = request.QueueOrder,
         status = request.Status,
@@ -1254,8 +1270,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     private static string ReceiverStatus(string state) => state switch
     {
         "Accepted" => "REQUEST_ACCEPTED",
-        "Astern" => "CLEAR_ASTERN",
-        "PreContact" => "PROCEED_TO_PRECONTACT",
+        "Astern" => "CLEARED_ASTERN",
         "ClearedContact" => "CLEARED_CONTACT",
         "Contact" => "CONTACT",
         "Refueling" => "REFUELING",
@@ -1267,6 +1282,12 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         "Cancelled" => "CANCELLED",
         _ => "HOLD"
     };
+
+    private sealed class AarLimitExceededException(double maximumKg)
+        : InvalidOperationException($"Planned amount exceeds the safe maximum of {maximumKg:0.##} kg.")
+    {
+        public double MaximumKg { get; } = maximumKg;
+    }
 
     private void Notify(ModuleCommandContext context, string participantId, string kind, string? operationId, long? revision, object payload) =>
         context.SendEvent(participantId, kind, operationId, revision, payload);
