@@ -969,18 +969,18 @@
                                 </Style>
                             </Button.Style>
                         </Button>
-                        <Button Content="JOIN AS TANKER" Command="{Binding ToggleTankerAvailabilityCommand}" Margin="0,0,0,12">
+                        <Button Content="JOIN AS TANKER" Command="{Binding Path=Aar.ToggleTankerAvailabilityCommand}" Margin="0,0,0,12">
                             <Button.Style>
                                 <Style TargetType="Button">
                                     <Setter Property="Visibility" Value="Collapsed" />
-                                    <Setter Property="Content" Value="{Binding TankerButtonText}" />
+                                    <Setter Property="Content" Value="{Binding Path=Aar.TankerButtonText}" />
                                     <Setter Property="Margin" Value="0,4" />
                                     <Setter Property="Padding" Value="6,4" />
                                     <Setter Property="Foreground" Value="#D9F2EC" />
                                     <Setter Property="Background" Value="#283843" />
                                     <Setter Property="BorderBrush" Value="#617480" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding CanOfferTanker}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Path=Aar.CanOfferTanker}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </Button.Style>
@@ -990,17 +990,17 @@
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding CanUseAar}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Path=Aar.CanUseAar}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </TextBlock.Style>
                         </TextBlock>
-                        <TextBlock Text="{Binding AarStatusText}" TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8">
+                        <TextBlock Text="{Binding Path=Aar.AarStatusText}" TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding CanUseAar}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Path=Aar.CanUseAar}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </TextBlock.Style>
@@ -1010,28 +1010,28 @@
                                 <Style TargetType="StackPanel">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsAarReceiverCapable}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Path=Aar.IsAarReceiverCapable}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </StackPanel.Style>
-                            <ComboBox ItemsSource="{Binding AvailableAarTankers}" SelectedItem="{Binding SelectedAarTanker}" DisplayMemberPath="Callsign" IsEditable="False" MinWidth="180" Margin="0,0,0,4" />
-                            <Button Content="{Binding AarTransferMode, StringFormat=MODE: {0}}" Command="{Binding ToggleAarTransferModeCommand}" HorizontalAlignment="Left" Margin="0,0,0,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                            <ComboBox ItemsSource="{Binding Path=Aar.AvailableAarTankers}" SelectedItem="{Binding Path=Aar.SelectedAarTanker}" DisplayMemberPath="Callsign" IsEditable="False" MinWidth="180" Margin="0,0,0,4" />
+                            <Button Content="{Binding Path=Aar.AarTransferMode, StringFormat=MODE: {0}}" Command="{Binding Path=Aar.ToggleAarTransferModeCommand}" HorizontalAlignment="Left" Margin="0,0,0,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                <TextBox Text="{Binding AarRequestedAmountText, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,0,6,0" ToolTip="Requested amount" />
-                                <ComboBox SelectedValue="{Binding AarFuelUnit}" SelectedValuePath="Content" Width="58">
+                                <TextBox Text="{Binding Path=Aar.AarRequestedAmountText, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,0,6,0" ToolTip="Requested amount" />
+                                <ComboBox SelectedValue="{Binding Path=Aar.AarFuelUnit}" SelectedValuePath="Content" Width="58">
                                     <ComboBoxItem Content="KG" /><ComboBoxItem Content="LB" />
                                 </ComboBox>
                             </StackPanel>
                             <StackPanel Orientation="Horizontal">
-                                <Button Content="REQUEST REFUEL" Command="{Binding RequestAarCommand}" Margin="0,0,6,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="FULL" Command="{Binding RequestFullAarCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="REQUEST REFUEL" Command="{Binding Path=Aar.RequestAarCommand}" Margin="0,0,6,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="FULL" Command="{Binding Path=Aar.RequestFullAarCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             </StackPanel>
-                            <Button Content="CANCEL PENDING REQUEST" Command="{Binding CancelOwnAarRequestCommand}" HorizontalAlignment="Left" Margin="0,4,0,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480">
+                            <Button Content="CANCEL PENDING REQUEST" Command="{Binding Path=Aar.CancelOwnAarRequestCommand}" HorizontalAlignment="Left" Margin="0,4,0,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480">
                                 <Button.Style>
                                     <Style TargetType="Button">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding HasOwnAarPendingRequest}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                            <DataTrigger Binding="{Binding Path=Aar.HasOwnAarPendingRequest}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </Button.Style>
@@ -1042,37 +1042,37 @@
                                 <Style TargetType="StackPanel">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLocalTankerJoined}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Path=Aar.IsLocalTankerJoined}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </StackPanel.Style>
                             <TextBlock Text="PENDING FIFO REQUESTS" Foreground="#83F2D0" Margin="0,0,0,4" />
                             <TextBlock Text="Optional planned onload; blank accepts the safe maximum" Foreground="#7CB9A9" TextWrapping="Wrap" Margin="0,0,0,4" />
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                <TextBox Text="{Binding AarPlannedAmountText, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,0,6,0" ToolTip="Optional tanker-selected plan" />
-                                <ComboBox SelectedValue="{Binding AarFuelUnit}" SelectedValuePath="Content" Width="58">
+                                <TextBox Text="{Binding Path=Aar.AarPlannedAmountText, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,0,6,0" ToolTip="Optional tanker-selected plan" />
+                                <ComboBox SelectedValue="{Binding Path=Aar.AarFuelUnit}" SelectedValuePath="Content" Width="58">
                                     <ComboBoxItem Content="KG" /><ComboBoxItem Content="LB" />
                                 </ComboBox>
                             </StackPanel>
-                            <ComboBox ItemsSource="{Binding AvailableAarReceivers}" SelectedItem="{Binding SelectedAarReceiver}" DisplayMemberPath="Callsign" IsEditable="False" MinWidth="180" Margin="0,0,0,4" />
-                            <Button Content="ADD AIRCRAFT" Command="{Binding AddAarReceiverCommand}" HorizontalAlignment="Left" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                            <Button Content="RETURN COMMITTED NEXT TO PENDING" Command="{Binding ReturnAarCommittedToPendingCommand}" HorizontalAlignment="Left" Margin="0,4,0,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480">
+                            <ComboBox ItemsSource="{Binding Path=Aar.AvailableAarReceivers}" SelectedItem="{Binding Path=Aar.SelectedAarReceiver}" DisplayMemberPath="Callsign" IsEditable="False" MinWidth="180" Margin="0,0,0,4" />
+                            <Button Content="ADD AIRCRAFT" Command="{Binding Path=Aar.AddAarReceiverCommand}" HorizontalAlignment="Left" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                            <Button Content="RETURN COMMITTED NEXT TO PENDING" Command="{Binding Path=Aar.ReturnAarCommittedToPendingCommand}" HorizontalAlignment="Left" Margin="0,4,0,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480">
                                 <Button.Style>
                                     <Style TargetType="Button">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding HasAarCommittedNext}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                            <DataTrigger Binding="{Binding Path=Aar.HasAarCommittedNext}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </Button.Style>
                             </Button>
-                            <ListBox ItemsSource="{Binding AarPendingRequests}" SelectedItem="{Binding SelectedAarRequest}" DisplayMemberPath="Callsign" MaxHeight="110" />
+                            <ListBox ItemsSource="{Binding Path=Aar.AarPendingRequests}" SelectedItem="{Binding Path=Aar.SelectedAarRequest}" DisplayMemberPath="Callsign" MaxHeight="110" />
                             <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
-                                <Button Content="ACCEPT" Command="{Binding AcceptAarRequestCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="REJECT" Command="{Binding RejectAarRequestCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="REMOVE" Command="{Binding RemoveAarQueueEntryCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="UP" Command="{Binding MoveAarQueueEntryUpCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="DOWN" Command="{Binding MoveAarQueueEntryDownCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="ACCEPT" Command="{Binding Path=Aar.AcceptAarRequestCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="REJECT" Command="{Binding Path=Aar.RejectAarRequestCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="REMOVE" Command="{Binding Path=Aar.RemoveAarQueueEntryCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="UP" Command="{Binding Path=Aar.MoveAarQueueEntryUpCommand}" Margin="0,0,4,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="DOWN" Command="{Binding Path=Aar.MoveAarQueueEntryDownCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             </StackPanel>
                         </StackPanel>
                         <StackPanel Margin="0,0,0,8">
@@ -1080,47 +1080,47 @@
                                 <Style TargetType="StackPanel">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding HasAarOperation}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Path=Aar.HasAarOperation}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </StackPanel.Style>
-                            <TextBlock Text="{Binding AarOperationStateText}" Foreground="#83F2D0" Margin="0,0,0,4" FontWeight="Bold" />
+                            <TextBlock Text="{Binding Path=Aar.AarOperationStateText}" Foreground="#83F2D0" Margin="0,0,0,4" FontWeight="Bold" />
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                                 <StackPanel.Style>
                                     <Style TargetType="StackPanel">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsLocalTankerForActiveOperation}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                            <DataTrigger Binding="{Binding Path=Aar.IsLocalTankerForActiveOperation}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </StackPanel.Style>
-                                <TextBox Text="{Binding AarPlannedAmountText, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,0,6,0" ToolTip="Planned onload" />
-                                <ComboBox SelectedValue="{Binding AarFuelUnit}" SelectedValuePath="Content" Width="58" Margin="0,0,6,0">
+                                <TextBox Text="{Binding Path=Aar.AarPlannedAmountText, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,0,6,0" ToolTip="Planned onload" />
+                                <ComboBox SelectedValue="{Binding Path=Aar.AarFuelUnit}" SelectedValuePath="Content" Width="58" Margin="0,0,6,0">
                                     <ComboBoxItem Content="KG" /><ComboBoxItem Content="LB" />
                                 </ComboBox>
-                                <Button Content="SET PLAN" Command="{Binding SetAarPlannedOnloadCommand}" Margin="0,0,6,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="{Binding AarTransferMode, StringFormat=MODE: {0}}" Command="{Binding ToggleAarTransferModeCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="SET PLAN" Command="{Binding Path=Aar.SetAarPlannedOnloadCommand}" Margin="0,0,6,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="{Binding Path=Aar.AarTransferMode, StringFormat=MODE: {0}}" Command="{Binding Path=Aar.ToggleAarTransferModeCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             </StackPanel>
                             <WrapPanel>
-                                <Button Content="DISCONNECT" Command="{Binding DisconnectAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="BREAKAWAY" Command="{Binding BreakawayAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#FFD0C8" Background="#472C30" BorderBrush="#A05252" />
-                                <Button Content="RECONCILE" Command="{Binding ReconcileAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="DISCONNECT" Command="{Binding Path=Aar.DisconnectAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="BREAKAWAY" Command="{Binding Path=Aar.BreakawayAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#FFD0C8" Background="#472C30" BorderBrush="#A05252" />
+                                <Button Content="RECONCILE" Command="{Binding Path=Aar.ReconcileAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             </WrapPanel>
                             <WrapPanel>
                                 <WrapPanel.Style>
                                     <Style TargetType="WrapPanel">
                                         <Setter Property="Visibility" Value="Collapsed" />
                                         <Style.Triggers>
-                                            <DataTrigger Binding="{Binding IsLocalTankerForActiveOperation}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                            <DataTrigger Binding="{Binding Path=Aar.IsLocalTankerForActiveOperation}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                         </Style.Triggers>
                                     </Style>
                                 </WrapPanel.Style>
-                                <Button Content="PRECONTACT" Command="{Binding StartAarPrecontactCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="CLEAR ASTERN" Command="{Binding ClearAarAsternCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="HOLD" Command="{Binding HoldAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="CLEAR CONTACT" Command="{Binding ClearAarContactCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="START TRANSFER" Command="{Binding StartAarTransferCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
-                                <Button Content="STOP TRANSFER" Command="{Binding StopAarTransferCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="PRECONTACT" Command="{Binding Path=Aar.StartAarPrecontactCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="CLEAR ASTERN" Command="{Binding Path=Aar.ClearAarAsternCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="HOLD" Command="{Binding Path=Aar.HoldAarOperationCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="CLEAR CONTACT" Command="{Binding Path=Aar.ClearAarContactCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="START TRANSFER" Command="{Binding Path=Aar.StartAarTransferCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                                <Button Content="STOP TRANSFER" Command="{Binding Path=Aar.StopAarTransferCommand}" Margin="0,0,4,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             </WrapPanel>
                         </StackPanel>
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
@@ -1128,27 +1128,27 @@
                                 <Style TargetType="StackPanel">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLocalTankerJoined}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Path=Aar.IsLocalTankerJoined}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </StackPanel.Style>
-                            <TextBox Text="{Binding AarProtectedReserveKgText, UpdateSourceTrigger=PropertyChanged}" Width="80" Margin="0,0,6,0" ToolTip="Protected reserve" />
-                            <ComboBox SelectedValue="{Binding AarFuelUnit}" SelectedValuePath="Content" Width="58" Margin="0,0,6,0">
+                            <TextBox Text="{Binding Path=Aar.AarProtectedReserveKgText, UpdateSourceTrigger=PropertyChanged}" Width="80" Margin="0,0,6,0" ToolTip="Protected reserve" />
+                            <ComboBox SelectedValue="{Binding Path=Aar.AarFuelUnit}" SelectedValuePath="Content" Width="58" Margin="0,0,6,0">
                                 <ComboBoxItem Content="KG" /><ComboBoxItem Content="LB" />
                             </ComboBox>
-                            <Button Content="SET RESERVE" Command="{Binding SetAarProtectedReserveCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                            <Button Content="SET RESERVE" Command="{Binding Path=Aar.SetAarProtectedReserveCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                         </StackPanel>
                         <StackPanel Margin="0,0,0,8">
                             <StackPanel.Style>
                                 <Style TargetType="StackPanel">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                     <Style.Triggers>
-                                        <DataTrigger Binding="{Binding IsLocalTankerJoined}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                        <DataTrigger Binding="{Binding Path=Aar.IsLocalTankerJoined}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
                                     </Style.Triggers>
                                 </Style>
                             </StackPanel.Style>
-                            <TextBlock Text="{Binding AarTankerMetricsText}" TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
-                            <Button Content="{Binding AarAvailabilityButtonText}" Command="{Binding ToggleAarAvailabilityCommand}" Padding="6,4" HorizontalAlignment="Left" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                            <TextBlock Text="{Binding Path=Aar.AarTankerMetricsText}" TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                            <Button Content="{Binding Path=Aar.AarAvailabilityButtonText}" Command="{Binding Path=Aar.ToggleAarAvailabilityCommand}" Padding="6,4" HorizontalAlignment="Left" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                         </StackPanel>
                         <Button Content="OPEN VTSD CLOUD" Click="OnOpenCloudClick" Margin="0,0,0,12">
                             <Button.Style>

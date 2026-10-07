@@ -7,7 +7,7 @@ The v0.16 fuel adapter uses a VTSD-owned standalone WASM package. The bridge onl
 Install the Microsoft Flight Simulator 2024 SDK, then run from the repository root. If Visual Studio/MSBuild with the MSFS platform toolset is available, the script uses it. Otherwise it compiles and links with the `clang-cl`, `wasm-ld`, WASI libraries, and `MSFS_WasmVersions.a` shipped in the SDK:
 
 ```powershell
-$env:MSFS2024_SDK = 'C:\MSFS 2024 SDK'
+$env:MSFS2024_SDK = 'F:\MSFS2024SDK'
 .
 src\MSFS.AarBridge\Build-MsfsAarBridge.ps1
 ```
@@ -16,7 +16,7 @@ The script builds `vtsd_aar_bridge.wasm`, prepares a versioned package with a ge
 
 ## Build and SDK verification status
 
-The bundled package in this PR was built with Microsoft Flight Simulator 2024 SDK 1.7.3 using the SDK-provided `clang-cl` 15.0.1 and `wasm-ld` toolchain. The C++ source compiled and linked successfully, including `MSFS_WasmVersions.a`. This proves source/toolchain compatibility only: the simulator has not loaded the module, and no runtime `fsVarsAVarGet` / `fsVarsAVarSet` result, fuel setter result, aircraft fuel-system behavior, or simulator read-back has been observed. The bridge targets `NEW FUEL SYSTEM`, `FUELSYSTEM TANK QUANTITY`, `FUELSYSTEM TANK USABLE CAPACITY`, and `FUEL WEIGHT PER GALLON`. Do not infer runtime support from compilation or desktop fake-bridge tests.
+The package was built with the locally installed Microsoft Flight Simulator 2024 SDK at `F:\MSFS2024SDK` using its bundled WASM toolchain. The C++ source compiled and linked successfully, including `MSFS_WasmVersions.a`. This proves source/toolchain compatibility only: the simulator has not loaded the module, and no runtime `fsVarsAVarGet` / `fsVarsAVarSet` result, fuel setter result, aircraft fuel-system behavior, or simulator read-back has been observed. The bridge targets `NEW FUEL SYSTEM`, `FUELSYSTEM TANK QUANTITY`, `FUELSYSTEM TANK USABLE CAPACITY`, and `FUEL WEIGHT PER GALLON`. Do not infer runtime support from compilation or desktop fake-bridge tests.
 
 ## Runtime safeguards
 
