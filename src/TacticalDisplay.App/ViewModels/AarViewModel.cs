@@ -143,6 +143,7 @@ public sealed class AarViewModel : ViewModelBase
     public double ProtectedReserveKg => _protectedReserveKg;
     public string AarStatusText { get => _statusText; private set => SetField(ref _statusText, value); }
     public string AarOperationStateText { get => _operationStateText; private set => SetField(ref _operationStateText, value); }
+    public string AarActiveOperationSummaryText => BuildActiveOperationSummary(_client.State.ActiveOperation);
     public string AarTransferMode => _transferMode;
     public string AarTankerMetricsText { get => _tankerMetricsText; private set => SetField(ref _tankerMetricsText, value); }
     public string TankerButtonText => _client.IsTankerJoined ? "LEAVE TANKER MODE" : "JOIN AS TANKER";
@@ -174,6 +175,7 @@ public sealed class AarViewModel : ViewModelBase
             Raise(); Raise(nameof(AarFuelUnitLabel));
             if (_transferMetrics is { } metrics) AarTankerMetricsText = FormatMetrics(metrics.TransferredKg, metrics.RemainingKg, metrics.FlowKgPerSecond, metrics.IsRefueling);
             else if (_fuelSummary is { } summary) AarTankerMetricsText = FormatFuelSummary(summary);
+            Raise(nameof(AarActiveOperationSummaryText));
         }
     }
 
@@ -222,6 +224,24 @@ public sealed class AarViewModel : ViewModelBase
         isRefueling && flow > 0
             ? $"Transferred {FormatAmount(transferred)} {_unit} · remaining {FormatAmount(remaining)} {_unit} · {FormatFlow(flow)} {_unit}/s · ETA {TimeSpan.FromSeconds(remaining / flow):mm\\:ss}"
             : $"Transferred {FormatAmount(transferred)} {_unit} · remaining {FormatAmount(remaining)} {_unit} · transfer paused";
+    private string BuildActiveOperationSummary(AarOperationState? operation)
+    {
+        if (operation is null || !_activeIsLocalTanker) return string.Empty;
+        var receiver = _peers().FirstOrDefault(peer => peer.ParticipantId == operation.ReceiverParticipantId);
+        var callsign = receiver?.Callsign ?? operation.ReceiverParticipantId ?? "Receiver";
+        var aircraft = receiver?.AircraftType ?? "Unknown aircraft";
+        var requested = operation.RequestMode switch
+        {
+            "None" => "None (tanker added)",
+            "Full" => "FULL",
+            _ when operation.RequestedKg is { } amount => $"{FormatAmount(amount):0.##} {_unit}",
+            _ => "Unknown"
+        };
+        var planned = operation.TransferMode == global::TacticalDisplay.App.TacticalLink.AarTransferMode.DryHookup
+            ? "0 (Dry Hookup)"
+            : $"{FormatAmount(operation.PlannedKg):0.##} {_unit}";
+        return $"{callsign} · {aircraft} | Requested {requested} · Planned {planned} · Transferred {FormatAmount(operation.TransferredKg):0.##} {_unit} · Remaining {FormatAmount(operation.RemainingKg):0.##} {_unit} · {operation.TransferMode} · Fuel {(operation.FuelOnAuthorized ? "ON" : "OFF")}";
+    }
     private double FormatAmount(double kg) => _unit == "LB" ? kg * 2.2046226218 : kg;
     private double FormatFlow(double kgps) => _unit == "LB" ? kgps * 2.2046226218 : kgps;
     private static string ConvertUnit(string text, string from, string to)
@@ -461,6 +481,7 @@ public sealed class AarViewModel : ViewModelBase
         Raise(nameof(AvailableAarTankers)); Raise(nameof(AvailableAarReceivers)); Raise(nameof(HasOwnAarPendingRequest));
         Raise(nameof(HasAarCommittedNext)); Raise(nameof(HasAarOperation)); Raise(nameof(IsLocalTankerForActiveOperation));
         Raise(nameof(IsLocalTankerJoined)); Raise(nameof(AarAvailabilityButtonText)); Raise(nameof(TankerButtonText));
+        Raise(nameof(AarActiveOperationSummaryText));
         Raise(nameof(HasActiveOperations));
         RaiseOperationCommandStates();
         _stateChanged();

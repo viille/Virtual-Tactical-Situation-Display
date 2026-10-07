@@ -94,35 +94,18 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
 
     public Task<string> PublishPoseAsync(OwnshipState ownship, CancellationToken token)
     {
-        var groundTrack = ownship.GroundTrackDeg ?? ownship.HeadingDeg;
-        var speedMps = ownship.SpeedKt * 0.514444;
-        var radians = groundTrack * (Math.PI / 180.0);
-        double velocityDownMps = 0;
+        if (!double.IsFinite(ownship.LatitudeDeg) || !double.IsFinite(ownship.LongitudeDeg) ||
+            !double.IsFinite(ownship.AltitudeFt) || !double.IsFinite(ownship.HeadingDeg) ||
+            ownship.SpeedKt is not { } speedKt || !double.IsFinite(speedKt) || speedKt < 0)
+            return Task.FromException<string>(new InvalidOperationException("AAR pose requires fresh, finite position, heading, and ground speed."));
+
+        OwnshipState? previous;
         lock (_poseLock)
         {
-            if (_previousOwnship is { } previous)
-            {
-                var elapsed = (ownship.Timestamp - previous.Timestamp).TotalSeconds;
-                if (elapsed is > 0.05 and <= 3)
-                {
-                    var vertical = (ownship.AltitudeFt - previous.AltitudeFt) * 0.3048 / elapsed;
-                    if (double.IsFinite(vertical) && Math.Abs(vertical) <= 100) velocityDownMps = -vertical;
-                }
-            }
+            previous = _previousOwnship;
             _previousOwnship = ownship;
         }
-        return SendAsync("POSE_UPDATE", null,
-            new
-            {
-                timestampUtc = ownship.Timestamp,
-                latitudeDeg = ownship.LatitudeDeg,
-                longitudeDeg = ownship.LongitudeDeg,
-                altitudeMeters = ownship.AltitudeFt * 0.3048,
-                headingDeg = ownship.HeadingDeg,
-                velocityNorthMps = speedMps * Math.Cos(radians),
-                velocityEastMps = speedMps * Math.Sin(radians),
-                velocityDownMps
-            }, token);
+        return SendAsync("POSE_UPDATE", null, AarPoseConverter.Convert(ownship, previous), token);
     }
 
     public Task<string> PublishFuelStatusAsync(double currentFuelKg, double capacityKg, bool adapterReady, double lastAppliedTransferredKg, CancellationToken token) =>
@@ -270,6 +253,9 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
         var revision = NumberValue(node, "operationRevision", out var ownRevision) ? (long)ownRevision : message?.OperationRevision ?? 0;
         return new AarOperationState(id,
             StringValue(node, "requestId", out var requestId) ? requestId : null,
+            StringValue(node, "requestMode", out var requestMode) ? requestMode ?? "Unknown" : "Unknown",
+            StringValue(node, "source", out var source) ? source ?? "Unknown" : "Unknown",
+            NumberValue(node, "requestedKg", out var requestedKg) ? requestedKg : null,
             StringValue(node, "tankerParticipantId", out var tankerId) ? tankerId : null,
             StringValue(node, "receiverParticipantId", out var receiverId) ? receiverId : null,
             StringValue(node, "slot", out var slot) ? slot ?? "Active" : "Active",

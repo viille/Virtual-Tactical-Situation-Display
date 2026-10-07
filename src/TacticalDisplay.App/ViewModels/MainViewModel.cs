@@ -635,7 +635,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         get
         {
             var connected = _feed?.IsConnected == true;
-            var pose = _feed is IAarPoseSource ? "Ready (10 Hz during operations)" : "Unavailable";
+            var pose = connected && _feed is IAarPoseSource ? "Ready (10 Hz during operations)" : "Unavailable";
             var fuel = _feed as IAarFuelAdapter;
             var read = connected && fuel?.CanReadFuel == true ? "Ready" : "Unavailable";
             var write = connected && fuel?.CanWriteFuel == true ? "Ready" : "Unavailable";

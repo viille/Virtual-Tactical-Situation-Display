@@ -26,6 +26,9 @@ internal enum AarTransferMode
 internal sealed record AarOperationState(
     string OperationId,
     string? RequestId,
+    string RequestMode,
+    string Source,
+    double? RequestedKg,
     string? TankerParticipantId,
     string? ReceiverParticipantId,
     string Slot,

@@ -1222,26 +1222,32 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         return Math.Min(tankerLimit, receiverLimit);
     }
 
-    private object OperationView(AarOperation operation) => new
+    private object OperationView(AarOperation operation)
     {
-        operationId = operation.Id,
-        requestId = operation.RequestId,
-        requestedKg = operation.RequestedKg,
-        tankerParticipantId = operation.TankerId,
-        receiverParticipantId = operation.ReceiverId,
-        slot = operation.Slot,
-        state = operation.State,
-        operationRevision = operation.Revision,
-        plannedKg = operation.PlannedKg,
-        transferredKg = operation.TransferredKg,
-        remainingKg = Math.Max(0, operation.PlannedKg - operation.TransferredKg),
-        effectiveFlowKgPerSecond = operation.EffectiveFlowKgPerSecond,
-        transferMode = operation.TransferMode,
-        fuelOnAuthorized = operation.FuelOnAuthorized,
-        registryVersion = operation.RegistryVersion,
-        clearanceValid = operation.ClearanceValid,
-        acceptedAt = operation.AcceptedAt
-    };
+        _requests.TryGetValue(operation.RequestId, out var request);
+        return new
+        {
+            operationId = operation.Id,
+            requestId = operation.RequestId,
+            requestedKg = operation.RequestedKg,
+            requestMode = request is null ? "Unknown" : request.Source == "TankerAdded" ? "None" : request.RequestedKg is null ? "Full" : "Fixed",
+            source = request?.Source ?? "Unknown",
+            tankerParticipantId = operation.TankerId,
+            receiverParticipantId = operation.ReceiverId,
+            slot = operation.Slot,
+            state = operation.State,
+            operationRevision = operation.Revision,
+            plannedKg = operation.PlannedKg,
+            transferredKg = operation.TransferredKg,
+            remainingKg = Math.Max(0, operation.PlannedKg - operation.TransferredKg),
+            effectiveFlowKgPerSecond = operation.EffectiveFlowKgPerSecond,
+            transferMode = operation.TransferMode,
+            fuelOnAuthorized = operation.FuelOnAuthorized,
+            registryVersion = operation.RegistryVersion,
+            clearanceValid = operation.ClearanceValid,
+            acceptedAt = operation.AcceptedAt
+        };
+    }
 
     private static object RequestView(AarRequest request) => new
     {

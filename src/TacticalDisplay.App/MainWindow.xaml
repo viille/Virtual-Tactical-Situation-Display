@@ -1087,6 +1087,16 @@
                                 </Style>
                             </StackPanel.Style>
                             <TextBlock Text="{Binding Path=Aar.AarOperationStateText}" Foreground="#83F2D0" Margin="0,0,0,4" FontWeight="Bold" />
+                            <TextBlock Text="{Binding Path=Aar.AarActiveOperationSummaryText}" Foreground="#D9F2EC" TextWrapping="Wrap" Margin="0,0,0,4">
+                                <TextBlock.Style>
+                                    <Style TargetType="TextBlock">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding Path=Aar.IsLocalTankerForActiveOperation}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </TextBlock.Style>
+                            </TextBlock>
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                                 <StackPanel.Style>
                                     <Style TargetType="StackPanel">

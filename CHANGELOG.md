@@ -9,6 +9,7 @@
 - Routed AAR protocol state through typed `AarClient`/`AarState` modules, kept operational presentation in `AarViewModel`, and moved proposal application into `AarFuelTransferCoordinator`.
 - Added the X-Plane 12 built-in Local Web API fuel adapter and 10 Hz AAR pose sampling; API unit/capacity assumptions and runtime read/write behavior still require simulator validation. The MSFS SDK is not used for XP12.
 - Restored the receiver's pending request after reconnect, made queue source and request intent visible, and added tanker-authoritative TOP/UP/DOWN/BOTTOM ordering.
+- Added the tanker active-operation summary for receiver, aircraft, request intent, plan, transferred mass, remaining mass, and fuel authorization.
 - Added state- and role-aware AAR command enablement; DryHookup does not enable fuel transfer.
 - Added bridge status and package management UI, safe Community2024 install/update/uninstall, and an embedded single-file package archive path.
 - Distinguishes invalid installed bridge packages from missing packages, supports repair, and preserves the previous package backup if rollback fails.

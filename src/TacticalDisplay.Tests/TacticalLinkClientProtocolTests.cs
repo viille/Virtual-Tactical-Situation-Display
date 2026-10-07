@@ -62,7 +62,7 @@ public sealed class TacticalLinkClientProtocolTests
         aar.StateChanged += state => observed = state;
 
         client.HandleMessage("""
-            {"protocolVersion":1,"type":"MODULE_EVENT","module":"aar","moduleProtocolVersion":1,"transportSequence":1,"kind":"AAR_STATE","payload":{"queue":{"committedNext":{"operationId":"op-next","state":"Accepted","slot":"CommittedNext","operationRevision":4,"plannedKg":0,"transferredKg":0,"transferMode":"DryHookup"},"pending":[{"requestId":"req-1","receiverParticipantId":"receiver","source":"ReceiverRequest","requestMode":"Fixed","requestedKg":800,"queueOrder":1,"status":"Pending"}]},"operations":[{"operationId":"op-live","state":"Astern","slot":"Active","operationRevision":9,"plannedKg":0,"transferredKg":0,"transferMode":"DryHookup"}],"fuel":{"protectedReserveKg":500,"availableToPromiseKg":1000},"ownPendingRequestId":"req-own"}}
+            {"protocolVersion":1,"type":"MODULE_EVENT","module":"aar","moduleProtocolVersion":1,"transportSequence":1,"kind":"AAR_STATE","payload":{"queue":{"committedNext":{"operationId":"op-next","state":"Accepted","slot":"CommittedNext","operationRevision":4,"plannedKg":0,"transferredKg":0,"transferMode":"DryHookup"},"pending":[{"requestId":"req-1","receiverParticipantId":"receiver","source":"ReceiverRequest","requestMode":"Fixed","requestedKg":800,"queueOrder":1,"status":"Pending"}]},"operations":[{"operationId":"op-live","requestMode":"Full","source":"ReceiverRequest","state":"Astern","slot":"Active","operationRevision":9,"requestedKg":null,"plannedKg":0,"transferredKg":0,"transferMode":"DryHookup"}],"fuel":{"protectedReserveKg":500,"availableToPromiseKg":1000},"ownPendingRequestId":"req-own"}}
             """);
 
         Assert.NotNull(observed);
@@ -73,6 +73,8 @@ public sealed class TacticalLinkClientProtocolTests
         Assert.Equal(800, Assert.Single(observed.PendingQueue).RequestedKg);
         Assert.Equal(500, observed.FuelSummary!.ProtectedReserveKg);
         Assert.Equal("req-own", observed.OwnPendingRequestId);
+        Assert.Equal("Full", observed.ActiveOperation.RequestMode);
+        Assert.Null(observed.ActiveOperation.RequestedKg);
     }
 
     [Fact]
