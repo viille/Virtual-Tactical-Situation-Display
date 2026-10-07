@@ -208,7 +208,8 @@
                         <ToggleButton Content="MAP" Command="{Binding ToggleMapCommand}" IsChecked="{Binding Settings.ShowMapLayer, Mode=OneWay}" Style="{StaticResource MfdToggleButtonStyle}" />
                     </StackPanel>
                     <StackPanel Grid.Row="0"
-                                Grid.Column="2"
+                                Grid.Column="0"
+                                Grid.ColumnSpan="3"
                                 Orientation="Horizontal"
                                 HorizontalAlignment="Right"
                                 VerticalAlignment="Center">
