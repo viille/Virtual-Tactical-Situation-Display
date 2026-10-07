@@ -120,10 +120,16 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
                 SetConnected(true);
                 await PollLoopAsync(cancellationToken);
             }
-            catch (OperationCanceledException)
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
                 DataSourceDebugLog.Info(LogSource, "Run loop canceled");
                 break;
+            }
+            catch (OperationCanceledException ex)
+            {
+                DataSourceDebugLog.Info(LogSource, $"X-Plane Web API request timed out; reconnecting | error={ex.Message}");
+                SetConnected(false, forceNotify: true);
+                await Task.Delay(_reconnectDelay, cancellationToken);
             }
             catch (Exception ex)
             {
