@@ -187,7 +187,7 @@ public sealed class AarViewModel : ViewModelBase
         var adapter = _fuelAdapter();
         var ready = adapter is { IsAvailable: true, CanReadFuel: true, CanWriteFuel: true };
         var watermark = _activeOperationId is { } id ? _fuelCoordinator.GetWatermark(id) : 0;
-        ObservePublish(_client.PublishFuelStatusAsync(reading.CurrentFuelKg, reading.CapacityKg, ready, watermark, _token), "fuel-status");
+        ObservePublish(_client.PublishFuelStatusAsync(reading.CurrentFuelKg, reading.CapacityKg, ready, _activeOperationId, watermark, _token), "fuel-status");
     }
 
     private static void ObservePublish(Task task, string kind) => _ = task.ContinueWith(completed =>

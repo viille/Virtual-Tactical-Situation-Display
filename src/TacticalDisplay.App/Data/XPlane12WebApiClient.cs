@@ -39,7 +39,16 @@ internal sealed class XPlane12WebApiClient : IDisposable
         var versions = document.RootElement.TryGetProperty("api", out var api) && api.TryGetProperty("versions", out var value) && value.ValueKind == JsonValueKind.Array
             ? value.EnumerateArray().Select(item => item.GetString()).Where(item => !string.IsNullOrWhiteSpace(item)).Select(item => item!).ToArray()
             : [];
-        ApiVersion = versions.OrderByDescending(ParseApiVersionNumber).FirstOrDefault() ?? "v1";
+        if (versions.Length == 0)
+        {
+            ApiVersion = "v1";
+            return;
+        }
+
+        if (!versions.Contains("v1", StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"X-Plane Web API capabilities do not advertise the supported v1 contract. Advertised versions: {string.Join(",", versions)}.");
+
+        ApiVersion = "v1";
     }
 
     public async Task<long> ResolveDataRefIdAsync(string name, CancellationToken cancellationToken)
@@ -73,6 +82,4 @@ internal sealed class XPlane12WebApiClient : IDisposable
         if (_ownsClient) _httpClient.Dispose();
     }
 
-    private static int ParseApiVersionNumber(string version) =>
-        int.TryParse(version.TrimStart('v', 'V'), out var parsed) ? parsed : 0;
 }

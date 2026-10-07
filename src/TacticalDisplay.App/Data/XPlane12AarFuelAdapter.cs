@@ -68,20 +68,24 @@ internal sealed class XPlane12AarFuelAdapter : IAarFuelAdapter
 
         lock (_gate) _tankCapacitiesKg = capacities;
         UpdateFuelReading(tankFuel, capacities);
+        DataSourceDebugLog.Info("XPlane12", $"AAR fuel discovery | tanks={tankFuel.Length} currentKg={tankFuel.Sum():0.00} capacityKg={capacities.Sum():0.00} rawCapacity={totalCapacityPounds:0.00} rawTankRatios={string.Join(",", tankRatios.Select(value => value.ToString("0.####", System.Globalization.CultureInfo.InvariantCulture)))}");
 
         try
         {
             await _webApi.PatchValueAsync(_ids[FuelMassDataRef], tankFuel, cancellationToken).ConfigureAwait(false);
             var readBack = await ReadArrayAsync(FuelMassDataRef, cancellationToken).ConfigureAwait(false);
             if (ArraysMatch(tankFuel, readBack) && ValidateTankArray(readBack, capacities))
+            {
                 _writeProbePassed = true;
+                DataSourceDebugLog.Info("XPlane12", $"AAR fuel write probe | result=passed tanks={readBack.Length} aggregateKg={readBack.Sum():0.00}");
+            }
             else
-                DataSourceDebugLog.Info("XPlane12", "AAR fuel write probe failed read-back validation; XP12 remains read-only for AAR.");
+                DataSourceDebugLog.Warn("XPlane12", $"AAR fuel write probe failed | result=readback-mismatch requestedTanks={tankFuel.Length} readbackTanks={readBack.Length} XP12 remains read-only");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
-            DataSourceDebugLog.Info("XPlane12", $"AAR fuel write probe failed; XP12 remains read-only for AAR | {ex.Message}");
+            DataSourceDebugLog.Warn("XPlane12", $"AAR fuel write probe failed | result=exception XP12 remains read-only | {ex.Message}");
         }
     }
 
@@ -108,6 +112,7 @@ internal sealed class XPlane12AarFuelAdapter : IAarFuelAdapter
 
         try
         {
+            DataSourceDebugLog.Debug("XPlane12", $"AAR fuel mutation | requestedKg={deltaKg:0.00}");
             var before = await ReadArrayAsync(FuelMassDataRef, cancellationToken).ConfigureAwait(false);
             var beforeAggregate = await ReadScalarAsync(TotalFuelDataRef, cancellationToken).ConfigureAwait(false);
             if (!ValidateTankArray(before, capacities) || !double.IsFinite(beforeAggregate) || Math.Abs(beforeAggregate - before.Sum()) > 0.5)
@@ -142,12 +147,14 @@ internal sealed class XPlane12AarFuelAdapter : IAarFuelAdapter
             var status = Math.Abs(applied) < 0.001 ? AarFuelApplyStatus.Failed :
                 Math.Abs(applied - deltaKg) <= 0.05 ? AarFuelApplyStatus.Success : AarFuelApplyStatus.Partial;
             if (status == AarFuelApplyStatus.Failed) _writeProbePassed = false;
+            DataSourceDebugLog.Info("XPlane12", $"AAR fuel mutation | requestedKg={deltaKg:0.00} beforeKg={before.Sum():0.00} afterKg={after.Sum():0.00} appliedKg={applied:0.00} status={status}");
             return new AarFuelApplyResult(deltaKg, applied, status, status == AarFuelApplyStatus.Partial ? "XP12 applied a bounded partial fuel change." : null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             _writeProbePassed = false;
+            DataSourceDebugLog.Error("XPlane12", $"AAR fuel mutation failed | requestedKg={deltaKg:0.00}", ex);
             return new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, ex.Message);
         }
     }

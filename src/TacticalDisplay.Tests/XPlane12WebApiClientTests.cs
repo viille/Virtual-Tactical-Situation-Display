@@ -9,14 +9,14 @@ namespace TacticalDisplay.Tests;
 public sealed class XPlane12WebApiClientTests
 {
     [Fact]
-    public async Task DiscoversVersionAndResolvesDataRefForArrayReadsAndPatches()
+    public async Task SelectsKnownV1ContractWhenCapabilitiesAlsoAdvertiseUnknownVersion()
     {
         var handler = new FakeHandler(request => request.RequestUri!.AbsolutePath switch
         {
             "/api/capabilities" => Json(HttpStatusCode.OK, "{\"api\":{\"versions\":[\"v1\",\"v2\"]}}"),
-            "/api/v2/datarefs" => Json(HttpStatusCode.OK, "{\"data\":[{\"id\":42}]}"),
-            "/api/v2/datarefs/42/value" when request.Method == HttpMethod.Get => Json(HttpStatusCode.OK, "{\"data\":[1,2,3]}"),
-            "/api/v2/datarefs/42/value" when request.Method.Method == "PATCH" => Json(HttpStatusCode.OK, "{\"data\":null}"),
+            "/api/v1/datarefs" => Json(HttpStatusCode.OK, "{\"data\":[{\"id\":42}]}"),
+            "/api/v1/datarefs/42/value" when request.Method == HttpMethod.Get => Json(HttpStatusCode.OK, "{\"data\":[1,2,3]}"),
+            "/api/v1/datarefs/42/value" when request.Method.Method == "PATCH" => Json(HttpStatusCode.OK, "{\"data\":null}"),
             _ => Json(HttpStatusCode.NotFound, "{}")
         });
         using var client = new XPlane12WebApiClient("http://xp.test", new HttpClient(handler));
@@ -26,11 +26,22 @@ public sealed class XPlane12WebApiClientTests
         using var read = await client.GetValueDocumentAsync(id, CancellationToken.None);
         await client.PatchValueAsync(id, new[] { 3d, 2d, 1d }, CancellationToken.None);
 
-        Assert.Equal("v2", client.ApiVersion);
+        Assert.Equal("v1", client.ApiVersion);
         Assert.Equal(42, id);
         Assert.Equal(3, read.RootElement.GetProperty("data").GetArrayLength());
-        Assert.Equal(new[] { "GET /api/capabilities", "GET /api/v2/datarefs", "GET /api/v2/datarefs/42/value", "PATCH /api/v2/datarefs/42/value" }, handler.Requests);
+        Assert.Equal(new[] { "GET /api/capabilities", "GET /api/v1/datarefs", "GET /api/v1/datarefs/42/value", "PATCH /api/v1/datarefs/42/value" }, handler.Requests);
         Assert.Equal("{\"data\":[3,2,1]}", handler.Bodies.Last());
+    }
+
+    [Fact]
+    public async Task CapabilitiesWithOnlyUnknownVersionsFailClosed()
+    {
+        using var client = new XPlane12WebApiClient("http://xp.test", new HttpClient(new FakeHandler(_ =>
+            Json(HttpStatusCode.OK, "{\"api\":{\"versions\":[\"v2\",\"v3\"]}}"))));
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => client.DiscoverApiVersionAsync(CancellationToken.None));
+
+        Assert.Contains("supported v1 contract", error.Message);
     }
 
     [Fact]

@@ -105,8 +105,6 @@ public sealed class AarModuleHandlerTests
         await rig.Send("tanker", "DISCONNECT", new { }, operationId: firstId);
         Assert.Equal("Accepted", rig.OperationState(nextId));
 
-        var bypass = await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: nextId);
-        Assert.Equal("MODULE_ERROR", bypass.LastKind);
         await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: nextId);
         var clearContact = await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: nextId);
 
@@ -274,7 +272,7 @@ public sealed class AarModuleHandlerTests
     [InlineData("STOP_TRANSFER", "Contact", "TRANSFER_STOPPED")]
     [InlineData("HOLD", "Astern", "HOLD")]
     [InlineData("BREAKAWAY", "Breakaway", "BREAKAWAY")]
-    public async Task SafetyCommandDominatesPendingProposalAndRejectsLateAcknowledgement(string safetyCommand, string expectedState, string expectedKind)
+    public async Task SafetyCommandDominatesPendingProposalAndSettlesOnlyExactLateAcknowledgement(string safetyCommand, string expectedState, string expectedKind)
     {
         var rig = new Rig();
         await rig.PrepareTankerAndReceiver();
@@ -306,22 +304,58 @@ public sealed class AarModuleHandlerTests
         try
         {
             var pending = await proposal.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            var proposalPayload = JsonSerializer.SerializeToElement(pending.Payload);
+            var proposalId = proposalPayload.GetProperty("proposalId").GetString()!;
+            var targetKg = proposalPayload.GetProperty("targetCumulativeKg").GetDouble();
+            var deltaKg = proposalPayload.GetProperty("deltaKg").GetDouble();
+            SendResult safety;
             var commandPeer = safetyCommand == "DISCONNECT" ? "receiver" : "tanker";
-            var safety = await rig.Send(commandPeer, safetyCommand, new { }, operationId: operationId);
-
+            safety = await rig.Send(commandPeer, safetyCommand, new { }, operationId: operationId);
             Assert.Equal(expectedKind, safety.LastKind);
             Assert.Equal(expectedState, rig.OperationState(operationId));
-            var snapshot = await rig.Send("tanker", "GET_STATE", new { });
-            var operation = snapshot.LastPayload.GetProperty("operations").EnumerateArray().Single(item => item.GetProperty("operationId").GetString() == operationId);
-            Assert.False(operation.GetProperty("fuelOnAuthorized").GetBoolean());
-            var staleAck = await rig.Send("tanker", "TRANSFER_ACK", new
+            var operation = rig.OperationForTests(operationId);
+            Assert.False(operation!.Value.FuelOnAuthorized);
+            var unrelatedAck = await rig.Send("tanker", "TRANSFER_ACK", new
             {
-                proposalId = JsonSerializer.SerializeToElement(pending.Payload).GetProperty("proposalId").GetString(),
+                proposalId = "unknown-proposal",
                 operationRevision = pending.OperationRevision,
-                appliedCumulativeKg = 10d
+                targetCumulativeKg = targetKg,
+                appliedCumulativeKg = targetKg,
+                appliedKg = deltaKg
             }, operationId: operationId);
-            Assert.Equal("MODULE_ERROR", staleAck.LastKind);
+            Assert.Equal("MODULE_ERROR", unrelatedAck.LastKind);
+
+            var wrongTargetAck = await rig.Send("tanker", "TRANSFER_ACK", new
+            {
+                proposalId,
+                operationRevision = pending.OperationRevision,
+                targetCumulativeKg = targetKg + 1,
+                appliedCumulativeKg = targetKg,
+                appliedKg = deltaKg
+            }, operationId: operationId);
+            Assert.Equal("MODULE_ERROR", wrongTargetAck.LastKind);
+
+            var tankerAck = await rig.Send("tanker", "TRANSFER_ACK", new
+            {
+                proposalId,
+                operationRevision = pending.OperationRevision,
+                targetCumulativeKg = targetKg,
+                appliedCumulativeKg = targetKg,
+                appliedKg = deltaKg
+            }, operationId: operationId);
+            Assert.Equal("TRANSFER_SETTLEMENT_RECORDED", tankerAck.LastKind);
+            var receiverAck = await rig.Send("receiver", "TRANSFER_ACK", new
+            {
+                proposalId,
+                operationRevision = pending.OperationRevision,
+                targetCumulativeKg = targetKg,
+                appliedCumulativeKg = targetKg,
+                appliedKg = deltaKg
+            }, operationId: operationId);
+            Assert.Equal("TRANSFER_SETTLEMENT_ACCEPTED", receiverAck.LastKind);
             Assert.Equal(expectedState, rig.OperationState(operationId));
+            var settledOperation = rig.OperationForTests(operationId);
+            Assert.Equal(targetKg, settledOperation!.Value.TransferredKg, 3);
             await Task.Delay(350);
             Assert.Equal(1, Volatile.Read(ref proposalCount));
         }
@@ -342,7 +376,6 @@ public sealed class AarModuleHandlerTests
 
         var receiverClear = await rig.Send("receiver", "CLEAR_ASTERN", new { }, operationId: operationId);
         var bypass = await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
-        var legacy = await rig.Send("tanker", "PROCEED_TO_PRECONTACT", new { }, operationId: operationId);
         var clearedAstern = await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
         var clearedContact = await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
         var receiverStart = await rig.Send("receiver", "START_TRANSFER", new { }, operationId: operationId);
@@ -350,7 +383,6 @@ public sealed class AarModuleHandlerTests
         Assert.Equal("MODULE_ERROR", receiverClear.LastKind);
         Assert.Equal("CLEARED_ASTERN", clearedAstern.LastKind);
         Assert.Equal("MODULE_ERROR", bypass.LastKind);
-        Assert.Equal("MODULE_ERROR", legacy.LastKind);
         Assert.Equal("CLEARED_CONTACT", clearedContact.LastKind);
         Assert.Equal("ClearedContact", clearedContact.LastPayload.GetProperty("state").GetString());
         Assert.Equal("MODULE_ERROR", receiverStart.LastKind);
@@ -526,8 +558,8 @@ public sealed class AarModuleHandlerTests
         Assert.Equal("Suspended", rig.OperationState(operationId));
 
         rig.Reconnect("receiver", 2, "instance-r");
-        await rig.Send("tanker", "FUEL_STATUS", new { currentFuelKg = 1000, capacityKg = 2000, adapterReady = true, lastAppliedTransferredKg = 0 });
-        await rig.Send("receiver", "FUEL_STATUS", new { currentFuelKg = 100, capacityKg = 500, adapterReady = true, lastAppliedTransferredKg = 0 });
+        await rig.Send("tanker", "FUEL_STATUS", new { currentFuelKg = 1000, capacityKg = 2000, adapterReady = true, appliedOperationId = operationId, lastAppliedTransferredKg = 0 });
+        await rig.Send("receiver", "FUEL_STATUS", new { currentFuelKg = 100, capacityKg = 500, adapterReady = true, appliedOperationId = operationId, lastAppliedTransferredKg = 0 });
         var reconciled = await rig.Send("receiver", "RECONCILE", new { operationId }, operationId: operationId);
 
         Assert.Equal("Accepted", reconciled.LastPayload.GetProperty("state").GetString());
@@ -680,11 +712,15 @@ public sealed class AarModuleHandlerTests
 
         public string OperationState(string operationId)
         {
+            if (OperationForTests(operationId) is { } snapshot) return snapshot.State;
             var result = Send("tanker", "GET_STATE", new { }).GetAwaiter().GetResult();
             return result.LastPayload.GetProperty("operations").EnumerateArray()
                 .Single(operation => operation.GetProperty("operationId").GetString() == operationId)
                 .GetProperty("state").GetString()!;
         }
+
+        public (string State, bool FuelOnAuthorized, double TransferredKg)? OperationForTests(string operationId) =>
+            _handler.OperationForTests(operationId);
 
         private static TacticalDisplay.Core.Models.TacticalTelemetry FreshTelemetry() =>
             new(1, DateTimeOffset.UtcNow, 60, 25, 10_000, 90, 90, 250);

@@ -24,6 +24,13 @@ public sealed record AarPeerSnapshot(
     IReadOnlyDictionary<string, string> OperationalStates,
     TacticalTelemetry? Telemetry);
 
+public sealed record ModuleOperationalStateChange(string ParticipantId, string Name, string Value);
+
+public interface IModuleOperationalStateChangeSource
+{
+    event Action<ModuleOperationalStateChange>? OperationalStateChangeRequested;
+}
+
 public sealed class ModuleConnectionContext(
     string participantId,
     long connectionGeneration,

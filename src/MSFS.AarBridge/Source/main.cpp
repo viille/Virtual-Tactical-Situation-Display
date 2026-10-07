@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <ctime>
 #include <deque>
+#include <cstdio>
 #include <utility>
 #include <string>
 #include <vector>
@@ -62,6 +63,8 @@ FsUnitId g_poundsPerGallonUnit = 0;
 bool g_registered = false;
 std::vector<std::pair<int, double>> g_writeProbeSignature;
 std::deque<CachedMutation> g_mutationCache;
+std::string g_fuelReadOnlyReason = "fuel capability has not been probed";
+std::vector<std::string> g_writeProbeDiagnostics;
 
 struct ParamArray {
     FsVarParamArray value;
@@ -86,17 +89,19 @@ bool ReadVar(FsAVarId id, FsUnitId unit, const FsVarParamArray& params, double& 
 }
 
 bool ReadFuelState(FuelState& result, bool probeWrites) {
-    if (probeWrites) g_writeProbeSignature.clear();
+    if (probeWrites) { g_writeProbeSignature.clear(); g_writeProbeDiagnostics.clear(); g_fuelReadOnlyReason.clear(); }
     const FsVarParamArray noParams{};
     double modernFuelSystem = 0;
     if (!ReadVar(g_newFuelSystem, g_boolUnit, noParams, modernFuelSystem) || modernFuelSystem < 0.5) {
         g_writeProbeSignature.clear();
+        if (probeWrites) g_fuelReadOnlyReason = "no modern fuel system detected or NEW FUEL SYSTEM read failed";
         return false;
     }
 
     double poundsPerGallon = 0;
     if (!ReadVar(g_fuelWeightPerGallon, g_poundsPerGallonUnit, noParams, poundsPerGallon) || poundsPerGallon <= 0) {
         g_writeProbeSignature.clear();
+        if (probeWrites) g_fuelReadOnlyReason = "fuel weight per gallon unavailable";
         return false;
     }
 
@@ -113,6 +118,7 @@ bool ReadFuelState(FuelState& result, bool probeWrites) {
         if (!hasCapacity || !hasQuantity) {
             if (!foundTank) {
                 g_writeProbeSignature.clear();
+                if (probeWrites) g_fuelReadOnlyReason = "first tank quantity/capacity read failed or no tanks discovered";
                 return false;
             }
             break;
@@ -130,9 +136,20 @@ bool ReadFuelState(FuelState& result, bool probeWrites) {
         }
 
         bool writable = false;
-        if (probeWrites && fsVarsAVarSet(g_tankQuantity, g_gallonsUnit, params.value, quantityGallons, FS_OBJECT_ID_USER_AIRCRAFT) == FS_VAR_ERROR_NONE) {
-            double readBack = 0;
+        auto setterResult = FS_VAR_ERROR_NONE;
+        double readBack = quantityGallons;
+        if (probeWrites) setterResult = fsVarsAVarSet(g_tankQuantity, g_gallonsUnit, params.value, quantityGallons, FS_OBJECT_ID_USER_AIRCRAFT);
+        if (probeWrites && setterResult == FS_VAR_ERROR_NONE) {
             writable = ReadVar(g_tankQuantity, g_gallonsUnit, params.value, readBack) && std::abs(readBack - quantityGallons) <= 0.001;
+        }
+        if (probeWrites) {
+            char diagnostic[192]{};
+            std::snprintf(diagnostic, sizeof(diagnostic), "tank=%d beforeGal=%.4f setResult=%d readBackGal=%.4f differenceGal=%.4f writable=%s",
+                index, quantityGallons, static_cast<int>(setterResult), readBack, std::abs(readBack - quantityGallons), writable ? "true" : "false");
+            g_writeProbeDiagnostics.emplace_back(diagnostic);
+            if (!writable && g_fuelReadOnlyReason.empty()) g_fuelReadOnlyReason = setterResult != FS_VAR_ERROR_NONE
+                ? "AVar setter returned error for one or more tanks"
+                : "same-value write probe read-back differed or failed";
         }
 
         result.tanks.push_back({ index, std::max(0.0, quantityGallons), capacityGallons, writable });
@@ -160,12 +177,18 @@ bool ReadFuelState(FuelState& result, bool probeWrites) {
             result.writable = true;
         } else {
             g_writeProbeSignature.clear();
+            g_fuelReadOnlyReason = "tank topology changed after write probe; fuel.write revoked";
         }
+    } else if (!g_writeProbeSignature.empty()) {
+        g_writeProbeSignature.clear();
+        g_fuelReadOnlyReason = "tank topology changed after write probe; fuel.write revoked";
     }
     if (!foundTank || result.capacityKg <= 0) {
         g_writeProbeSignature.clear();
+        if (probeWrites && g_fuelReadOnlyReason.empty()) g_fuelReadOnlyReason = "no usable tanks discovered";
         return false;
     }
+    if (probeWrites && !result.writable && g_fuelReadOnlyReason.empty()) g_fuelReadOnlyReason = "one or more discovered tanks failed the write probe or tank scan limit";
     return true;
 }
 
@@ -186,6 +209,20 @@ std::string MakeResponse(const std::string& requestId, const std::string& action
         if (ReadFuelState(probe, false)) capabilities.PushBack("fuel.read", allocator);
         if (ReadFuelState(probe, true) && probe.writable) capabilities.PushBack("fuel.write", allocator);
         document.AddMember("capabilities", capabilities, allocator);
+        rapidjson::Value diagnostics(rapidjson::kObjectType);
+        diagnostics.AddMember("fuelReadOnlyReason", rapidjson::Value(g_fuelReadOnlyReason.c_str(), allocator), allocator);
+        rapidjson::Value probes(rapidjson::kArrayType);
+        for (const auto& line : g_writeProbeDiagnostics) probes.PushBack(rapidjson::Value(line.c_str(), allocator), allocator);
+        diagnostics.AddMember("writeProbe", probes, allocator);
+        document.AddMember("diagnostics", diagnostics, allocator);
+    }
+    else if (!g_fuelReadOnlyReason.empty() || !g_writeProbeDiagnostics.empty()) {
+        rapidjson::Value diagnostics(rapidjson::kObjectType);
+        diagnostics.AddMember("fuelReadOnlyReason", rapidjson::Value(g_fuelReadOnlyReason.c_str(), allocator), allocator);
+        rapidjson::Value probes(rapidjson::kArrayType);
+        for (const auto& line : g_writeProbeDiagnostics) probes.PushBack(rapidjson::Value(line.c_str(), allocator), allocator);
+        diagnostics.AddMember("writeProbe", probes, allocator);
+        document.AddMember("diagnostics", diagnostics, allocator);
     }
     if (fuel != nullptr) {
         rapidjson::Value fuelState(rapidjson::kObjectType);

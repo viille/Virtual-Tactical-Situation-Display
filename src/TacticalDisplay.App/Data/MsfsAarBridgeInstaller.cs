@@ -3,6 +3,7 @@ using System.IO.Compression;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using TacticalDisplay.App.Services;
 
 namespace TacticalDisplay.App.Data;
 
@@ -21,7 +22,11 @@ public sealed class Msfs2024PackagePathResolver
     public string? ResolveCommunity2024(string? manualCommunityFolder = null, IEnumerable<string>? configPaths = null)
     {
         if (!string.IsNullOrWhiteSpace(manualCommunityFolder))
-            return IsCommunity2024Folder(manualCommunityFolder) ? Path.GetFullPath(manualCommunityFolder) : null;
+        {
+            var resolved = IsCommunity2024Folder(manualCommunityFolder) ? Path.GetFullPath(manualCommunityFolder) : null;
+            DataSourceDebugLog.Info("MSFS-AAR", $"Community2024 path | source=manual path={resolved ?? "unresolved"}");
+            return resolved;
+        }
 
         foreach (var configPath in configPaths ?? DefaultConfigPaths)
         {
@@ -31,8 +36,14 @@ public sealed class Msfs2024PackagePathResolver
             if (!match.Success) continue;
             var packagesRoot = Environment.ExpandEnvironmentVariables(match.Groups["path"].Value.Trim());
             foreach (var candidate in new[] { Path.Combine(packagesRoot, "Community2024"), Path.Combine(packagesRoot, "Packages", "Community2024") })
-                if (IsCommunity2024Folder(candidate)) return Path.GetFullPath(candidate);
+                if (IsCommunity2024Folder(candidate))
+                {
+                    var resolved = Path.GetFullPath(candidate);
+                    DataSourceDebugLog.Info("MSFS-AAR", $"Community2024 path | source=UserCfg.opt path={resolved}");
+                    return resolved;
+                }
         }
+        DataSourceDebugLog.Warn("MSFS-AAR", "Community2024 path could not be resolved");
         return null;
     }
 
@@ -126,14 +137,18 @@ public sealed class MsfsAarBridgeInstaller
         var staging = Path.Combine(root, $".{PackageName}.staging-{Guid.NewGuid():N}");
         var backup = Path.Combine(root, $".{PackageName}.backup-{Guid.NewGuid():N}");
         var hasPrevious = Directory.Exists(destination);
+        var previousVersion = InspectInstalled(root)?.Version;
+        DataSourceDebugLog.Info("MSFS-AAR", $"Bridge install | community={root} bundledVersion={sourceVersion} installedVersion={previousVersion ?? "<none>"} action={(hasPrevious ? "update" : "install")}");
         var previousMoved = false;
         var stagedPackagePromoted = false;
         try
         {
             CopyDirectory(sourcePackageDirectory, staging, cancellationToken);
+            DataSourceDebugLog.Debug("MSFS-AAR", $"Bridge install stage=copy staging={staging}");
             cancellationToken.ThrowIfCancellationRequested();
             if (!TryValidatePackage(staging, out var stagedVersion) || stagedVersion != sourceVersion)
                 throw new InvalidDataException("The staged AAR Bridge package failed integrity validation.");
+            DataSourceDebugLog.Debug("MSFS-AAR", $"Bridge install stage=staging-validation version={stagedVersion}");
 
             if (hasPrevious)
             {
@@ -144,6 +159,7 @@ public sealed class MsfsAarBridgeInstaller
             stagedPackagePromoted = true;
             if (!TryValidatePackage(destination, out var installedVersion) || installedVersion != sourceVersion)
                 throw new InvalidDataException("The installed AAR Bridge package failed verification.");
+            DataSourceDebugLog.Info("MSFS-AAR", $"Bridge install succeeded | community={root} version={sourceVersion}");
         }
         catch (Exception installError)
         {
@@ -157,6 +173,7 @@ public sealed class MsfsAarBridgeInstaller
                 throw new IOException($"Bridge installation failed and rollback could not restore the previous package. Its backup remains at '{backup}'.",
                     new AggregateException(installError, rollbackError));
             }
+            DataSourceDebugLog.Error("MSFS-AAR", $"Bridge install failed | stage=replace oldInstallPreserved={Directory.Exists(destination)}", installError);
             throw;
         }
         finally

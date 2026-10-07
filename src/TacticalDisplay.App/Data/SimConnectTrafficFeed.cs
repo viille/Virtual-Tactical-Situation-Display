@@ -13,7 +13,7 @@ namespace TacticalDisplay.App.Data;
 public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IAarFuelAdapter, IAarBridgeTransport
 {
     private const string NativeSimConnectDllName = "SimConnect.dll";
-    private const string LogSource = "MSFS";
+    private const string LogSource = "MSFS-AAR";
     // SimConnect rejects traffic query radii above 200 km with exception 31
     // (SIMCONNECT_EXCEPTION_OUT_OF_BOUNDS).
     private const double MaxTrafficRequestRadiusMeters = 200_000.0;
@@ -109,17 +109,32 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
                 var api = _activeSimConnectApi;
                 var handle = _activeSimConnectHandle;
                 if (!IsConnected || api?.CallCommBusEvent is null || handle == IntPtr.Zero)
+                {
+                    DataSourceDebugLog.Warn(LogSource, $"CommBus API unavailable | action={request.Action} requestId={request.RequestId} simConnectConnected={IsConnected}");
                     throw new NotSupportedException("This SimConnect session does not expose the MSFS 2024 CommBus API required by the AAR Bridge.");
+                }
                 var data = Marshal.AllocHGlobal(nullTerminated.Length);
                 try
                 {
                     Marshal.Copy(nullTerminated, 0, data, nullTerminated.Length);
                     var result = api.CallCommBusEvent(handle, AarBridgeRequestEvent, CommBusBroadcastToWasm, (uint)nullTerminated.Length, data);
-                    if (result != 0) throw new IOException($"SimConnect_CallCommBusEvent failed with HRESULT 0x{result:X8}.");
+                    if (result != 0)
+                    {
+                        DataSourceDebugLog.Warn(LogSource, $"CommBus request failed | action={request.Action} requestId={request.RequestId} hresult=0x{result:X8}");
+                        throw new IOException($"SimConnect_CallCommBusEvent failed with HRESULT 0x{result:X8}.");
+                    }
                 }
                 finally { Marshal.FreeHGlobal(data); }
             }
-            return await completion.Task.WaitAsync(AarBridgeResponseTimeout, cancellationToken).ConfigureAwait(false);
+            var responseTask = request.Action == "APPLY_FUEL_DELTA"
+                ? completion.Task.WaitAsync(AarBridgeResponseTimeout)
+                : completion.Task.WaitAsync(AarBridgeResponseTimeout, cancellationToken);
+            try { return await responseTask.ConfigureAwait(false); }
+            catch (TimeoutException)
+            {
+                DataSourceDebugLog.Warn(LogSource, $"Bridge response timeout | action={request.Action} requestId={request.RequestId} timeoutMs={AarBridgeResponseTimeout.TotalMilliseconds:0} simConnectConnected={IsConnected} pendingRequests={_pendingAarBridgeResponses.Count}");
+                throw;
+            }
         }
         finally
         {
@@ -222,6 +237,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         try
         {
             DataSourceDebugLog.Info(LogSource, "SimConnect session opened");
+            DataSourceDebugLog.Important(LogSource, "===== MSFS AAR runtime session started | protocol=1 =====");
             ResetSessionTrafficState();
             lock (_commBusLock)
             {
@@ -236,7 +252,9 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
                 var subscribeResult = subscribeCommBus(simHandle, AarBridgeResponseEventId, AarBridgeResponseEvent);
                 if (subscribeResult != 0)
                     DataSourceDebugLog.Warn(LogSource, $"AAR bridge CommBus response subscription failed | hresult=0x{subscribeResult:X8}");
+                else DataSourceDebugLog.Info(LogSource, "Subscribed to bridge response event");
             }
+            else DataSourceDebugLog.Warn(LogSource, "CommBus API unavailable | response event subscription function missing");
             api.SubscribeToSystemEvent(simHandle, (uint)SystemEventId.ObjectAdded, "ObjectAdded");
             api.SubscribeToSystemEvent(simHandle, (uint)SystemEventId.ObjectRemoved, "ObjectRemoved");
             ConfigureDataDefinitions(api, simHandle);
@@ -323,6 +341,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         finally
         {
             DataSourceDebugLog.Info(LogSource, "Closing SimConnect session");
+            DataSourceDebugLog.Important(LogSource, "===== MSFS AAR runtime session ended =====");
             lock (_commBusLock)
             {
                 _activeSimConnectApi = null;

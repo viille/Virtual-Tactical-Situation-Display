@@ -15,10 +15,13 @@ public sealed class XPlane12WebApiTrafficFeedTests
     {
         var handler = new FakeXpHandler();
         using var http = new HttpClient(handler);
-        var feed = new XPlane12WebApiTrafficFeed(new TacticalDisplaySettings(), http);
+        var settings = new TacticalDisplaySettings { PollRateHz = 2 };
+        var feed = new XPlane12WebApiTrafficFeed(settings, http);
         var connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var threePoses = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var samples = new ConcurrentQueue<OwnshipState>();
+        var snapshots = 0;
+        feed.SnapshotReceived += (_, _) => Interlocked.Increment(ref snapshots);
         feed.ConnectionChanged += (_, isConnected) =>
         {
             if (isConnected) connected.TrySetResult();
@@ -38,6 +41,7 @@ public sealed class XPlane12WebApiTrafficFeedTests
 
             feed.AarSamplingEnabled = true;
             await threePoses.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Delay(1100);
             var firstThree = samples.Take(3).ToArray();
 
             Assert.Equal(3, firstThree.Length);
@@ -51,6 +55,8 @@ public sealed class XPlane12WebApiTrafficFeedTests
                 Assert.Equal(100 * 1.9438444924406, sample.SpeedKt.GetValueOrDefault(), 4);
             });
             Assert.InRange(firstThree[2].Timestamp - firstThree[0].Timestamp, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+            Assert.InRange(Volatile.Read(ref snapshots), 2, 5);
+            Assert.InRange(handler.TcasValueReads, 20, 50);
 
             await feed.StopAsync();
             var countAtStop = samples.Count;
@@ -68,6 +74,8 @@ public sealed class XPlane12WebApiTrafficFeedTests
         private readonly ConcurrentDictionary<string, long> _ids = new(StringComparer.Ordinal);
         private readonly ConcurrentDictionary<long, string> _names = new();
         private long _nextId;
+        public int TcasValueReads => Volatile.Read(ref _tcasValueReads);
+        private int _tcasValueReads;
 
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -93,6 +101,7 @@ public sealed class XPlane12WebApiTrafficFeedTests
                 var idText = path["/api/v1/datarefs/".Length..^"/value".Length];
                 if (!long.TryParse(idText, out var id) || !_names.TryGetValue(id, out var name))
                     return Task.FromResult(Json(HttpStatusCode.NotFound, "{}"));
+                if (name.StartsWith("sim/cockpit2/tcas/", StringComparison.Ordinal)) Interlocked.Increment(ref _tcasValueReads);
                 return Task.FromResult(Json(HttpStatusCode.OK, ValueFor(name)));
             }
             return Task.FromResult(Json(HttpStatusCode.NotFound, "{}"));

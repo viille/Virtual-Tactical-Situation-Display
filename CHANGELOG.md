@@ -5,15 +5,18 @@
 - Added tanker-controlled AAR queue management, planned onload changes, astern clearance, HOLD, explicit transfer start/stop, and DryHookup mode to TacticalLink.Server.
 - Added receiver-side internal transfer proposal data and cumulative application acknowledgements with operation revision validation.
 - Added local KG/LB presentation and specific-amount or FULL receiver requests.
-- Added the MSFS 2024-only VTSD AAR Bridge source, versioned CommBus protocol, desktop adapter, and read-after-write fuel acknowledgement path. Built the WASM module with the installed MSFS 2024 SDK; in-simulator validation is still required before live fuel transfer can be considered ready.
+- Added the MSFS 2024 VTSD AAR Bridge, versioned CommBus protocol, desktop adapter, and read-after-write fuel acknowledgement path. The WASM module builds with the installed MSFS 2024 SDK; in-simulator validation is still pending.
 - Routed AAR protocol state through typed `AarClient`/`AarState` modules, kept operational presentation in `AarViewModel`, and moved proposal application into `AarFuelTransferCoordinator`.
-- Added the X-Plane 12 built-in Local Web API fuel adapter and 10 Hz AAR pose sampling; API unit/capacity assumptions and runtime read/write behavior still require simulator validation. The MSFS SDK is not used for XP12.
+- Added the X-Plane 12 built-in Local Web API fuel adapter and a separate 10 Hz ownship pose sampler that does not accelerate normal traffic polling; API unit/capacity assumptions and runtime read/write behavior still require simulator validation. XP12 API negotiation fails closed for unknown versions. The MSFS SDK is not used for XP12.
 - Restored the receiver's pending request after reconnect, made queue source and request intent visible, and added tanker-authoritative TOP/UP/DOWN/BOTTOM ordering.
 - Added the tanker active-operation summary for receiver, aircraft, request intent, plan, transferred mass, remaining mass, and fuel authorization.
 - Added state- and role-aware AAR command enablement; DryHookup does not enable fuel transfer.
 - Added bridge status and package management UI, safe Community2024 install/update/uninstall, and an embedded single-file package archive path.
 - Distinguishes invalid installed bridge packages from missing packages, supports repair, and preserves the previous package backup if rollback fails.
 - Contact loss returns the operation to Astern and revokes clearance; committed-next promotion and reconciliation require a fresh CLEAR ASTERN before another contact clearance.
+- Hardened cancelled in-flight fuel proposals so verified simulator read-backs can settle accounting without restoring fuel authorization; fuel watermarks are scoped to operation IDs.
+- Added bounded terminal AAR retention, failure cleanup and queue promotion, DryHookup reconnect reconciliation, and pending-request cancellation when leaving tanker mode.
+- Added MSFS AAR runtime diagnostics to `debug.log`, including bridge negotiation, fuel discovery/mutations, runtime transitions, and installer path/stage details. See `docs/msfs-aar-bridge-acceptance.md` before runtime qualification.
 - Added draft F-15 and F-16 receiver registry profiles with ICAO designator and boom-method sources in Cloud migration `0005_aar_receiver_seed`.
 
 ## 0.15.0 - 2026-10-07
@@ -29,7 +32,7 @@
 - Fixed the app footer so connection, traffic and version details fit across the full window width.
 - Restored the separate MFD bottom control bar while keeping connection and traffic details in the full-width window footer.
 - Fixed VTSD Cloud device-login completion to work with the Neon HTTP database driver.
-- AAR fuel transfer and dedicated high-rate ownship sampling remain future work.
+- AAR simulator fuel transfer and dedicated high-rate ownship sampling are planned for v0.16.0; live simulator acceptance remains pending.
 
 - Added the first global, opt-in TacticalLink protocol/server foundation with transient in-memory presence, spatial interest filtering, capability updates and direct peer telemetry.
 - Added VTSD Cloud active VATSIM callsign resolution and short-lived RS256 TacticalLink JWT issuance.

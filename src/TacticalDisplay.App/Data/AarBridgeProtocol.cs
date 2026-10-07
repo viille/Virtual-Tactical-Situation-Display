@@ -32,6 +32,13 @@ public sealed record AarBridgeResponse
     [JsonPropertyName("fuelState")] public AarBridgeFuelState? FuelState { get; init; }
     [JsonPropertyName("requestedKg")] public double? RequestedKg { get; init; }
     [JsonPropertyName("appliedKg")] public double? AppliedKg { get; init; }
+    [JsonPropertyName("diagnostics")] public AarBridgeDiagnostics? Diagnostics { get; init; }
+}
+
+public sealed record AarBridgeDiagnostics
+{
+    [JsonPropertyName("fuelReadOnlyReason")] public string? FuelReadOnlyReason { get; init; }
+    [JsonPropertyName("writeProbe")] public string[] WriteProbe { get; init; } = [];
 }
 
 public sealed record AarBridgeFuelState

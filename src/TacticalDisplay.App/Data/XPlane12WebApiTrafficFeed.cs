@@ -10,6 +10,7 @@ namespace TacticalDisplay.App.Data;
 public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed, IAarPoseSource
 {
     private const string LogSource = "XPlane12";
+    private const string AarLogSource = "MSFS-AAR";
     private const int MaxTcasTargets = 63;
     private const int MaxMultiplayerTargets = 19;
     private const double MetersPerNauticalMile = 1852.0;
@@ -197,22 +198,29 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed, IAarPoseSource
             .Count(_dataRefIds.ContainsKey);
 
         DataSourceDebugLog.Info(LogSource, $"Resolved XP12 datarefs via {_webApi.ApiVersion} API | trafficRefs={tcasRefs}/{OptionalTrafficDataRefs.Length} multiplayerRefs={multiplayerRefs}/{MaxMultiplayerTargets * 4}");
+        DataSourceDebugLog.Info(AarLogSource, $"XP12 pose sampler ready | apiVersion={_webApi.ApiVersion} ownshipDataRefs={RequiredOwnshipDataRefs.Length} fullTrafficPollRateHz={_settings.PollRateHz:0.##}");
     }
 
     private async Task PollLoopAsync(CancellationToken cancellationToken)
     {
         var normalPollMs = (int)Math.Clamp(1000.0 / Math.Max(_settings.PollRateHz, 1), 100, 1000);
-        var nextSampleAt = DateTimeOffset.MinValue;
+        var nextSnapshotAt = DateTimeOffset.MinValue;
+        var nextPoseAt = DateTimeOffset.MinValue;
         using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100));
 
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
             var now = DateTimeOffset.UtcNow;
-            var targetInterval = TimeSpan.FromMilliseconds(AarSamplingEnabled ? 100 : normalPollMs);
-            if (now < nextSampleAt) continue;
-            nextSampleAt = now + targetInterval;
+            if (AarSamplingEnabled && now >= nextPoseAt)
+            {
+                nextPoseAt = now + TimeSpan.FromMilliseconds(100);
+                var pose = await ReadOwnshipAsync(now, cancellationToken);
+                AarPoseSampled?.Invoke(this, pose);
+                DataSourceDebugLog.ThrottledDebug(AarLogSource, "xp12-pose-rate", TimeSpan.FromSeconds(5), () => "XP12 AAR ownship sample emitted; full traffic snapshot cadence is unchanged");
+            }
+            if (now < nextSnapshotAt) continue;
+            nextSnapshotAt = now + TimeSpan.FromMilliseconds(normalPollMs);
             var snapshot = await ReadSnapshotAsync(cancellationToken);
-            if (AarSamplingEnabled) AarPoseSampled?.Invoke(this, snapshot.Ownship);
             if (_aarFuelAdapter is not null && now - _lastFuelRefreshAt >= TimeSpan.FromSeconds(1))
             {
                 _lastFuelRefreshAt = now;

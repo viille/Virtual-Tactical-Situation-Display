@@ -31,6 +31,14 @@ The package was built with the locally installed Microsoft Flight Simulator 2024
 
 These checks require MSFS 2024, the SDK-built package, and a real aircraft. They have not been run in this development environment.
 
+Before every runtime test, enable **data-source debug logging** in VTSD. The diagnostics are written to:
+
+```text
+%APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log
+```
+
+For the first smoke test, inspect the `[MSFS-AAR]` entries and confirm that SimConnect opens, the CommBus response subscription succeeds, `HELLO` returns a matching protocol, `GET_CAPABILITIES` and `GET_FUEL_STATE` succeed, discovered tanks and capacity look plausible, and the same-value write probe either succeeds or records a concrete read-only reason. Then perform a controlled `+10 kg` mutation (or another small amount appropriate to the aircraft), confirm the returned `AppliedKg`, and compare the read-back with the simulator fuel state. Keep the log if any step fails, along with the aircraft used, MSFS build/version, VTSD version and build SHA, and bridge version. Do not rely on screenshots when the log contains the failure details.
+
 | Check | Expected result | Status |
 | --- | --- | --- |
 | Install from VTSD UI into detected `Community2024` | Only `vtsd-aar-bridge` is created; sibling packages remain unchanged | Pending |

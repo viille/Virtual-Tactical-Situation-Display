@@ -13,6 +13,7 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
     private readonly object _poseLock = new();
     private readonly object _stateLock = new();
     private readonly Dictionary<string, long> _operationRevisions = new(StringComparer.Ordinal);
+    private const int MaxOperationRevisions = 512;
     private AarState _state = AarState.Empty;
     private OwnshipState? _previousOwnship;
     private bool _disposed;
@@ -108,17 +109,18 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
         return SendAsync("POSE_UPDATE", null, AarPoseConverter.Convert(ownship, previous), token);
     }
 
-    public Task<string> PublishFuelStatusAsync(double currentFuelKg, double capacityKg, bool adapterReady, double lastAppliedTransferredKg, CancellationToken token) =>
-        SendAsync("FUEL_STATUS", null, new { currentFuelKg, capacityKg, adapterReady, lastAppliedTransferredKg }, token);
+    public Task<string> PublishFuelStatusAsync(double currentFuelKg, double capacityKg, bool adapterReady, string? appliedOperationId, double lastAppliedTransferredKg, CancellationToken token) =>
+        SendAsync("FUEL_STATUS", null, new { currentFuelKg, capacityKg, adapterReady, appliedOperationId, lastAppliedTransferredKg }, token);
 
     public Task RefreshStateAsync(CancellationToken token) => SendAsync("GET_STATE", null, new { }, token);
 
-    public Task<string> AcknowledgeTransferAsync(string operationId, string proposalId, AarFuelProposalResult application, long operationRevision, CancellationToken token) =>
+    public Task<string> AcknowledgeTransferAsync(string operationId, string proposalId, double targetCumulativeKg, AarFuelProposalResult application, long operationRevision, CancellationToken token) =>
         SendAsync("TRANSFER_ACK", operationId,
             new
             {
                 operationId,
                 proposalId,
+                targetCumulativeKg,
                 appliedCumulativeKg = application.AppliedCumulativeKg,
                 operationRevision,
                 appliedKg = application.AppliedKg,
@@ -136,6 +138,7 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
                 var previous = _operationRevisions.GetValueOrDefault(operationId);
                 if (revision < previous) return;
                 _operationRevisions[operationId] = revision;
+                PruneOperationRevisions();
             }
             _state = Reduce(_state, message);
             updated = _state;
@@ -188,10 +191,11 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
         if (message.Kind is "REQUEST_ACCEPTED" or "OPERATION_STATE" or "OPERATION_SNAPSHOT" or "OPERATION_RECONCILED" or
             "OPERATION_SUSPENDED" or "OPERATION_COMPLETE" or "OPERATION_FAILED" or "OPERATION_CANCELLED" or
             "OPERATION_DISCONNECTING" or "CLEARED_ASTERN" or "CLEARED_CONTACT" or "CONTACT_CAPTURED" or "CONTACT_RELEASED" or
-            "REFUELING_STARTED" or "TRANSFER_CONFIRMED" or "TRANSFER_STOPPED" or "PLANNED_AMOUNT_REACHED" or "BREAKAWAY" or "HOLD")
+            "REFUELING_STARTED" or "TRANSFER_CONFIRMED" or "TRANSFER_ACCOUNTING_SETTLED" or "TRANSFER_STOPPED" or "PLANNED_AMOUNT_REACHED" or "BREAKAWAY" or "HOLD")
         {
             var operationNode = TryObject(payload, "operation", out var nested) ? nested : payload;
-            if (TryReadOperation(operationNode, message) is { } operation) operations[operation.OperationId] = operation;
+            if (TryReadOperation(operationNode, message) is { } operation)
+                operations[operation.OperationId] = operation;
         }
 
         if (message.Kind == "REQUEST_QUEUED" && TryReadQueueEntry(payload) is { } queued && queued.ReceiverParticipantId == _transport.LocalParticipantId)
@@ -218,6 +222,13 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
         if (message.Kind == "TANKER_AVAILABILITY_UPDATED" && payload.TryGetProperty("availability", out var availability) && availability.ValueKind == JsonValueKind.String)
             state = state with { TankerAvailability = availability.GetString() ?? "Off" };
 
+        while (operations.Count > 64)
+        {
+            var oldestTerminal = operations.FirstOrDefault(pair => AarState.IsTerminal(pair.Value.Phase));
+            if (oldestTerminal.Key is null) break;
+            operations.Remove(oldestTerminal.Key);
+        }
+
         return state with
         {
             TankerJoined = message.Kind is "AAR_STATE" ? IsTankerJoined : state.TankerJoined,
@@ -235,6 +246,14 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
     }
 
     private string CurrentAvailability => _transport.LocalOperationalStates.TryGetValue("tankerAvailability", out var value) ? value : "Off";
+
+    private void PruneOperationRevisions()
+    {
+        if (_operationRevisions.Count <= MaxOperationRevisions) return;
+        var live = _state.Operations.Keys.ToHashSet(StringComparer.Ordinal);
+        foreach (var operationId in _operationRevisions.Keys.Where(id => !live.Contains(id)).Take(_operationRevisions.Count - MaxOperationRevisions).ToArray())
+            _operationRevisions.Remove(operationId);
+    }
 
     private static void ReadQueue(JsonElement queue, out IReadOnlyList<AarQueueEntryState> pending, out AarOperationState? committedNext)
     {

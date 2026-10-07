@@ -4,7 +4,6 @@ internal enum AarOperationPhase
 {
     Unknown,
     Accepted,
-    PreContact,
     Astern,
     ClearedContact,
     Contact,
@@ -79,7 +78,6 @@ internal sealed record AarState(
     public static AarOperationPhase ParsePhase(string? value) => value switch
     {
         "Accepted" => AarOperationPhase.Accepted,
-        "PreContact" => AarOperationPhase.PreContact,
         "Astern" => AarOperationPhase.Astern,
         "ClearedContact" => AarOperationPhase.ClearedContact,
         "Contact" => AarOperationPhase.Contact,

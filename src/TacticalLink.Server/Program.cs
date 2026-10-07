@@ -151,7 +151,11 @@ public sealed class TacticalLinkHub
         _aircraftCapabilities = aircraftCapabilities ?? new StaticAircraftCapabilityResolver();
         _aarRegistryProvider = aarRegistryProvider;
         _aarModuleHandler = aarModuleHandler;
-        if (_aarModuleHandler is not null) _aarModuleHandler.EventReady += OnAarEventReady;
+        if (_aarModuleHandler is not null)
+        {
+            _aarModuleHandler.EventReady += OnAarEventReady;
+            _aarModuleHandler.OperationalStateChangeRequested += OnModuleOperationalStateChange;
+        }
         _moduleRouter = moduleRouter ?? new ModuleRouter([]);
         if (_aarRegistryProvider is not null) _aarRegistryProvider.Changed += OnRegistryChanged;
         _reconnectGrace = reconnectGrace ?? TimeSpan.FromSeconds(12);
@@ -348,6 +352,7 @@ public sealed class TacticalLinkHub
                     {
                         if (name != "tankerAvailability" || !AllowedTankerStates.Contains(value)) return;
                         peer.SetTankerAvailability(value);
+                        peer.PublishedTankerAvailability = value;
                         ScheduleInterestRefresh();
                     },
                     ToAarSnapshot(peer),
@@ -368,12 +373,25 @@ public sealed class TacticalLinkHub
                             peer.TrySend(new { type = "AUTH_REFRESHED", callsign = refreshed.Callsign, aircraftType = refreshed.AircraftType, capabilities = peer.Capabilities, operationalStates = peer.OperationalStates, expiresAt = refreshed.ExpiresAt });
                             await RefreshInterestAsync(cancellationToken);
                         }
-                        else peer.TrySend(new { type = "ERROR", code = "IDENTITY_MISMATCH", message = "The refreshed identity did not match this connection." });
+                        else
+                        {
+                            Interlocked.Increment(ref _authRefreshFailures);
+                            Console.Error.WriteLine("AUTH_REFRESH rejected: identity mismatch");
+                            peer.TrySend(new { type = "ERROR", code = "IDENTITY_MISMATCH", message = "The refreshed identity did not match this connection." });
+                        }
                     }
                     catch (UnauthorizedAccessException)
                     {
+                        Interlocked.Increment(ref _authRefreshFailures);
+                        Console.Error.WriteLine("AUTH_REFRESH rejected: token validation failed");
                         peer.TrySend(new { type = "ERROR", code = "AUTH_REFRESH_REJECTED", message = "The refreshed identity is invalid." });
                     }
+                }
+                else
+                {
+                    Interlocked.Increment(ref _authRefreshFailures);
+                    Console.Error.WriteLine("AUTH_REFRESH rejected: token missing");
+                    peer.TrySend(new { type = "ERROR", code = "AUTH_REFRESH_REJECTED", message = "The refreshed identity is invalid." });
                 }
                 break;
             case "PING": peer.TrySend(new { type = "PONG", timestampUtc = DateTimeOffset.UtcNow }); break;
@@ -556,6 +574,15 @@ public sealed class TacticalLinkHub
 
     private void OnAarEventReady(AarServerEvent item) =>
         SendModuleEvent(item.ParticipantId, "aar", 1, item.Kind, item.OperationId, item.OperationRevision, null, item.Payload);
+
+    private void OnModuleOperationalStateChange(ModuleOperationalStateChange change)
+    {
+        if (change.Name != "tankerAvailability" || !_peers.TryGetValue(change.ParticipantId, out var peer)) return;
+        peer.SetTankerAvailability(change.Value);
+        peer.PublishedTankerAvailability = change.Value;
+        peer.TrySend(new { type = "CAPABILITY_UPDATED", capabilities = peer.Capabilities, operationalStates = peer.OperationalStates });
+        ScheduleInterestRefresh();
+    }
 
     private object PeerEvent(string type, PeerConnection peer) => new
     {
