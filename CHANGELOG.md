@@ -1,11 +1,9 @@
 # Changelog
 
-## Unreleased
-
-- Made TacticalLink aircraft identity and capabilities server-authoritative from the active VATSIM flight plan.
-
 ## 0.15.0 - 2026-10-07
 
+- Made TacticalLink aircraft identity and capabilities server-authoritative from the active VATSIM flight plan.
+- Expanded the desktop map by equalizing the side control columns and removing excess display margins.
 - Added opt-in global TacticalLink presence and direct peer telemetry with spatial interest filtering and reconnect handling.
 - Added Cloud-issued short-lived identity tokens, per-peer protocol validation and rate limits, and direct callsign ownership safeguards.
 - Added configurable 10/20 Hz TacticalLink telemetry, capability status, diagnostics and deployment configuration.

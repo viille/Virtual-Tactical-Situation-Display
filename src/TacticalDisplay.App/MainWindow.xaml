@@ -175,7 +175,7 @@
                 Background="Transparent"
                 BorderThickness="0">
             <Border x:Name="MfdFrame"
-                    Padding="16"
+                    Padding="8"
                     Background="Transparent"
                     BorderBrush="#3D5360"
                     BorderThickness="2"
@@ -190,7 +190,7 @@
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="68" />
                         <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="142" />
+                        <ColumnDefinition Width="68" />
                     </Grid.ColumnDefinitions>
 
                     <StackPanel Grid.Row="0"
@@ -304,7 +304,7 @@
                     <Border x:Name="DisplaySurface"
                             Grid.Row="1"
                             Grid.Column="1"
-                            Margin="10"
+                            Margin="0"
                             Background="Transparent"
                             BorderBrush="#050A0D"
                             BorderThickness="3"
