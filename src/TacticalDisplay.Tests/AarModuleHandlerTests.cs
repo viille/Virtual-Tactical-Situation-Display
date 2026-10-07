@@ -416,13 +416,20 @@ public sealed class AarModuleHandlerTests
         Assert.Equal("Failed", rig.OperationState(operationId));
     }
 
-    [Fact]
-    public void UnknownReceiverLimitUsesMethodFallbackAgainstKnownTankerLimit()
+    [Theory]
+    [InlineData(45d, null, 10d)]
+    [InlineData(null, 25d, 10d)]
+    [InlineData(null, null, 10d)]
+    [InlineData(45d, 25d, 25d)]
+    [InlineData(8d, 25d, 8d)]
+    public void EffectiveBoomFlowUsesIndependentFallbacksAndMinimum(double? tankerLimit, double? receiverLimit, double expected)
     {
-        var tanker = Rig.TankerProfile;
-        var receiver = Rig.ReceiverProfile;
+        var tanker = new AarAircraftProfile("tanker", "Tanker", ["TSTK"], true, true, false,
+            [new("Boom", tankerLimit, tankerLimit.HasValue ? "confirmed_aircraft_specific_value" : "unknown", [])], [], [], null, "");
+        var receiver = new AarAircraftProfile("receiver", "Receiver", ["TSTR"], true, false, true,
+            [], [new("BoomReceptacle", receiverLimit, receiverLimit.HasValue ? "confirmed_aircraft_specific_value" : "unknown", [])], [], null, "");
 
-        Assert.Equal(10, AarModuleHandler.EffectiveBoomFlow(tanker, receiver));
+        Assert.Equal(expected, AarModuleHandler.EffectiveBoomFlow(tanker, receiver));
     }
 
     private sealed class Rig
