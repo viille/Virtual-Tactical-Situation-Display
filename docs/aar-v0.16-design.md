@@ -26,36 +26,91 @@ The platform envelope keeps TacticalLink protocol version 1 and introduces addit
 }
 ```
 
-Server-originated `MODULE_EVENT` messages use the same module and version fields, plus `kind`, `operationId`, `sequence`, and a module-owned payload. `messageId` is the idempotency key for a client command; the server binds it to participant, connection generation, and command result. Unknown module/version/message kinds are rejected without terminating the TacticalLink connection. Clients report that AAR is unavailable when the server does not support its module protocol. The hub performs common authentication, framing, rate limiting, and participant routing; an AAR handler owns AAR validation and state transitions.
+Server-originated `MODULE_EVENT` messages use the same module and version fields, plus `kind`, optional `operationId`, platform `transportSequence`, and a module-owned payload. An operation event also carries its authoritative `OperationRevision`. `transportSequence` orders a transport stream and may reset on reconnect; it is not operation-state authority. Unknown module/version/message kinds are rejected without terminating the TacticalLink connection. Clients report that AAR is unavailable when the server does not support its module protocol. The hub performs common authentication, framing, rate limiting, and participant routing; an AAR handler owns AAR validation and state transitions.
+
+Example operation event:
+
+```json
+{
+  "type": "MODULE_EVENT",
+  "module": "aar",
+  "moduleProtocolVersion": 1,
+  "transportSequence": 942,
+  "kind": "TRANSFER_PROPOSAL",
+  "operationId": "operation-id",
+  "operationRevision": 20,
+  "payload": { "proposedTransferredKg": 5.0 }
+}
+```
+
+## Reconnect-safe command idempotency and event ordering
+
+The idempotency key is `(ParticipantId, Module, MessageId)`. Connection generation is excluded from the key; it remains authorization and diagnostic context, and stale connections cannot issue new actions. The server stores a canonical request hash over module, kind, operation ID, and normalized payload with the original command result. The same key plus the same request returns the original result; the same key with a different request hash returns `IDEMPOTENCY_CONFLICT` and performs no action. A retried accepted command returns its original acceptance result, while the client separately obtains the latest operation snapshot/revision so the replay cannot roll current state backwards.
+
+Retain command results for 24 hours after a completed non-operation command. A `REQUEST_REFUEL` result remains while its request is Pending; if accepted, retain it for the associated operation's lifetime plus 24 hours after terminal state; if rejected/cancelled, retain it for 24 hours after that terminal result. Other operation command results remain for the operation's lifetime and 24 hours after terminal state. Bound storage to 256 unexpired entries per participant and 32,768 entries globally. Expired entries are removed; active records are never evicted early to make room. Look up existing keys before capacity checks so a retry always replays its retained result. At a participant/global cap, reject only a new state-changing command with retryable `IDEMPOTENCY_CAPACITY` until space expires. Store bounded canonical hashes and compact command results, not unbounded event histories. The cache is in server memory; a TacticalLink server restart ends active operations and does not promise replay across that restart.
+
+Each accepted AAR operation starts `OperationRevision` at 1. Every authoritative mutation or operation event increments it, including state transitions, suspension/recovery, transfer proposals/results, and terminal/safety events. Clients keep `LastSeenOperationRevision` per operation and discard an event with `revision <= LastSeenOperationRevision`. An authoritative snapshot older than the client's last seen revision is also discarded. An identical same-revision duplicate is safely ignored; conflicting content at the same revision is a protocol error and triggers a fresh snapshot, with fuel flow held at zero until reconciled. Process events serially per operation so a newer safety event invalidates queued older transfer work before local application.
+
+`OperationRevision` orders operation state and events. `TransferredKg` is a distinct monotonic cumulative mass value and is never used as the event-ordering token. The generic transport sequence orders only its transport stream. If `revision 21 BREAKAWAY` is processed before an in-flight `revision 20 TRANSFER_UPDATE`, revision 20 is discarded and cannot be applied. A transfer update that was already successfully applied before the newer breakaway was received remains applied; no later application may occur after the safety revision is accepted.
 
 The implementation boundary is a generic module router/handler interface, an AAR domain/state-machine service, and an in-memory operation manager. The server authorizes capabilities from signed `aircraft_type` plus the current published registry snapshot. Local adapter readiness may restrict use further but can never grant registry capability.
 
 ## Supported operation and state
 
-V0.16 supports human-controlled tankers and receivers, boom refueling only, one active receiver per tanker, and an in-memory FIFO queue of additional requests. Probe/drogue operations, dedicated boom-operator controls, hose simulation, multiple simultaneous receiver operations, AI participants, complete simulator fuel-system simulation, and persistence of active operations are out of scope.
+V0.16 supports human-controlled tankers and receivers, boom refueling only, one Active receiver per tanker, at most one additional Accepted/Committed receiver, and an in-memory FIFO queue of Pending requests. Probe/drogue operations, dedicated boom-operator controls, hose simulation, multiple simultaneous active receiver operations, AI participants, complete simulator fuel-system simulation, and persistence of active operations are out of scope.
 
 Tanker availability is `Off`, `Available`, `Busy`, or `Unavailable`. The pilot explicitly joins as tanker, then selects Available; Busy is derived from an active operation. After an operation, availability returns to Available unless the pilot selected Unavailable or left tanker mode. Receiver has no persistent role mode. Discovery requires a connected peer, tanker registry capability, local adapter readiness, Available state, compatible boom methods, and normal TacticalLink interest. An active operation pins both participants into interest regardless of normal radius.
 
-Receiver requests a fixed kilogram amount or `FULL` (receiver capacity minus current fuel). Tanker explicitly accepts or rejects. Accepted requests reserve fuel and enter FIFO ordering by request time; distance does not change queue order. The server controls this state machine:
+Keep queue requests separate from operations. `PendingRequests` contain requests not yet accepted: they are FIFO-ordered by `RequestedAt`, reserve zero tanker fuel, and can be accepted/rejected by the tanker. Distance never reorders them. A request records request ID, authenticated requester, requested fixed kg or `FULL`, requested time, and current status. Do not create a committed operation until ACCEPT succeeds.
+
+The tanker may have one Active operation and one Accepted/Committed next operation. If there is no Active operation, an accepted request fills the Active slot in `Accepted`; otherwise it fills the single `CommittedNext` slot. If both slots are occupied, another ACCEPT is rejected and the request remains Pending. All other requests stay Pending in FIFO order until the tanker explicitly accepts or rejects them. There is no automatic acceptance. On Active completion, the existing CommittedNext operation is promoted to Active without changing its operation ID or pinned profile snapshot. The tanker may then accept a further pending request into the free committed-next slot.
+
+At ACCEPT time the server recalculates against current tanker fuel, protected reserve, existing accepted commitments, receiver free capacity, and request amount. `FULL` is resolved from current receiver free capacity then. Planned transfer is bounded by request, capacity, and available-to-promise; if no positive safe amount is available, ACCEPT fails and the request remains Pending. Pending requests contribute zero commitment. Only accepted Active and CommittedNext operations reserve fuel:
 
 ```text
-Requested -> Accepted -> PreContact -> ClearedContact -> Contact
-          -> Refueling -> Disconnecting -> Complete
-          -> Rejected | Cancelled | Breakaway | Failed
+outstandingCommitmentKg = sum(
+    max(0, plannedKg - transferredKg)
+    for accepted Active and CommittedNext operations
+)
 ```
 
-Legal transitions are explicitly constrained: Requested may become Accepted, Rejected, Cancelled, or Failed; Accepted may become PreContact, Cancelled, or Failed; PreContact may become ClearedContact, Cancelled, Breakaway, or Failed; ClearedContact may become Contact, Breakaway, or Failed; Contact may become Refueling, Disconnecting, Breakaway, or Failed; Refueling may become Disconnecting, Breakaway, or Failed; Disconnecting may become Complete or Failed. Rejected, Cancelled, Breakaway, Complete, and Failed are terminal for that operation. A retry after a terminal result creates a new request/operation ID.
+The tanker queue is displayed in distinct groups:
 
-Clients send intent/actions; only the server advances authoritative operation state. Repeated commands with the same `messageId` return the original outcome and do not create another request, commitment, or transfer.
+```text
+ACTIVE RECEIVER
+NEXT / COMMITTED
+PENDING REQUESTS
+```
+
+Pending rows have `ACCEPT` and `REJECT`; a committed-next row has `CANCEL COMMITMENT` instead of ACCEPT. A receiver may cancel its own Pending request or CommittedNext operation. The tanker may reject a Pending request or cancel CommittedNext before promotion to Active. Once promoted to Active, cancellation uses normal `DISCONNECT`/`BREAKAWAY` operation semantics. Releasing a cancelled/rejected commitment immediately recomputes available-to-promise.
+
+Receiver requests a fixed kilogram amount or `FULL` (receiver capacity minus current fuel). Tanker explicitly accepts or rejects. The server controls the Active/Committed operation state machine:
+
+```text
+Accepted -> PreContact -> ClearedContact -> Contact
+         -> Refueling -> Disconnecting -> Complete
+         -> Suspended -> PreContact (Active recovery)
+         -> Suspended -> Accepted/CommittedNext (queued recovery)
+         -> Suspended -> Disconnecting -> Complete (safe plan exhausted)
+         -> Cancelled | Breakaway | Failed
+```
+
+Legal transitions are constrained: Accepted may become PreContact, Suspended, Cancelled, or Failed; Cancelled is legal only while the operation is still CommittedNext, before promotion. PreContact may become ClearedContact, Disconnecting, Suspended, Breakaway, or Failed; ClearedContact may become Contact, Disconnecting, Suspended, Breakaway, or Failed; Contact may become Refueling, Disconnecting, Suspended, Breakaway, or Failed; Refueling may become Disconnecting, Suspended, Breakaway, or Failed; Disconnecting may become Suspended, Complete, or Failed. Suspended Active may become PreContact after successful reconciliation or Disconnecting if a reconciled plan has safely ended; Suspended CommittedNext may return to Accepted/CommittedNext and wait there until promoted, become Cancelled if the receiver/tanker cancels that unstarted commitment, or become Failed. Failed reconciliation becomes Failed. Rejected and Cancelled request records are terminal; Cancelled, Breakaway, Complete, and Failed operation states are terminal. Once promoted to Active, use Disconnect/Breakaway semantics rather than Cancelled. No other transitions are legal. A retry after a terminal result creates a new request/operation ID.
+
+Clients send intent/actions; only the server advances authoritative operation state. Repeated commands with the same `messageId` return the original outcome and do not create another request, commitment, or transfer. On a duplicate, publish/return the current request or operation snapshot separately so a stale command result cannot overwrite a newer revision.
 
 ## Fuel model and transfer safety
 
-All canonical amounts are kilograms. UI preference may display kilograms or pounds using `1 kg = 2.2046226218 lb`; changing units never alters operation values. `FULL` is resolved at request acceptance from receiver capacity minus current fuel. A protected tanker reserve is operator-configurable and has no hard-coded military policy.
+All canonical amounts are kilograms. UI preference may display kilograms or pounds using `1 kg = 2.2046226218 lb`; changing units never alters operation values. `FULL` is resolved at request acceptance from receiver capacity minus current fuel. A protected tanker reserve is operator-configurable and has no hard-coded military policy. Tanker accounting exposes `CurrentFuelKg`, `ProtectedReserveKg`, `CommittedFuelKg`, and `AvailableToPromiseKg`.
 
-At acceptance, planned amount is bounded by request, receiver free capacity, and tanker fuel available to promise. The accounting invariant is:
+At ACCEPT time, planned amount is bounded by the request, freshly reported receiver free capacity, and freshly calculated tanker fuel available to promise. The accounting invariant is:
 
 ```text
-outstandingCommitmentKg = sum(max(0, plannedKg - transferredKg))
+outstandingCommitmentKg = sum(
+    max(0, plannedKg - transferredKg)
+    for accepted Active and CommittedNext operations
+)
+pending requests contribute 0 kg
 availableToPromiseKg = max(0, currentTankerFuelKg
                               - protectedReserveKg
                               - outstandingCommitmentKg)
@@ -74,7 +129,13 @@ effectiveFlowKgPerSecond = min(tankerLimit, receiverLimit)
 
 The 10 kg/s fallback is not an aircraft-specific performance claim and must never be shown as a confirmed type value in either desktop UI or Cloud admin. A known high tanker limit therefore cannot bypass an unknown receiver limit.
 
-Only the server advances monotonic `TransferredKg`, and only during valid Refueling state. Clients apply deltas against their last successfully applied cumulative amount: receiver adds fuel and tanker removes it. Each acknowledges cumulative applied amount. The server pauses if either acknowledgement exceeds the configured lag bound; it stops on simulator write failure and never rolls fuel back. Engine burn remains independent. Stop conditions include planned amount reached, receiver full, tanker reserve boundary, disconnect, contact loss, stale pose, adapter loss, excessive acknowledgement lag, breakaway, or uncertain write outcome. No action automatically resumes transfer after reconnect.
+Only the server owns monotonic `TransferredKg`, the cumulative AAR mass confirmed as successfully applied by both participants. Engine burn remains independent and is never inferred as AAR transfer. To avoid counting a requested write as completed transfer, a server `TRANSFER_PROPOSAL` carries a proposed cumulative target but does not itself advance `TransferredKg`. Clients apply the difference between that target and their `LastAppliedTransferredKg`; receiver adds and tanker removes fuel. The server commits the proposed target to `TransferredKg` only after both clients acknowledge the same actually applied cumulative mass (within the adapters' declared mass resolution). A transfer proposal and its result are operation events and are ordered by `OperationRevision`.
+
+The fuel adapter must return an `AppliedFuelResult` equivalent to `{ requestedKg, appliedKg, outcome: Success | Partial | Failed }`, or provide a post-write measurement that isolates the AAR change safely. Total simulator fuel delta alone is not sufficient when engine burn/refill can occur concurrently. The client advances `LastAppliedTransferredKg` and acknowledges only actual applied AAR mass, never the requested amount. For example, if a +5 kg proposal results in only +3 kg at the receiver, its acknowledgement advances by 3 kg, not 5 kg.
+
+Only one bounded transfer proposal may be unresolved per operation. If either participant is materially behind its proposal, reports Partial/Failed, or reports a cumulative value that disagrees with the other side, immediately pause flow and enter `Suspended`; issue no next proposal. Freeze `TransferredKg` while Suspended. Reconcile both actual cumulative application values and current fuel/capacity/reserve. If both sides report the same applied cumulative amount, the server may adopt that common amount only atomically while leaving Suspended for PreContact or Disconnecting/Complete; it must not advance `TransferredKg` while the operation remains Suspended. Reconciliation may only reduce `PlannedKg` (never below the reconciled `TransferredKg`) to honor newly observed receiver capacity or tanker reserve; it may not increase the accepted plan. If the reduced plan is already satisfied, close through Disconnecting/Complete; otherwise a safe remaining plan may recover through PreContact and a new CLEAR CONTACT. If the peers report divergent cumulative application, fail the operation rather than attempting a compensating write or rollback. If capacity/reserve prevents safe continuation, fail or complete only after the reconciled plan is safely closed. Do not silently continue at the prior commanded rate. This preserves `TransferredKg` as mutually applied AAR mass; a mismatched partial write is surfaced as a failed operation, not hidden as completed transfer.
+
+The server pauses if either acknowledgement exceeds its configured lag bound. Stop conditions also include planned amount reached, receiver full, tanker reserve boundary, disconnect, contact loss, stale pose, adapter loss, breakaway, or uncertain write outcome. No action automatically resumes transfer after reconnect.
 
 Relevant fuel status is sent privately to the operation participants at 1–2 Hz; it is not added to global high-rate telemetry. The receiver UI may show request and operational state, but never current fuel, transferred amount, remaining amount, rate, ETA, percentage, or progress bar. The tanker UI may show current/reserve/committed/available fuel, active receiver, request/planned/transferred/remaining amounts, flow/ETA, contact state, queue, and operator actions.
 
@@ -92,13 +153,36 @@ The geometry model defines aircraft body axes as +X forward, +Y right/starboard,
 
 Contact capture requires the server's configured 3D position, relative attitude, and relative-velocity envelope to be satisfied continuously for a debounce interval. Release uses a larger hysteresis envelope and a stale-data timeout to prevent contact chatter. Geometry alone never starts fueling: tanker CLEAR CONTACT is a required explicit action after stable PreContact. Breakaway or envelope violation stops transfer before subsequent fuel deltas are issued. All envelope values and timing bounds are configuration with documented units and initial test values; they are calibrated as simulation behavior.
 
-## Reconnect, identity, and failure behavior
+## Suspension, reconnect, and process lifecycle
 
-Connection loss immediately stops transfer and marks the operation interrupted/failed according to its current state. Reconnect does not restore fueling. A new clearance requires the same authenticated participant/connection-generation relationship, fresh pose, ready adapter, reconciled simulator fuel, and new valid contact. An `AUTH_REFRESH` identity change re-evaluates registry capability; loss of required capability terminates the operation. Server restart drops transient operations and queue, while the persistent registry cache remains independent.
+Distinguish a temporary WebSocket/network reconnect from a desktop process restart. Each desktop process creates a random `ClientInstanceId` once at startup and retains it across reconnects; a new process creates a different value. The server keeps it in the logical participant's reconnect state. It is not an aircraft identity or capability claim.
 
-Also stop or prevent flow on missing/stale pose, fuel-status timeout, fuel adapter loss/write failure, application-acknowledgement lag, receiver full, reserve reached, contact loss, simulator aircraft change, identity change, or uncertain write outcome. The default is `uncertain state -> no fuel flow`. An operation peer relationship pins interest independently of normal spatial-radius membership for the operation lifetime, including teardown events.
+On temporary TacticalLink loss, immediately stop fuel proposals and transition any accepted/committed operation in Accepted, PreContact, ClearedContact, Contact, Refueling, or Disconnecting to non-terminal `Suspended`. Record its `SuspendedFromState`, reason, and fixed deadline. Increment OperationRevision, set effective flow to zero, discard contact validity and prior CLEAR CONTACT, and cancel any unapplied older transfer proposal. An unaccepted Pending request holds no commitment; retain it only through the existing 12-second reconnect grace, then cancel it and release its queue position. Suspended operations retain their accepted commitment during that grace and release it if recovery fails.
+
+Recovery is allowed only before the original 12-second reconnect-grace deadline and only if both participants rejoin the same logical `ParticipantId` with a valid newer connection generation, the same `ClientInstanceId` per process, and the same authenticated identity tuple (`userId`, VATSIM CID, callsign, and signed `aircraft_type`). Both participants must be connected and still compatible with the operation's pinned registry profiles. Require fresh aligned pose, ready adapters, reconciled current fuel/capacity/reserve, and a fresh cumulative application acknowledgement baseline matching actual local application. Connection generation is checked as reconnect/authorization context but never changes command idempotency identity.
+
+Successful reconciliation of an Active operation returns `Suspended -> PreContact` when `SuspendedFromState` was Accepted, PreContact, ClearedContact, Contact, or Refueling; it never resumes to ClearedContact, Contact, or Refueling. Contact and clearance are invalidated. Tanker must issue a new CLEAR CONTACT and stable geometry must be captured again before transfer. If the original state was Disconnecting, reconciliation can only finish Disconnecting/Complete and must not restart transfer. A CommittedNext operation returns to `Accepted/CommittedNext` and remains queued without contact clearance until promoted. If only one participant reconnects, remain Suspended with zero flow until the other rejoins or the original deadline expires. Grace expiry, identity/capability mismatch, changed client process ID, unavailable adapter, irreconcilable fuel/application state, or failed pose validation causes `Suspended -> Failed` and releases commitments. A partial application suspends immediately and gets a bounded five-second adapter reconciliation window; failure to reconcile within that window transitions to Failed.
+
+A desktop process restart during an operation changes `ClientInstanceId`, so the server transitions the old operation to Failed and never resumes it. The restarted client cannot reconstruct the operation from simulator fuel quantity alone because its local cumulative watermark was lost. Persistent client-side AAR recovery is out of scope for v0.16. Server restart drops all transient requests, commitments, and operations; clients treat a missing operation after reconnect as failed and do not reconstruct it from fuel. The registry LKG cache is independent.
+
+Also stop or prevent flow on missing/stale pose, fuel-status timeout, fuel adapter loss/write failure, application-acknowledgement lag, receiver full, reserve reached, contact loss, simulator aircraft change, identity change, process restart, or uncertain write outcome. The default is `uncertain state -> no fuel flow`. An operation peer relationship pins interest independently of normal spatial-radius membership for the operation lifetime, including suspension and teardown events.
 
 The server validates message identity, operation ownership, legal state transition, registry version, participant capability, and local readiness before acting. Invalid commands return module-scoped errors and do not affect other TacticalLink modules. Rates, queue length, payload size, and per-participant command frequency are bounded. Operational logs include operation ID, state changes, registry version, stop reason, and adapter outcomes; avoid logging secrets or unnecessary personal data.
+
+## Design invariants
+
+1. The same logical client command cannot execute twice because of a reconnect; the idempotency identity excludes connection generation.
+2. `OperationRevision` never decreases, and a client never applies an event older than its last accepted operation revision.
+3. A same-revision event is ignored only if its content is identical; conflicting content causes snapshot reconciliation with flow held at zero.
+4. No fuel application may occur after the client accepts a newer Breakaway, Failed, Disconnecting, or Suspended safety event.
+5. Network interruption immediately sets flow to zero and freezes `TransferredKg`; reconnect alone never resumes flow.
+6. Desktop process restart during an active/committed operation makes that operation Failed; v0.16 never reconstructs it from simulator fuel alone.
+7. Applied-fuel acknowledgements report actual simulator-applied AAR mass, not requested mass.
+8. Pending requests reserve zero fuel; accepted/committed operations reserve only their remaining planned transfer.
+9. V0.16 permits at most one Active receiver and one CommittedNext receiver; all other requests remain FIFO Pending until the tanker explicitly accepts or rejects them.
+10. Accepting a Pending request re-evaluates current fuel, reserve, commitments, receiver capacity, and request amount.
+11. A committed-next operation can be cancelled before promotion; once Active, normal Disconnect/Breakaway semantics apply.
+12. Uncertain state always resolves toward zero fuel flow.
 
 ## Implementation acceptance tests
 
@@ -118,6 +202,40 @@ The server validates message identity, operation ownership, legal state transiti
 - Test operation pinning survives loss of normal spatial interest and is removed on terminal state.
 - Test simulator aircraft change, fuel-status timeout, server restart, and identity change stop an operation safely.
 
+### Reconnect-safe idempotency
+
+- Accept a `REQUEST_REFUEL`, drop its response, reconnect with a new connection generation, and retry the same `messageId`; return the original result without a second request or commitment, plus current state through a separately revisioned snapshot.
+- Retry the same participant/module/message ID and identical command/payload; return the original command result.
+- Reuse a participant/module/message ID with a changed kind or payload; reject with `IDEMPOTENCY_CONFLICT` and make no state change.
+- Verify entries expire only according to their TTL/operation retention; live requests and operations retain entries; participant/global capacity rejects new mutations rather than evicting unexpired entries.
+
+### Operation revision and reordering
+
+- Deliver revision 21 `BREAKAWAY` before revision 20 `TRANSFER_PROPOSAL`/`TRANSFER_UPDATE`; discard revision 20 and apply no fuel after Breakaway.
+- Deliver stale Contact, Refueling, Transfer, and Disconnect events after a newer state; none may overwrite it.
+- Ignore an identical same-revision duplicate, but reject conflicting payloads for one revision and require a fresh snapshot.
+- Confirm transport sequence reset on reconnect does not reset operation revision or alter command idempotency.
+
+### Suspended lifecycle and process restart
+
+- Refueling -> network loss -> Suspended; verify flow is zero, TransferredKg stops for the entire Suspended state, and contact/clearance are invalidated.
+- Reconnect both same-process participants within the existing 12-second grace; reconcile identity, pose, adapters, fuel, and application watermark; recover only to PreContact; require new CLEAR CONTACT and stable capture before Refueling.
+- Reconnect grace expiry, identity/capability mismatch, process-ID change, unavailable adapter, or irreconcilable fuel -> Failed and release commitment.
+- Restart the desktop process during an operation; its new ClientInstanceId causes the old operation to fail; do not reconstruct from total simulator fuel.
+
+### Partial fuel application
+
+- Request a local +5 kg adapter write that reports +3 kg applied; acknowledge only +3 kg, pause proposals, enter Suspended, freeze TransferredKg, and reconcile without silently applying/acknowledging the missing 2 kg.
+- Test equal partial cumulative application on both peers, divergent peer totals, zero applied, and write failure. Adopt mutually applied mass only atomically on exit from Suspended; a mismatch that cannot be reconciled without rollback fails the operation.
+- Confirm engine burn is not counted as AAR application when deriving any post-write value.
+
+### Queue and commitment semantics
+
+- With one Active, one CommittedNext, and N Pending, reject another ACCEPT while the committed-next slot is full; keep all other Pending requests FIFO and unreserved.
+- Verify pending requests contribute zero committed kg, accepted Active/CommittedNext requests reserve their remaining plan, and completion/cancellation releases it.
+- Change tanker fuel, protected reserve, receiver capacity, or existing commitments after request submission; ACCEPT must use the latest values and either create a safe commitment or leave the request Pending with an error.
+- Verify receiver cancellation of own Pending/CommittedNext, tanker rejection of Pending, tanker cancellation of CommittedNext, and no queue ACCEPT action after promotion to Active.
+
 ## Implementation milestones
 
 1. **AAR-1 — Cloud registry foundation:** schema proposal implementation, validation, super-admin management, sources, draft/publish, audit, and published endpoint.
@@ -132,7 +250,7 @@ The server validates message identity, operation ownership, legal state transiti
 
 ## End-to-end acceptance scenario
 
-The eventual v0.16 acceptance run connects human tanker and receiver participants to TacticalLink; resolves their authenticated designators against one published registry version; verifies fresh MSFS pose and usable fuel adapters; joins the tanker, configures reserve, and makes it Available; discovers it from the receiver; submits a fixed or FULL request; queues and accepts it; computes a capacity/reserve-bounded plan; guides the receiver through pre-contact; requires tanker CLEAR CONTACT and stable geometry; then transfers at the minimum of the separately resolved per-side limits. The tanker sees detailed fuel accounting while the receiver sees operational status only. Both simulator adapters apply cumulative deltas and acknowledge them. Contact loss, stale data, write failure, acknowledgement lag, disconnect, or BREAKAWAY immediately stops transfer; reconnect alone never restarts it. Completion does not cross receiver capacity or protected reserve, closes the operation, and returns the tanker to Available unless its pilot selected another state.
+The eventual v0.16 acceptance run connects human tanker and receiver participants to TacticalLink; resolves their authenticated designators against one published registry version; verifies fresh MSFS pose and usable fuel adapters; joins the tanker, configures reserve, and makes it Available; discovers it from the receiver; submits a fixed or FULL request; accepts one request as Active and optionally one as CommittedNext while later requests remain FIFO Pending; computes each accepted plan from current fuel/reserve/commitment/capacity values; guides the Active receiver through pre-contact; requires tanker CLEAR CONTACT and stable geometry; then transfers at the minimum of the separately resolved per-side limits. The tanker sees Active, Next/Committed, and Pending groups plus detailed fuel accounting while the receiver sees operational status only. Both simulator adapters report actual cumulative application; only mutually applied mass advances `TransferredKg`. Contact loss, stale data, partial/write failure, acknowledgement lag, disconnect, or BREAKAWAY immediately stops transfer; reconnect alone never restarts it. A same-process reconnect inside grace reconciles to Suspended and requires new CLEAR CONTACT/capture; process restart fails the old operation. Completion does not cross receiver capacity or protected reserve, promotes the committed-next operation if present, and returns the tanker to Available when no active/committed work remains unless its pilot selected another state.
 
 ## Out of scope for v0.16
 
