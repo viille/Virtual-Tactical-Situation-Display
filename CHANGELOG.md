@@ -5,7 +5,8 @@
 - Added tanker-controlled AAR queue management, planned onload changes, astern clearance, HOLD, explicit transfer start/stop, and DryHookup mode to TacticalLink.Server.
 - Added receiver-side internal transfer proposal data and cumulative application acknowledgements with operation revision validation.
 - Added local KG/LB presentation and specific-amount or FULL receiver requests.
-- Added the MSFS 2024-only VTSD AAR Bridge source, versioned CommBus protocol, desktop adapter, and read-after-write fuel acknowledgement path. The WASM module still needs an SDK build and in-simulator validation before live fuel transfer can be considered ready.
+- Added the MSFS 2024-only VTSD AAR Bridge source, versioned CommBus protocol, desktop adapter, and read-after-write fuel acknowledgement path. Built the WASM module with the installed MSFS 2024 SDK; in-simulator validation is still required before live fuel transfer can be considered ready.
+- Routed AAR presentation state and commands through a dedicated `AarViewModel` module.
 - Added bridge status and package management UI, safe Community2024 install/update/uninstall, and an embedded single-file package archive path.
 - Distinguishes invalid installed bridge packages from missing packages, supports repair, and preserves the previous package backup if rollback fails.
 - Contact loss returns the operation to Astern and revokes clearance; committed-next promotion and reconciliation require a fresh CLEAR ASTERN before PreContact.
