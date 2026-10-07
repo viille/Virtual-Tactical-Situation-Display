@@ -1063,6 +1063,18 @@
                             <TextBox Text="{Binding AarProtectedReserveKgText, UpdateSourceTrigger=PropertyChanged}" Width="80" Margin="0,0,6,0" ToolTip="Protected reserve (kg)" />
                             <Button Content="SET RESERVE (KG)" Command="{Binding SetAarProtectedReserveCommand}" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                         </StackPanel>
+                        <StackPanel Margin="0,0,0,8">
+                            <StackPanel.Style>
+                                <Style TargetType="StackPanel">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding IsLocalTankerJoined}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </StackPanel.Style>
+                            <TextBlock Text="{Binding AarTankerMetricsText}" TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                            <Button Content="{Binding AarAvailabilityButtonText}" Command="{Binding ToggleAarAvailabilityCommand}" Padding="6,4" HorizontalAlignment="Left" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
+                        </StackPanel>
                         <Button Content="OPEN VTSD CLOUD" Click="OnOpenCloudClick" Margin="0,0,0,12">
                             <Button.Style>
                                 <Style TargetType="Button">

@@ -42,6 +42,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private AarPendingRequestDisplay? _selectedAarRequest;
     private string? _aarActiveOperationId;
     private string _aarOperationStateText = "No active operation";
+    private string _aarTankerMetricsText = "Fuel adapter unavailable";
     private OwnshipState? _latestOwnship;
     private readonly DispatcherTimer _renderTimer;
     private readonly DispatcherTimer _airspaceTimer;
@@ -136,6 +137,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         DisconnectAarOperationCommand = CreateUiCommand(nameof(DisconnectAarOperationCommand), () => _ = SendAarOperationCommandAsync("DISCONNECT"));
         BreakawayAarOperationCommand = CreateUiCommand(nameof(BreakawayAarOperationCommand), () => _ = SendAarOperationCommandAsync("BREAKAWAY"));
         ReconcileAarOperationCommand = CreateUiCommand(nameof(ReconcileAarOperationCommand), () => _ = SendAarOperationCommandAsync("RECONCILE"));
+        ToggleAarAvailabilityCommand = CreateUiCommand(nameof(ToggleAarAvailabilityCommand), () => _ = ToggleAarAvailabilityAsync());
         ToggleAlwaysOnTopCommand = CreateUiCommand(nameof(ToggleAlwaysOnTopCommand), ToggleAlwaysOnTop);
         ToggleKneepadCommand = CreateUiCommand(nameof(ToggleKneepadCommand), ToggleKneepad);
         PreviousKneepadPageCommand = CreateUiCommand(nameof(PreviousKneepadPageCommand), PreviousKneepadPage);
@@ -564,6 +566,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string AarProtectedReserveKgText { get => _aarProtectedReserveKgText; set => SetField(ref _aarProtectedReserveKgText, value); }
     public string AarStatusText { get => _aarStatusText; private set => SetField(ref _aarStatusText, value); }
     public string AarOperationStateText { get => _aarOperationStateText; private set => SetField(ref _aarOperationStateText, value); }
+    public string AarTankerMetricsText { get => _aarTankerMetricsText; private set => SetField(ref _aarTankerMetricsText, value); }
+    public string AarAvailabilityButtonText => _tacticalLink.LocalTankerAvailable ? "SET UNAVAILABLE" : "SET AVAILABLE";
     public bool HasAarOperation => _aarActiveOperationId is not null;
     public TacticalLinkPeerDisplay? SelectedAarTanker { get => _selectedAarTanker; set => SetField(ref _selectedAarTanker, value); }
     public IReadOnlyList<AarPendingRequestDisplay> AarPendingRequests => _aarPendingRequests;
@@ -849,6 +853,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand DisconnectAarOperationCommand { get; }
     public RelayCommand BreakawayAarOperationCommand { get; }
     public RelayCommand ReconcileAarOperationCommand { get; }
+    public RelayCommand ToggleAarAvailabilityCommand { get; }
     public RelayCommand ToggleAlwaysOnTopCommand { get; }
     public RelayCommand ToggleKneepadCommand { get; }
     public RelayCommand PreviousKneepadPageCommand { get; }
@@ -1853,6 +1858,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         Raise(nameof(TacticalLinkState));
         Raise(nameof(IsTacticalLinkConnected));
         Raise(nameof(TankerButtonText));
+        Raise(nameof(AarAvailabilityButtonText));
         Raise(nameof(CanOfferTanker));
         if (!IsTacticalLinkConnected) _latestOwnship = null;
     }
@@ -1946,6 +1952,21 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         AarStatusText = $"Protected reserve set: {reserveKg:0} kg";
     }
 
+    private async Task ToggleAarAvailabilityAsync()
+    {
+        if (!IsTankerCapable || !IsTacticalLinkConnected || !_tacticalLink.LocalTankerJoined) return;
+        await _tacticalLink.SetTankerAvailabilityAsync(!_tacticalLink.LocalTankerAvailable, _runCts.Token);
+    }
+
+    private static string FormatAarFuelSummary(JsonElement fuel)
+    {
+        if (!fuel.TryGetProperty("currentFuelKg", out var current) || current.ValueKind != JsonValueKind.Number ||
+            !fuel.TryGetProperty("protectedReserveKg", out var reserve) || reserve.ValueKind != JsonValueKind.Number ||
+            !fuel.TryGetProperty("availableToPromiseKg", out var available) || available.ValueKind != JsonValueKind.Number)
+            return "Fuel adapter unavailable";
+        return $"Fuel {current.GetDouble():0} kg · reserve {reserve.GetDouble():0} kg · available {available.GetDouble():0} kg";
+    }
+
     private void OnTacticalLinkModuleEventReceived(object? sender, TacticalLinkModuleEvent e)
     {
         if (e.Module != "aar") return;
@@ -2005,7 +2026,18 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
                 "OPERATION_FAILED" => "AAR operation failed",
                 _ => e.Kind.Replace('_', ' ')
             };
+            if (IsTankerCapable && e.Payload.TryGetProperty("fuel", out var fuelNode)) AarTankerMetricsText = FormatAarFuelSummary(fuelNode);
+            else if (IsTankerCapable && e.Kind == "RESERVE_UPDATED") AarTankerMetricsText = FormatAarFuelSummary(e.Payload);
+            if (IsTankerCapable && e.Payload.TryGetProperty("transferredKg", out var transferredNode) && transferredNode.TryGetDouble(out var transferred) &&
+                e.Payload.TryGetProperty("remainingKg", out var remainingNode) && remainingNode.TryGetDouble(out var remaining) &&
+                e.Payload.TryGetProperty("effectiveFlowKgPerSecond", out var flowNode) && flowNode.TryGetDouble(out var flow))
+            {
+                AarTankerMetricsText = e.Payload.TryGetProperty("state", out var operationState) && operationState.GetString() == "Refueling" && flow > 0
+                    ? $"Transferred {transferred:0} kg · remaining {remaining:0} kg · {flow:0.0} kg/s · ETA {TimeSpan.FromSeconds(remaining / flow):mm\\:ss}"
+                    : $"Transferred {transferred:0} kg · remaining {remaining:0} kg · transfer paused";
+            }
             Raise(nameof(TankerButtonText));
+            Raise(nameof(AarAvailabilityButtonText));
             Raise(nameof(IsLocalTankerJoined));
             Raise(nameof(HasAarOperation));
             UpdateAarSampling();

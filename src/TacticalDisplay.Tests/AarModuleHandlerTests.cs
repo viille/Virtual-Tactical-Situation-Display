@@ -67,6 +67,31 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task FullRequestIsClampedToReceiverCapacityAtAcceptance()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Send("receiver", "REQUEST_REFUEL", new { tankerParticipantId = "tanker", full = true });
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+
+        Assert.Equal(400, accepted.LastPayload.GetProperty("plannedKg").GetDouble());
+    }
+
+    [Fact]
+    public async Task UnreadyFuelAdapterCannotBecomeAvailable()
+    {
+        var rig = new Rig();
+        await rig.Send("tanker", "FUEL_STATUS", new { currentFuelKg = 1000, capacityKg = 2000, adapterReady = false });
+        await rig.Send("tanker", "JOIN_AS_TANKER", new { });
+        await rig.Send("tanker", "SET_PROTECTED_RESERVE", new { protectedReserveKg = 200 });
+
+        var result = await rig.Send("tanker", "SET_TANKER_AVAILABILITY", new { availability = "Available" });
+
+        Assert.Equal("MODULE_ERROR", result.LastKind);
+        Assert.Contains("A protected reserve and ready fuel adapter", JsonSerializer.Serialize(result.LastPayload));
+    }
+
+    [Fact]
     public async Task NetworkReconnectSuspendsThenRecoversOnlyToPreContact()
     {
         var rig = new Rig();

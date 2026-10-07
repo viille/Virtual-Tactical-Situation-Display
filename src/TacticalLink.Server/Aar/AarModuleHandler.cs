@@ -378,6 +378,15 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             return;
         }
         if (now - operation.LastTransferProposalAt < TimeSpan.FromSeconds(1)) return;
+        var tankerPoses = GetParticipant(operation.TankerId).Poses;
+        var receiverPoses = GetParticipant(operation.ReceiverId).Poses;
+        if (tankerPoses.Count == 0 || receiverPoses.Count == 0) return;
+        var poseTime = tankerPoses.Last().TimestampUtc > receiverPoses.Last().TimestampUtc ? tankerPoses.Last().TimestampUtc : receiverPoses.Last().TimestampUtc;
+        var tankerPose = Nearest(tankerPoses, poseTime);
+        var receiverPose = Nearest(receiverPoses, poseTime);
+        if (tankerPose is null || receiverPose is null ||
+            !AarContactGeometry.TryMeasure(tankerPose, receiverPose, _contactConfiguration, now, out var relative) ||
+            !AarContactGeometry.IsInsideRelease(relative, _contactConfiguration)) return;
         var tanker = GetParticipant(operation.TankerId);
         var receiver = GetParticipant(operation.ReceiverId);
         if (tanker.CurrentFuelKg is null || receiver.CurrentFuelKg is null || receiver.FuelCapacityKg is null)
@@ -420,6 +429,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         operation.State = "Complete";
         operation.Slot = "Terminal";
         operation.TerminalAt = _clock.GetUtcNow();
+        _requests[operation.RequestId].Status = "Complete";
         _requests[operation.RequestId].TerminalAt = operation.TerminalAt;
         operation.Revision++;
         Publish(operation.TankerId, terminalKind, operation.Id, operation.Revision, OperationView(operation));
@@ -564,6 +574,12 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             Notify(context, operation.ReceiverId, "OPERATION_STATE", operation.Id, operation.Revision, ReceiverOperationView(operation));
             target = "Complete";
         }
+        if (target == "Breakaway" && operation.PendingTransfer is not null)
+        {
+            FailOperation(operation, "BREAKAWAY_DURING_UNCONFIRMED_TRANSFER");
+            return Result("OPERATION_FAILED", operation.Id, operation.Revision,
+                peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation), operation.RequestId);
+        }
         operation.State = target;
         operation.Revision++;
         if (target is "Breakaway" or "Complete") operation.ClearanceValid = false;
@@ -571,6 +587,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         {
             operation.Slot = "Terminal";
             operation.TerminalAt = _clock.GetUtcNow();
+            _requests[operation.RequestId].Status = target;
             _requests[operation.RequestId].TerminalAt = operation.TerminalAt;
             PromoteCommittedNext(context, operation.TankerId);
         }
@@ -622,6 +639,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             operation.State = "Complete";
             operation.Slot = "Terminal";
             operation.TerminalAt = _clock.GetUtcNow();
+            _requests[operation.RequestId].Status = "Complete";
             _requests[operation.RequestId].TerminalAt = operation.TerminalAt;
         }
         else if (operation.Slot == "CommittedNext") operation.State = "Accepted";
@@ -732,7 +750,9 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         operation.Slot = "Terminal";
         operation.Revision++;
         operation.ClearanceValid = false;
+        operation.PendingTransfer = null;
         operation.TerminalAt = _clock.GetUtcNow();
+        _requests[operation.RequestId].Status = "Failed";
         _requests[operation.RequestId].TerminalAt = operation.TerminalAt;
         Publish(operation.TankerId, "OPERATION_FAILED", operation.Id, operation.Revision, new { operation = OperationView(operation), reason });
         Publish(operation.ReceiverId, "OPERATION_FAILED", operation.Id, operation.Revision, new { operation = ReceiverOperationView(operation), reason });
