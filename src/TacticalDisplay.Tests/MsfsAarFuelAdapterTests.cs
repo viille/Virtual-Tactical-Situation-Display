@@ -11,13 +11,14 @@ public sealed class MsfsAarFuelAdapterTests
         var transport = new FakeTransport();
         var adapter = new MsfsAarFuelAdapter(transport);
         await adapter.ConnectAsync(CancellationToken.None);
+        transport.SimulateFuelBurn(5);
 
         var result = await adapter.ApplyFuelDeltaKgAsync(50, CancellationToken.None);
 
         Assert.Equal(AarBridgeRuntimeState.ConnectedWritable, adapter.RuntimeState);
         Assert.Equal(3, result.AppliedKg, 2);
         Assert.Equal(AarFuelApplyStatus.Failed, result.Status);
-        Assert.Equal(3, adapter.ReadFuel()!.CurrentFuelKg - 100);
+        Assert.Equal(98, adapter.ReadFuel()!.CurrentFuelKg);
     }
 
     [Fact]
@@ -53,6 +54,7 @@ public sealed class MsfsAarFuelAdapterTests
     {
         private int _fuelKg = 100;
         public bool IsConnected => true;
+        public void SimulateFuelBurn(int amountKg) => _fuelKg -= amountKg;
 
         public Task<AarBridgeResponse> SendAsync(AarBridgeRequest request, CancellationToken cancellationToken)
         {

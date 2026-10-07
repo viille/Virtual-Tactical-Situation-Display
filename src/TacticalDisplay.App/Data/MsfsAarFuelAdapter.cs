@@ -101,7 +101,9 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
             if (response.FuelState is null || !IsValid(response.FuelState))
                 return new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, response.Error ?? "Bridge omitted the mandatory post-write fuel readback.");
 
-            var actual = response.FuelState.CurrentFuelKg - before.CurrentFuelKg;
+            if (response.AppliedKg is not { } actual || !double.IsFinite(actual))
+                return new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, "Bridge omitted the actual applied mass from its read-after-write result.");
+
             UpdateFuelState(response.FuelState);
             if (!double.IsFinite(actual) || Math.Abs(actual) > Math.Abs(deltaKg) + 0.05 || actual != 0 && Math.Sign(actual) != Math.Sign(deltaKg))
                 return new AarFuelApplyResult(deltaKg, actual, AarFuelApplyStatus.Failed, "Simulator readback did not match the requested fuel direction or bound.");
