@@ -453,6 +453,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
             if (root.TryGetProperty("aircraftType", out var aircraftType)) LocalAircraftType = aircraftType.GetString();
             UpdateLocalCapabilities(root);
             _ = ResendPendingModuleMessagesAsync(_connectionCts?.Token ?? CancellationToken.None);
+            if (_localCapabilities.Contains("aar.tanker") || _localCapabilities.Contains("aar.receiver")) _ = RequestAarStateAsync(_connectionCts?.Token ?? CancellationToken.None);
         }
         else if (type == "AUTH_REFRESHED")
         {
@@ -548,6 +549,15 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         {
             if (cancellationToken.IsCancellationRequested) return;
             await SendPendingModuleMessageAsync(id, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private async Task RequestAarStateAsync(CancellationToken cancellationToken)
+    {
+        try { await SendModuleMessageAsync("aar", 1, "GET_STATE", null, new { }, cancellationToken).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is OperationCanceledException or InvalidOperationException or WebSocketException or ObjectDisposedException)
+        {
+            DataSourceDebugLog.Debug("TacticalLink", $"AAR state snapshot request was skipped | {ex.GetType().Name}");
         }
     }
 

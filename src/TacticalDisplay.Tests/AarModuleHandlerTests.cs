@@ -92,6 +92,23 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task ReceiverStateContainsNoFuelAmountsRatesOrProgress()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Request("receiver", "tanker", 100);
+        await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+        var state = await rig.Send("receiver", "GET_STATE", new { });
+        var serialized = JsonSerializer.Serialize(state.LastPayload);
+
+        Assert.DoesNotContain("plannedKg", serialized);
+        Assert.DoesNotContain("transferredKg", serialized);
+        Assert.DoesNotContain("remainingKg", serialized);
+        Assert.DoesNotContain("effectiveFlow", serialized);
+        Assert.DoesNotContain("currentFuelKg", serialized);
+    }
+
+    [Fact]
     public async Task NetworkReconnectSuspendsThenRecoversOnlyToPreContact()
     {
         var rig = new Rig();

@@ -1991,6 +1991,22 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
                     }
                 }
             }
+            if (e.Kind == "AAR_STATE" && e.Payload.TryGetProperty("operations", out var operationList) && operationList.ValueKind == JsonValueKind.Array)
+            {
+                _activeAarOperations.Clear();
+                _aarActiveOperationId = null;
+                foreach (var operation in operationList.EnumerateArray())
+                {
+                    if (!operation.TryGetProperty("operationId", out var idNode) || idNode.GetString() is not { } currentId ||
+                        !operation.TryGetProperty("state", out var currentStateNode) || currentStateNode.GetString() is not { } currentState) continue;
+                    if (currentState is "Accepted" or "PreContact" or "ClearedContact" or "Contact" or "Refueling" or "Suspended") _activeAarOperations.Add(currentId);
+                    if (operation.TryGetProperty("slot", out var currentSlot) && currentSlot.GetString() == "Active")
+                    {
+                        _aarActiveOperationId = currentId;
+                        AarOperationStateText = currentState.Replace('_', ' ').ToUpperInvariant();
+                    }
+                }
+            }
             if (e.Kind == "REQUEST_QUEUED" && e.Payload.TryGetProperty("requestId", out var requestIdNode) && requestIdNode.GetString() is { } requestId)
             {
                 var callsign = e.Payload.TryGetProperty("receiverParticipantId", out var receiverNode) ?
@@ -2075,7 +2091,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         if (_feed is not IAarPoseSource poseSource) return;
         poseSource.AarSamplingEnabled = IsTacticalLinkConnected && DataSourceModes.IsMsfs(Settings.DataSourceMode) &&
-            (_tacticalLink.LocalTankerJoined || _activeAarOperations.Count > 0);
+            _activeAarOperations.Count > 0;
     }
 
     private void PublishLatestTacticalTelemetry()
