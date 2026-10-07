@@ -1,0 +1,94 @@
+param(
+    [string]$SdkRoot = $env:MSFS2024_SDK
+)
+
+$ErrorActionPreference = 'Stop'
+
+if ([string]::IsNullOrWhiteSpace($SdkRoot)) {
+    $SdkRoot = 'C:\MSFS 2024 SDK'
+}
+$SdkRoot = [System.IO.Path]::GetFullPath($SdkRoot)
+$requiredHeader = Join-Path $SdkRoot 'WASM\include\MSFS\MSFS.h'
+if (-not (Test-Path -LiteralPath $requiredHeader -PathType Leaf)) {
+    throw "MSFS 2024 SDK headers were not found at '$SdkRoot'. Set MSFS2024_SDK to the installed SDK root."
+}
+
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+$msbuild = $null
+if (Test-Path -LiteralPath $vswhere -PathType Leaf) {
+    $msbuild = & $vswhere -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\Current\Bin\MSBuild.exe' | Select-Object -First 1
+}
+if ([string]::IsNullOrWhiteSpace($msbuild)) {
+    $command = Get-Command 'MSBuild.exe' -ErrorAction SilentlyContinue
+    if ($command) { $msbuild = $command.Source }
+}
+if ([string]::IsNullOrWhiteSpace($msbuild) -or -not (Test-Path -LiteralPath $msbuild -PathType Leaf)) {
+    throw 'Visual Studio MSBuild was not found. Install the MSFS 2024 WASM platform toolset and Visual Studio C++ build tools.'
+}
+
+$project = Join-Path $PSScriptRoot 'MSFS.AarBridge.vcxproj'
+$module = Join-Path $PSScriptRoot 'build\vtsd_aar_bridge.wasm'
+& $msbuild $project '/m' '/t:Rebuild' '/p:Configuration=Release' '/p:Platform=MSFS' "/p:MSFS2024_SDK=$SdkRoot" '/verbosity:minimal'
+if ($LASTEXITCODE -ne 0) { throw "MSFS AAR Bridge build failed with exit code $LASTEXITCODE." }
+if (-not (Test-Path -LiteralPath $module -PathType Leaf)) {
+    throw "MSFS toolset completed without producing the expected module: $module"
+}
+
+$resourcesRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\TacticalDisplay.App\Resources\MSFS'))
+$package = Join-Path $resourcesRoot 'vtsd-aar-bridge'
+$staging = Join-Path $resourcesRoot ".vtsd-aar-bridge.staging-$([guid]::NewGuid().ToString('N'))"
+$backup = Join-Path $resourcesRoot ".vtsd-aar-bridge.backup-$([guid]::NewGuid().ToString('N'))"
+New-Item -ItemType Directory -Path (Join-Path $staging 'modules') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Package\manifest.json') -Destination (Join-Path $staging 'manifest.json')
+Copy-Item -LiteralPath $module -Destination (Join-Path $staging 'modules\vtsd_aar_bridge.wasm')
+
+$content = @(
+    Get-ChildItem -LiteralPath $staging -File -Recurse | ForEach-Object {
+        $relative = [System.IO.Path]::GetRelativePath($staging, $_.FullName).Replace('\', '/')
+        [ordered]@{
+            path = $relative
+            size = $_.Length
+            date = ([DateTimeOffset]$_.LastWriteTimeUtc).ToUnixTimeSeconds()
+            hash = (Get-FileHash -LiteralPath $_.FullName -Algorithm MD5).Hash.ToLowerInvariant()
+        }
+    }
+)
+$layout = [ordered]@{ content = $content }
+$layoutPath = Join-Path $staging 'layout.json'
+$layout | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $layoutPath -Encoding utf8
+
+$resolvedParent = $resourcesRoot.TrimEnd('\', '/')
+foreach ($candidate in @($staging, $backup, $package)) {
+    $candidatePath = [System.IO.Path]::GetFullPath($candidate)
+    if ([System.IO.Path]::GetDirectoryName($candidatePath).TrimEnd('\', '/') -ne $resolvedParent) {
+        throw "Refusing to replace a bridge package outside '$resolvedParent'."
+    }
+}
+
+$movedPrevious = $false
+try {
+    if (Test-Path -LiteralPath $package) {
+        Move-Item -LiteralPath $package -Destination $backup
+        $movedPrevious = $true
+    }
+    Move-Item -LiteralPath $staging -Destination $package
+    if (-not (Test-Path -LiteralPath (Join-Path $package 'modules\vtsd_aar_bridge.wasm') -PathType Leaf)) {
+        throw 'The staged bridge package did not contain its WASM module after replacement.'
+    }
+}
+catch {
+    if ((Test-Path -LiteralPath $package) -and $movedPrevious -and (Test-Path -LiteralPath $backup)) {
+        Remove-Item -LiteralPath $package -Recurse -Force
+        Move-Item -LiteralPath $backup -Destination $package
+    }
+    throw
+}
+finally {
+    if (Test-Path -LiteralPath $staging) { Remove-Item -LiteralPath $staging -Recurse -Force }
+}
+if ($movedPrevious) {
+    try { Remove-Item -LiteralPath $backup -Recurse -Force }
+    catch { Write-Warning "New bridge package is installed; backup cleanup failed at '$backup'." }
+}
+
+Write-Host "Built VTSD AAR Bridge package at $package"

@@ -62,14 +62,15 @@ public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarF
         }
         _bridgeMonitorCts.Dispose();
         _bridgeMonitorCts = new CancellationTokenSource();
+        if (_adapter is MsfsAarFuelAdapter msfsAdapter) msfsAdapter.MarkSimulatorDisconnected();
         await _inner.StopAsync().ConfigureAwait(false);
     }
 
     private void OnSnapshotReceived(object? sender, TrafficSnapshot snapshot) => SnapshotReceived?.Invoke(this, snapshot);
     private void OnConnectionChanged(object? sender, bool connected)
     {
+        if (!connected && _adapter is MsfsAarFuelAdapter msfsAdapter) msfsAdapter.MarkSimulatorDisconnected();
         ConnectionChanged?.Invoke(this, connected);
-        _ = connected;
     }
     private void OnAarPoseSampled(object? sender, TacticalDisplay.Core.Models.OwnshipState sample) => AarPoseSampled?.Invoke(this, sample);
     private void OnFuelSampled(object? sender, AarFuelReading sample) => FuelSampled?.Invoke(this, sample);

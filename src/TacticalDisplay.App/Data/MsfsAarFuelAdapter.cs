@@ -124,7 +124,7 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
 
     public void MarkSimulatorDisconnected() => SetRuntime(AarBridgeRuntimeState.Error, "Microsoft Flight Simulator is disconnected; live fuel transfer is stopped.");
 
-    public void MarkInstalledNotRunning(string? version) 
+    public void MarkInstalledNotRunning(string? version)
     {
         lock (_gate) _bridgeVersion = version;
         SetRuntime(AarBridgeRuntimeState.InstalledNotRunning, "Bridge installed. Restart Microsoft Flight Simulator to activate it.");

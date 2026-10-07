@@ -6,6 +6,8 @@ obj/
 publish/
 artifacts/
 out/
+src/MSFS.AarBridge/build/
+src/MSFS.AarBridge/obj/
 
 # Local .NET SDK/cache folder
 .dotnet/

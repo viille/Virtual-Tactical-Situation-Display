@@ -57,20 +57,38 @@ public sealed class MsfsAarBridgeInstallerTests
         Assert.Empty(Directory.EnumerateFileSystemEntries(notCommunity));
     }
 
+    [Fact]
+    public async Task TamperedPackageIsRejectedAndPreviousInstallIsPreserved()
+    {
+        using var temp = new TempDirectory();
+        var community = Directory.CreateDirectory(Path.Combine(temp.Path, "Community2024")).FullName;
+        var installedSource = CreatePackage(temp.Path, "installed-source", "1.0.0");
+        var tamperedSource = CreatePackage(temp.Path, "tampered-source", "1.1.0");
+        var installer = new MsfsAarBridgeInstaller();
+        await installer.InstallOrUpdateAsync(installedSource, community, CancellationToken.None);
+
+        File.AppendAllText(Path.Combine(tamperedSource, "modules", "vtsd_aar_bridge.wasm"), "tampered");
+
+        await Assert.ThrowsAsync<InvalidDataException>(() => installer.InstallOrUpdateAsync(tamperedSource, community, CancellationToken.None));
+
+        Assert.Equal("1.0.0", installer.InspectInstalled(community)!.Version);
+    }
+
     private static string CreatePackage(string root, string name, string version)
     {
         var package = Directory.CreateDirectory(Path.Combine(root, name)).FullName;
         Directory.CreateDirectory(Path.Combine(package, "modules"));
         File.WriteAllText(Path.Combine(package, "modules", "vtsd_aar_bridge.wasm"), "test module bytes");
         File.WriteAllText(Path.Combine(package, "manifest.json"), JsonSerializer.Serialize(new { package_version = version }));
+        var files = new[] { "manifest.json", "modules/vtsd_aar_bridge.wasm" }.Select(relative =>
+        {
+            var path = Path.Combine(package, relative.Replace('/', Path.DirectorySeparatorChar));
+            var bytes = File.ReadAllBytes(path);
+            return new { path = relative, size = bytes.Length, hash = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(bytes)).ToLowerInvariant() };
+        }).ToArray();
         File.WriteAllText(Path.Combine(package, "layout.json"), JsonSerializer.Serialize(new
         {
-            content = new[]
-            {
-                new { path = "manifest.json" },
-                new { path = "layout.json" },
-                new { path = "modules/vtsd_aar_bridge.wasm" }
-            }
+            content = files
         }));
         return package;
     }

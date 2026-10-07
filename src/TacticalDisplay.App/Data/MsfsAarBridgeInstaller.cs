@@ -134,14 +134,29 @@ public sealed class MsfsAarBridgeInstaller
                 if (string.IsNullOrWhiteSpace(relative) || Path.IsPathRooted(relative)) return false;
                 var fullPath = Path.GetFullPath(Path.Combine(packageDirectory, relative.Replace('/', Path.DirectorySeparatorChar)));
                 if (!fullPath.StartsWith(packageRoot, StringComparison.OrdinalIgnoreCase) || !File.Exists(fullPath)) return false;
-                listedFiles.Add(relative.Replace('\\', '/'));
+                var normalizedRelative = relative.Replace('\\', '/');
+                if (normalizedRelative.Equals("layout.json", StringComparison.OrdinalIgnoreCase) || !listedFiles.Add(normalizedRelative)) return false;
+                var fileInfo = new FileInfo(fullPath);
+                if (!entry.TryGetProperty("size", out var sizeNode) || !sizeNode.TryGetInt64(out var expectedSize) || expectedSize != fileInfo.Length) return false;
+                if (!entry.TryGetProperty("hash", out var hashNode) || hashNode.ValueKind != JsonValueKind.String) return false;
+                var expectedHash = hashNode.GetString();
+                if (string.IsNullOrWhiteSpace(expectedHash)) return false;
+                using var stream = File.OpenRead(fullPath);
+                var actualHash = Convert.ToHexString(System.Security.Cryptography.MD5.HashData(stream));
+                if (!actualHash.Equals(expectedHash, StringComparison.OrdinalIgnoreCase)) return false;
             }
-            return listedFiles.Contains("manifest.json") && listedFiles.Contains("layout.json") && listedFiles.Contains(ModuleRelativePath) &&
-                File.Exists(Path.Combine(packageDirectory, ModuleRelativePath.Replace('/', Path.DirectorySeparatorChar)));
+            if (!listedFiles.Contains("manifest.json") || !listedFiles.Contains(ModuleRelativePath)) return false;
+            var actualFiles = Directory.EnumerateFiles(packageDirectory, "*", SearchOption.AllDirectories)
+                .Where(path => !Path.GetRelativePath(packageDirectory, path).Equals("layout.json", StringComparison.OrdinalIgnoreCase))
+                .Select(path => Path.GetRelativePath(packageDirectory, path).Replace('\\', '/'))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return actualFiles.SetEquals(listedFiles);
         }
         catch (IOException) { return false; }
         catch (UnauthorizedAccessException) { return false; }
         catch (JsonException) { return false; }
+        catch (ArgumentException) { return false; }
+        catch (NotSupportedException) { return false; }
     }
 
     private static void CopyDirectory(string source, string destination, CancellationToken cancellationToken)

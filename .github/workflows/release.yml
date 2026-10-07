@@ -40,6 +40,20 @@ jobs:
       - name: Restore
         run: dotnet restore tactical-situation-display.sln
 
+      - name: Verify MSFS 2024 AAR Bridge Package
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: |
+          $numericVersion = $env:RELEASE_VERSION.Split('-')[0]
+          if ([version]$numericVersion -ge [version]'0.16.0') {
+            $package = 'src/TacticalDisplay.App/Resources/MSFS/vtsd-aar-bridge'
+            $module = Join-Path $package 'modules/vtsd_aar_bridge.wasm'
+            if (-not (Test-Path (Join-Path $package 'manifest.json')) -or -not (Test-Path (Join-Path $package 'layout.json')) -or -not (Test-Path $module)) {
+              throw 'VTSD v0.16.0 and newer releases require the built MSFS 2024 AAR Bridge package. Build it with src/MSFS.AarBridge/Build-MsfsAarBridge.ps1 and include the generated package.'
+            }
+          }
+
       - name: Report Mapbox Defaults
         shell: pwsh
         env:

@@ -64,9 +64,14 @@ public sealed class MsfsAarFuelAdapterTests
                 "GET_FUEL_STATE" => new AarBridgeResponse { RequestId = request.RequestId, Action = request.Action, ProtocolVersion = 1, FuelState = State(_fuelKg), Status = "Success" },
                 "APPLY_FUEL_DELTA" => new AarBridgeResponse
                 {
-                    RequestId = request.RequestId, Action = request.Action, ProtocolVersion = 1,
-                    Status = "Failed", Error = "Simulator only applied part of the requested update.",
-                    RequestedKg = request.DeltaKg, AppliedKg = 3, FuelState = State(_fuelKg += 3)
+                    RequestId = request.RequestId,
+                    Action = request.Action,
+                    ProtocolVersion = 1,
+                    Status = "Failed",
+                    Error = "Simulator only applied part of the requested update.",
+                    RequestedKg = request.DeltaKg,
+                    AppliedKg = 3,
+                    FuelState = State(_fuelKg += 3)
                 },
                 _ => throw new InvalidOperationException("Unexpected bridge action: " + request.Action)
             };
