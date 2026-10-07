@@ -3,7 +3,7 @@ using TacticalDisplay.Core.Services;
 
 namespace TacticalDisplay.App.Data;
 
-public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarFuelAdapter
+public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarFuelAdapter, IAarBridgeRuntimeStatusSource
 {
     private readonly ITrafficDataFeed _inner;
     private readonly IAarFuelAdapter _adapter;
@@ -17,6 +17,7 @@ public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarF
         _inner.SnapshotReceived += OnSnapshotReceived;
         _inner.ConnectionChanged += OnConnectionChanged;
         _adapter.FuelSampled += OnFuelSampled;
+        if (_adapter is MsfsAarFuelAdapter msfsAdapter) msfsAdapter.RuntimeStateChanged += OnBridgeRuntimeStateChanged;
         if (_inner is IAarPoseSource poseSource) poseSource.AarPoseSampled += OnAarPoseSampled;
     }
 
@@ -24,6 +25,10 @@ public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarF
     public event EventHandler<bool>? ConnectionChanged;
     public event EventHandler<TacticalDisplay.Core.Models.OwnshipState>? AarPoseSampled;
     public event EventHandler<AarFuelReading>? FuelSampled;
+    public event EventHandler<AarBridgeRuntimeState>? BridgeRuntimeStateChanged;
+    public AarBridgeRuntimeState? BridgeRuntimeState => (_adapter as MsfsAarFuelAdapter)?.RuntimeState;
+    public string? BridgeVersion => (_adapter as MsfsAarFuelAdapter)?.BridgeVersion;
+    public string? BridgeDiagnostic => (_adapter as MsfsAarFuelAdapter)?.Diagnostic;
     public bool AarSamplingEnabled
     {
         get => _inner is IAarPoseSource poseSource && poseSource.AarSamplingEnabled;
@@ -74,6 +79,7 @@ public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarF
     }
     private void OnAarPoseSampled(object? sender, TacticalDisplay.Core.Models.OwnshipState sample) => AarPoseSampled?.Invoke(this, sample);
     private void OnFuelSampled(object? sender, AarFuelReading sample) => FuelSampled?.Invoke(this, sample);
+    private void OnBridgeRuntimeStateChanged(object? sender, AarBridgeRuntimeState state) => BridgeRuntimeStateChanged?.Invoke(this, state);
 
     private async Task MonitorBridgeAsync(MsfsAarFuelAdapter adapter, CancellationToken cancellationToken)
     {
@@ -105,7 +111,9 @@ public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarF
         _inner.ConnectionChanged -= OnConnectionChanged;
         _adapter.FuelSampled -= OnFuelSampled;
         if (_inner is IAarPoseSource poseSource) poseSource.AarPoseSampled -= OnAarPoseSampled;
+        if (_adapter is MsfsAarFuelAdapter msfsAdapter) msfsAdapter.RuntimeStateChanged -= OnBridgeRuntimeStateChanged;
         _bridgeMonitorCts.Cancel();
+        if (_adapter is MsfsAarFuelAdapter bridgeAdapter) bridgeAdapter.MarkSimulatorDisconnected();
         if (_bridgeMonitorTask is not null)
         {
             try { await _bridgeMonitorTask.ConfigureAwait(false); }

@@ -121,6 +121,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _feed.SnapshotReceived += OnSnapshotReceived;
         if (_feed is IAarPoseSource initialPoseSource) initialPoseSource.AarPoseSampled += OnAarPoseSampled;
         if (_feed is IAarFuelAdapter initialFuelAdapter) initialFuelAdapter.FuelSampled += OnAarFuelSampled;
+        if (_feed is IAarBridgeRuntimeStatusSource initialBridgeStatus)
+        {
+            initialBridgeStatus.BridgeRuntimeStateChanged += OnAarBridgeRuntimeStateChanged;
+            RefreshMsfsAarBridgeStatus();
+        }
 
         ToggleOrientationCommand = CreateUiCommand(nameof(ToggleOrientationCommand), ToggleOrientation);
         IncreaseRangeCommand = CreateUiCommand(nameof(IncreaseRangeCommand), IncreaseRange);
@@ -996,6 +1001,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             _runCts.Cancel();
             await _tacticalLink.DisposeAsync();
             await _feed.StopAsync();
+            if (_feed is IAarBridgeRuntimeStatusSource bridgeStatus) bridgeStatus.BridgeRuntimeStateChanged -= OnAarBridgeRuntimeStateChanged;
             await _feed.DisposeAsync();
         }
         finally
@@ -1780,6 +1786,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _feed.SnapshotReceived -= OnSnapshotReceived;
         if (_feed is IAarPoseSource oldPoseSource) oldPoseSource.AarPoseSampled -= OnAarPoseSampled;
         if (_feed is IAarFuelAdapter oldFuelAdapter) oldFuelAdapter.FuelSampled -= OnAarFuelSampled;
+        if (_feed is IAarBridgeRuntimeStatusSource oldBridgeStatus) oldBridgeStatus.BridgeRuntimeStateChanged -= OnAarBridgeRuntimeStateChanged;
         await _feed.StopAsync();
         await _feed.DisposeAsync();
 
@@ -1796,6 +1803,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _feed.SnapshotReceived += OnSnapshotReceived;
         if (_feed is IAarPoseSource newPoseSource) newPoseSource.AarPoseSampled += OnAarPoseSampled;
         if (_feed is IAarFuelAdapter newFuelAdapter) newFuelAdapter.FuelSampled += OnAarFuelSampled;
+        if (_feed is IAarBridgeRuntimeStatusSource newBridgeStatus) newBridgeStatus.BridgeRuntimeStateChanged += OnAarBridgeRuntimeStateChanged;
+        RefreshMsfsAarBridgeStatus();
         UpdateAarSampling();
         await _feed.StartAsync(_runCts.Token);
 
@@ -2385,9 +2394,45 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
         Settings.Msfs2024CommunityFolder = community;
         var installed = _msfsAarBridgeInstaller.InspectInstalled(community);
+        var bridgeStatus = _feed as IAarBridgeRuntimeStatusSource;
+        var runtimeState = bridgeStatus?.BridgeRuntimeState;
+        var version = bridgeStatus?.BridgeVersion ?? installed?.Version;
+        var name = version is null ? "MSFS AAR Bridge" : $"MSFS AAR Bridge {version}";
+        if (installed is null && runtimeState is not (AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable))
+        {
+            MsfsAarBridgeStatusText = "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not.";
+            return;
+        }
+        if (runtimeState is { } state)
+        {
+            var adapter = _feed as IAarFuelAdapter;
+            var fuelRead = adapter?.CanReadFuel == true ? "ready" : "unavailable";
+            var fuelWrite = adapter?.CanWriteFuel == true ? "ready" : "unavailable";
+            MsfsAarBridgeStatusText = state switch
+            {
+                AarBridgeRuntimeState.NotInstalled => "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not.",
+                AarBridgeRuntimeState.InstalledNotRunning => $"{name} installed. Restart MSFS 2024 to activate it.",
+                AarBridgeRuntimeState.Connecting => $"{name} connecting to MSFS 2024.",
+                AarBridgeRuntimeState.ConnectedReadOnly => $"{name} connected. Fuel read {fuelRead}; fuel write unavailable. {bridgeStatus?.BridgeDiagnostic ?? "Dry Hookup remains available."}",
+                AarBridgeRuntimeState.ConnectedWritable => $"{name} connected. Fuel read {fuelRead}; fuel write {fuelWrite}.",
+                AarBridgeRuntimeState.ProtocolMismatch => $"{name} protocol is incompatible. Update the bridge. {bridgeStatus?.BridgeDiagnostic}",
+                _ => $"{name} error. {bridgeStatus?.BridgeDiagnostic ?? "Fuel transfer is stopped; Dry Hookup remains available."}"
+            };
+            return;
+        }
         MsfsAarBridgeStatusText = installed is null
             ? "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not."
-            : $"AAR Bridge {installed.Version} installed. Restart MSFS 2024 to activate; runtime fuel capability is not connected in this build.";
+            : $"{name} installed. Start MSFS 2024 to connect the runtime bridge.";
+    }
+
+    private void OnAarBridgeRuntimeStateChanged(object? sender, AarBridgeRuntimeState state)
+    {
+        if (!Application.Current.Dispatcher.CheckAccess())
+        {
+            Application.Current.Dispatcher.BeginInvoke(() => OnAarBridgeRuntimeStateChanged(sender, state));
+            return;
+        }
+        RefreshMsfsAarBridgeStatus();
     }
 
     private bool TryParseAarDisplayedAmount(string text, out double kilograms)
