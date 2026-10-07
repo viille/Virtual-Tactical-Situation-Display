@@ -179,8 +179,9 @@ internal sealed class AarClient : ITacticalLinkClientModule, IDisposable
             fuel = TryObject(payload, "fuel", out var fuelNode) ? ReadFuelSummary(fuelNode) : null;
             ownPending = StringValue(payload, "ownPendingRequestId", out var pendingId) ? pendingId : null;
         }
-        else if (message.Kind is "QUEUE_UPDATED" && TryObject(payload, "queue", out var queueUpdate))
+        else if (message.Kind == "QUEUE_UPDATED")
         {
+            var queueUpdate = TryObject(payload, "queue", out var nestedQueue) ? nestedQueue : payload;
             ReadQueue(queueUpdate, out pending, out committedNext);
         }
 

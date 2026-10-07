@@ -71,6 +71,23 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task RejectAndReceiverCancelPublishFreshTankerQueueSnapshots()
+    {
+        var rig = new Rig();
+        await rig.PrepareTankerAndReceiver();
+
+        var rejectedRequest = await rig.Request("receiver", "tanker", 100);
+        var rejected = await rig.Send("tanker", "REJECT_REQUEST", new { requestId = rig.RequestIdFrom(rejectedRequest) });
+        var rejectedQueue = Assert.Single(rejected.Events, item => item.Kind == "QUEUE_UPDATED");
+        Assert.Empty(rejectedQueue.Payload.GetProperty("pending").EnumerateArray());
+
+        var cancelledRequest = await rig.Request("receiver", "tanker", 100);
+        var cancelled = await rig.Send("receiver", "CANCEL_REQUEST", new { requestId = rig.RequestIdFrom(cancelledRequest) });
+        var cancelledQueue = Assert.Single(cancelled.Events, item => item.Kind == "QUEUE_UPDATED");
+        Assert.Empty(cancelledQueue.Payload.GetProperty("pending").EnumerateArray());
+    }
+
+    [Fact]
     public async Task PromotedCommittedReceiverMustFollowAsternThenTankerClearsContact()
     {
         var rig = new Rig();

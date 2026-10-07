@@ -150,6 +150,22 @@ public sealed class TacticalLinkClientProtocolTests
     }
 
     [Fact]
+    public void AarClientReplacesQueueFromLiveQueueUpdatedEvent()
+    {
+        var client = new TacticalLinkClient(null!);
+        using var aar = new AarClient(client, CancellationToken.None);
+        client.HandleMessage("""
+            {"protocolVersion":1,"type":"MODULE_EVENT","module":"aar","moduleProtocolVersion":1,"transportSequence":1,"kind":"AAR_STATE","payload":{"queue":{"pending":[{"requestId":"old","queueOrder":0,"status":"Pending"}]}}}
+            """);
+
+        client.HandleMessage("""
+            {"protocolVersion":1,"type":"MODULE_EVENT","module":"aar","moduleProtocolVersion":1,"transportSequence":2,"kind":"QUEUE_UPDATED","payload":{"pending":[{"requestId":"new","queueOrder":0,"status":"Pending"}],"committedNext":null}}
+            """);
+
+        Assert.Equal("new", Assert.Single(aar.State.PendingQueue).RequestId);
+    }
+
+    [Fact]
     public void AarClientKeepsStructuredSafeMaximumForTheViewModel()
     {
         var client = new TacticalLinkClient(null!);
