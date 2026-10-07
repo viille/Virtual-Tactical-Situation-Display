@@ -235,9 +235,9 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var requested = String(context.Payload, "availability");
         if (requested is not ("Available" or "Unavailable")) throw new ArgumentException("Availability must be Available or Unavailable.");
         var state = GetParticipant(peer.ParticipantId);
-        if (requested == "Available" && (!state.ReserveSet || !state.AdapterReady || state.CurrentFuelKg is null || state.FuelCapacityKg is null))
-            throw new InvalidOperationException("A protected reserve and ready fuel adapter are required before becoming Available.");
-        if (requested == "Available" && AvailableToPromise(peer.ParticipantId) <= 0)
+        if (requested == "Available" && state.AdapterReady && (!state.ReserveSet || state.CurrentFuelKg is null || state.FuelCapacityKg is null))
+            throw new InvalidOperationException("A protected reserve and current fuel state are required when live fuel transfer is available.");
+        if (requested == "Available" && state.AdapterReady && AvailableToPromise(peer.ParticipantId) <= 0)
             throw new InvalidOperationException("No tanker fuel is available above the protected reserve and accepted commitments.");
         SetAvailabilityState(context, state, requested);
         return Result("TANKER_AVAILABILITY_UPDATED", null, null, new { availability = requested, fuel = FuelSummary(peer.ParticipantId) });
@@ -298,18 +298,18 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             var tankerHistory = GetParticipant(operation.TankerId).Poses;
             var receiverHistory = GetParticipant(operation.ReceiverId).Poses;
             if (tankerHistory.Count == 0 || receiverHistory.Count == 0) continue;
-            var commonTime = tankerHistory.Last().TimestampUtc > receiverHistory.Last().TimestampUtc
+            var commonTime = tankerHistory.Last().TimestampUtc < receiverHistory.Last().TimestampUtc
                 ? tankerHistory.Last().TimestampUtc
                 : receiverHistory.Last().TimestampUtc;
-            var tankerPose = Nearest(tankerHistory, commonTime);
-            var receiverPose = Nearest(receiverHistory, commonTime);
+            var tankerPose = At(tankerHistory, commonTime);
+            var receiverPose = At(receiverHistory, commonTime);
             if (tankerPose is null || receiverPose is null ||
                 !AarContactGeometry.TryMeasure(tankerPose, receiverPose, _contactConfiguration, _clock.GetUtcNow(), out var relative))
                 continue;
 
             var capture = AarContactGeometry.IsInsideCapture(relative, _contactConfiguration);
             var release = AarContactGeometry.IsInsideRelease(relative, _contactConfiguration);
-            var now = _clock.GetUtcNow();
+            var now = commonTime;
             if (operation.State == "ClearedContact" && operation.ClearanceValid)
             {
                 operation.CaptureSince = capture ? operation.CaptureSince ?? now : null;
@@ -331,7 +331,21 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             {
                 operation.ReleaseSince = release ? null : operation.ReleaseSince ?? now;
                 if (operation.ReleaseSince is { } released && now - released >= _contactConfiguration.EffectiveReleaseDebounce)
-                    CompleteOperation(context, operation, "CONTACT_RELEASED");
+                {
+                    if (operation.PendingTransfer is not null)
+                    {
+                        Suspend(operation, "CONTACT_LOST_DURING_UNCONFIRMED_TRANSFER", TimeSpan.FromSeconds(5));
+                        continue;
+                    }
+                    operation.State = "Astern";
+                    operation.ClearanceValid = false;
+                    operation.FuelOnAuthorized = false;
+                    operation.CaptureSince = null;
+                    operation.ReleaseSince = null;
+                    operation.Revision++;
+                    Publish(operation.TankerId, "CONTACT_RELEASED", operation.Id, operation.Revision, OperationView(operation));
+                    Publish(operation.ReceiverId, "CONTACT_RELEASED", operation.Id, operation.Revision, ReceiverOperationView(operation));
+                }
             }
         }
         _ = sampleTime;
@@ -392,9 +406,9 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var tankerPoses = GetParticipant(operation.TankerId).Poses;
         var receiverPoses = GetParticipant(operation.ReceiverId).Poses;
         if (tankerPoses.Count == 0 || receiverPoses.Count == 0) return;
-        var poseTime = tankerPoses.Last().TimestampUtc > receiverPoses.Last().TimestampUtc ? tankerPoses.Last().TimestampUtc : receiverPoses.Last().TimestampUtc;
-        var tankerPose = Nearest(tankerPoses, poseTime);
-        var receiverPose = Nearest(receiverPoses, poseTime);
+        var poseTime = tankerPoses.Last().TimestampUtc < receiverPoses.Last().TimestampUtc ? tankerPoses.Last().TimestampUtc : receiverPoses.Last().TimestampUtc;
+        var tankerPose = At(tankerPoses, poseTime);
+        var receiverPose = At(receiverPoses, poseTime);
         if (tankerPose is null || receiverPose is null ||
             !AarContactGeometry.TryMeasure(tankerPose, receiverPose, _contactConfiguration, now, out var relative) ||
             !AarContactGeometry.IsInsideRelease(relative, _contactConfiguration)) return;
@@ -426,9 +440,24 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             new { operationId = operation.Id, status = "TRANSFER_IN_PROGRESS", proposalId = proposal.Id, participantRole = "Receiver", deltaKg = amount, targetCumulativeKg = proposal.TargetCumulativeKg, operationRevision = operation.Revision });
     }
 
-    private AarPose? Nearest(Queue<AarPose> poses, DateTimeOffset timestamp) =>
-        poses.OrderBy(pose => Math.Abs((pose.TimestampUtc - timestamp).TotalMilliseconds)).FirstOrDefault(pose =>
+    private AarPose? At(Queue<AarPose> poses, DateTimeOffset timestamp)
+    {
+        var ordered = poses.OrderBy(pose => pose.TimestampUtc).ToArray();
+        var before = ordered.LastOrDefault(pose => pose.TimestampUtc <= timestamp);
+        var after = ordered.FirstOrDefault(pose => pose.TimestampUtc >= timestamp);
+        if (before is not null && after is not null)
+        {
+            if (before.TimestampUtc == after.TimestampUtc) return before;
+            var gap = after.TimestampUtc - before.TimestampUtc;
+            if (gap <= _contactConfiguration.EffectiveMaximumAlignmentGap)
+            {
+                return AarContactGeometry.InterpolatePose(before, after, timestamp);
+            }
+        }
+
+        return ordered.OrderBy(pose => Math.Abs((pose.TimestampUtc - timestamp).TotalMilliseconds)).FirstOrDefault(pose =>
             Math.Abs((pose.TimestampUtc - timestamp).TotalMilliseconds) <= _contactConfiguration.EffectiveMaximumAlignmentGap.TotalMilliseconds);
+    }
 
     private void CompleteOperation(ModuleCommandContext context, AarOperation operation, string terminalKind)
     {
@@ -459,17 +488,21 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         RequireCapability(tanker, "aar.tanker");
         var tankerState = GetParticipant(tankerId);
         var receiverState = GetParticipant(peer.ParticipantId);
-        EnsureFreshFuelState(receiverState);
-        EnsureFreshFuelState(tankerState);
+        if (HasLiveReceiverWork(peer.ParticipantId)) throw new InvalidOperationException("This receiver already has a pending request or live AAR operation.");
+        var transferMode = OptionalString(context.Payload, "transferMode") ?? "Fuel";
+        if (transferMode is not ("Fuel" or "DryHookup")) throw new ArgumentException("transferMode must be Fuel or DryHookup.");
+        if (transferMode == "Fuel")
+        {
+            EnsureFreshFuelState(receiverState);
+            EnsureFreshFuelState(tankerState);
+        }
         if (!tankerState.TankerJoined || tankerState.Availability is not ("Available" or "Busy")) throw new InvalidOperationException("The selected tanker is not Available.");
         var requestAmount = ParseRequestAmount(context.Payload);
         EnsureBoomCompatible(peer.AircraftType, tanker.AircraftType);
-        if (_requests.Values.Any(request => request.ReceiverId == peer.ParticipantId && request.TankerId == tankerId && request.Status == "Pending"))
-            throw new InvalidOperationException("This receiver already has a pending request to that tanker.");
         var pending = _requests.Values.Count(request => request.TankerId == tankerId && request.Status == "Pending");
         if (pending >= MaxPendingPerTanker) throw new InvalidOperationException("The tanker pending request queue is full.");
         var id = "req_" + Guid.NewGuid().ToString("N");
-        var item = new AarRequest(id, peer.ParticipantId, tankerId, requestAmount, _clock.GetUtcNow(), ++_nextQueueOrder);
+        var item = new AarRequest(id, peer.ParticipantId, tankerId, requestAmount, _clock.GetUtcNow(), ++_nextQueueOrder) { TransferMode = transferMode };
         _requests.Add(id, item);
         Notify(context, tankerId, "REQUEST_QUEUED", null, null, RequestView(item));
         return Result("REQUEST_QUEUED", null, null, RequestView(item), id);
@@ -485,21 +518,31 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         var receiver = context.GetPeers().FirstOrDefault(candidate => candidate.ParticipantId == request.ReceiverId && candidate.IsConnected)
             ?? throw new InvalidOperationException("The receiver is no longer connected.");
         var receiverState = GetParticipant(receiver.ParticipantId);
-        EnsureFreshFuelState(tankerState);
-        EnsureFreshFuelState(receiverState);
+        var transferMode = OptionalString(context.Payload, "transferMode") ?? request.TransferMode;
+        if (transferMode is not ("Fuel" or "DryHookup")) throw new ArgumentException("transferMode must be Fuel or DryHookup.");
+        if (transferMode == "Fuel")
+        {
+            EnsureFreshFuelState(tankerState);
+            EnsureFreshFuelState(receiverState);
+        }
         if (!tankerState.TankerJoined || tankerState.Availability is not ("Available" or "Busy")) throw new InvalidOperationException("The tanker is not available for acceptance.");
-        if (!tankerState.AdapterReady || !receiverState.AdapterReady) throw new InvalidOperationException("Both fuel adapters must be ready.");
+        if (transferMode == "Fuel" && (!tankerState.AdapterReady || !receiverState.AdapterReady)) throw new InvalidOperationException("Both fuel adapters must be ready for live fuel transfer; choose DryHookup without a writable bridge.");
         EnsureBoomCompatible(receiver.AircraftType, peer.AircraftType);
         var tankerOps = _operations.Values.Where(operation => operation.TankerId == peer.ParticipantId && !IsTerminal(operation.State)).ToArray();
         if (tankerOps.Count(operation => operation.Slot == "Active") >= 1 && tankerOps.Any(operation => operation.Slot == "CommittedNext"))
             throw new InvalidOperationException("The CommittedNext slot is occupied; the request remains Pending.");
         var slot = tankerOps.Any(operation => operation.Slot == "Active") ? "CommittedNext" : "Active";
-        var committed = tankerOps.Sum(operation => Math.Max(0, operation.PlannedKg - operation.TransferredKg));
-        var available = Math.Max(0, tankerState.CurrentFuelKg!.Value - tankerState.ProtectedReserveKg - committed);
-        var receiverFree = Math.Max(0, receiverState.FuelCapacityKg!.Value - receiverState.CurrentFuelKg!.Value);
-        var desired = request.RequestedKg ?? receiverFree;
-        var planned = Math.Min(desired, Math.Min(receiverFree, available));
-        if (planned <= 0) throw new InvalidOperationException("No safe positive fuel commitment is available; request remains Pending.");
+        var planned = 0d;
+        if (transferMode == "Fuel")
+        {
+            var committed = tankerOps.Sum(operation => Math.Max(0, operation.PlannedKg - operation.TransferredKg));
+            var available = Math.Max(0, tankerState.CurrentFuelKg!.Value - tankerState.ProtectedReserveKg - committed);
+            var receiverFree = Math.Max(0, receiverState.FuelCapacityKg!.Value - receiverState.CurrentFuelKg!.Value);
+            var desired = request.RequestedKg ?? receiverFree;
+            if (TryNumber(context.Payload, "plannedKg", out var selectedPlan)) desired = Math.Min(desired, selectedPlan);
+            planned = Math.Min(desired, Math.Min(receiverFree, available));
+            if (planned <= 0) throw new InvalidOperationException("No safe positive fuel commitment is available; request remains Pending.");
+        }
         var registrySnapshot = registry.Current ?? throw new InvalidOperationException("AAR registry is unavailable.");
         var tankerProfile = ResolveProfile(registrySnapshot, peer.AircraftType)!;
         var receiverProfile = ResolveProfile(registrySnapshot, receiver.AircraftType)!;
@@ -508,6 +551,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             "aar_" + Guid.NewGuid().ToString("N"), request.Id, peer.ParticipantId, receiver.ParticipantId,
             peer.ClientInstanceId, receiver.ClientInstanceId, peer.ConnectionGeneration, receiver.ConnectionGeneration,
             slot, "Accepted", 1, request.RequestedKg, planned, 0, flow, registrySnapshot.Version, tankerProfile, receiverProfile, peer, receiver, _clock.GetUtcNow());
+        operation.TransferMode = transferMode;
         _operations.Add(operation.Id, operation);
         request.Status = "Accepted";
         request.OperationId = operation.Id;
@@ -551,19 +595,23 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             ?? throw new InvalidOperationException("The receiver is not connected.");
         RequireCapability(receiver, "aar.receiver");
         if (receiverId == peer.ParticipantId) throw new InvalidOperationException("A tanker cannot add itself to its own queue.");
+        if (HasLiveReceiverWork(receiverId)) throw new InvalidOperationException("This receiver already has a pending request or live AAR operation.");
         var tankerState = GetParticipant(peer.ParticipantId);
         var receiverState = GetParticipant(receiverId);
-        EnsureFreshFuelState(tankerState);
-        EnsureFreshFuelState(receiverState);
         EnsureBoomCompatible(receiver.AircraftType, peer.AircraftType);
-        if (receiverState.FuelCapacityKg is null || receiverState.CurrentFuelKg is null || receiverState.FuelCapacityKg <= receiverState.CurrentFuelKg)
-            throw new InvalidOperationException("The receiver has no verified fuel capacity available.");
-        if (_requests.Values.Any(item => item.TankerId == peer.ParticipantId && item.ReceiverId == receiverId && item.Status == "Pending"))
-            throw new InvalidOperationException("This receiver is already pending in the tanker queue.");
+        var transferMode = OptionalString(context.Payload, "transferMode") ?? "Fuel";
+        if (transferMode is not ("Fuel" or "DryHookup")) throw new ArgumentException("transferMode must be Fuel or DryHookup.");
+        if (transferMode == "Fuel")
+        {
+            EnsureFreshFuelState(tankerState);
+            EnsureFreshFuelState(receiverState);
+            if (receiverState.FuelCapacityKg is null || receiverState.CurrentFuelKg is null || receiverState.FuelCapacityKg <= receiverState.CurrentFuelKg)
+                throw new InvalidOperationException("The receiver has no verified fuel capacity available.");
+        }
         if (_requests.Values.Count(item => item.TankerId == peer.ParticipantId && item.Status == "Pending") >= MaxPendingPerTanker)
             throw new InvalidOperationException("The tanker pending queue is full.");
         var item = new AarRequest("req_" + Guid.NewGuid().ToString("N"), receiverId, peer.ParticipantId, null, _clock.GetUtcNow(), ++_nextQueueOrder)
-        { Source = "TankerAdded" };
+        { Source = "TankerAdded", TransferMode = transferMode };
         _requests.Add(item.Id, item);
         Notify(context, receiverId, "TANKER_ADDED_RECEIVER", null, null, new { requestId = item.Id, tankerParticipantId = peer.ParticipantId, status = "Pending" });
         Notify(context, peer.ParticipantId, "QUEUE_UPDATED", null, null, QueueView(peer.ParticipantId));
@@ -636,6 +684,28 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             throw new InvalidOperationException("Transfer mode can only be selected before contact.");
         var mode = String(context.Payload, "transferMode");
         if (mode is not ("Fuel" or "DryHookup")) throw new ArgumentException("transferMode must be Fuel or DryHookup.");
+        if (operation.PendingTransfer is not null || operation.TransferredKg > 0)
+            throw new InvalidOperationException("Transfer mode cannot change after fuel has been proposed or applied.");
+        if (mode == "DryHookup")
+        {
+            operation.PlannedKg = 0;
+            operation.FuelOnAuthorized = false;
+        }
+        else if (operation.TransferMode == "DryHookup")
+        {
+            var tanker = GetParticipant(operation.TankerId);
+            var receiver = GetParticipant(operation.ReceiverId);
+            EnsureFreshFuelState(tanker);
+            EnsureFreshFuelState(receiver);
+            if (!tanker.AdapterReady || !receiver.AdapterReady) throw new InvalidOperationException("Both writable fuel adapters must be ready for live fuel transfer.");
+            var otherCommitments = _operations.Values.Where(item => item.TankerId == operation.TankerId && item.Id != operation.Id && !IsTerminal(item.State))
+                .Sum(item => Math.Max(0, item.PlannedKg - item.TransferredKg));
+            var available = Math.Max(0, tanker.CurrentFuelKg!.Value - tanker.ProtectedReserveKg - otherCommitments);
+            var receiverFree = Math.Max(0, receiver.FuelCapacityKg!.Value - receiver.CurrentFuelKg!.Value);
+            var desired = operation.RequestedKg ?? receiverFree;
+            operation.PlannedKg = Math.Min(desired, Math.Min(available, receiverFree));
+            if (operation.PlannedKg <= 0) throw new InvalidOperationException("No safe positive fuel commitment is available.");
+        }
         operation.TransferMode = mode;
         operation.Revision++;
         Publish(operation.TankerId, "TRANSFER_MODE_UPDATED", operation.Id, operation.Revision, OperationView(operation));
@@ -647,7 +717,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     {
         RequireTanker(peer);
         var operationId = context.OperationId ?? String(context.Payload, "operationId");
-        if (!_operations.TryGetValue(operationId, out var operation) || operation.TankerId != peer.ParticipantId || operation.Slot != "Active" || operation.State is not ("Accepted" or "PreContact"))
+        if (!_operations.TryGetValue(operationId, out var operation) || operation.TankerId != peer.ParticipantId || operation.Slot != "Active" || operation.State != "Accepted")
             throw new InvalidOperationException("Only the tanker may clear an active staged receiver astern.");
         operation.State = "Astern";
         operation.Revision++;
@@ -767,16 +837,16 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             throw new InvalidOperationException("The participant does not own this operation.");
         if (target == "PreContact")
         {
-            if (peer.ParticipantId != operation.TankerId || operation.State != "Accepted") throw new InvalidOperationException("Only the tanker can start PreContact from Accepted.");
+            if (peer.ParticipantId != operation.TankerId || operation.State != "Astern") throw new InvalidOperationException("Only the tanker can start PreContact after clearing the receiver astern.");
         }
         else if (target == "ClearedContact")
         {
-            if (peer.ParticipantId != operation.TankerId || operation.State is not ("Astern" or "PreContact")) throw new InvalidOperationException("Only the tanker can clear contact after clearing the receiver astern.");
+            if (peer.ParticipantId != operation.TankerId || operation.State != "PreContact") throw new InvalidOperationException("Only the tanker can clear contact after CLEAR ASTERN and PreContact.");
             operation.ClearanceValid = true;
         }
         else if (target == "Complete")
         {
-            if (operation.State is not ("Accepted" or "PreContact" or "ClearedContact" or "Contact" or "Refueling"))
+            if (operation.State is not ("Accepted" or "Astern" or "PreContact" or "ClearedContact" or "Contact" or "Refueling"))
                 throw new InvalidOperationException("The active operation cannot disconnect from its current state.");
             if (operation.PendingTransfer is not null)
             {
@@ -1060,6 +1130,10 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     }
 
     private bool HasNonTerminalOperation(string participantId) => _operations.Values.Any(operation => operation.TankerId == participantId && !IsTerminal(operation.State));
+
+    private bool HasLiveReceiverWork(string receiverId) =>
+        _requests.Values.Any(request => request.ReceiverId == receiverId && request.Status == "Pending") ||
+        _operations.Values.Any(operation => operation.ReceiverId == receiverId && !IsTerminal(operation.State));
     private static bool HasTankerMode(AarPeerSnapshot peer) => peer.Capabilities.Contains("aar.tanker");
     private ParticipantState GetParticipant(string participantId) => _participants.GetValueOrDefault(participantId) ?? (_participants[participantId] = new ParticipantState());
     private static void RequireCapability(AarPeerSnapshot peer, string capability)
@@ -1156,6 +1230,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     private static string ReceiverStatus(string state) => state switch
     {
         "Accepted" => "REQUEST_ACCEPTED",
+        "Astern" => "CLEAR_ASTERN",
         "PreContact" => "PROCEED_TO_PRECONTACT",
         "ClearedContact" => "CLEARED_CONTACT",
         "Contact" => "CONTACT",
@@ -1182,11 +1257,23 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         return value.GetString()!;
     }
 
+    private static string? OptionalString(JsonElement payload, string name) =>
+        payload.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+
     private static double Number(JsonElement payload, string name, double min, double max)
     {
         if (!payload.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var result) || !double.IsFinite(result) || result < min || result > max)
             throw new ArgumentException($"{name} must be a finite number from {min} to {max}.");
         return result;
+    }
+
+    private static bool TryNumber(JsonElement payload, string name, out double result)
+    {
+        result = 0;
+        if (!payload.TryGetProperty(name, out var value)) return false;
+        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out result) || !double.IsFinite(result) || result <= 0 || result > 1_000_000)
+            throw new ArgumentException($"{name} must be a finite positive amount no greater than 1000000.");
+        return true;
     }
 
     private static double? ParseRequestAmount(JsonElement payload)
@@ -1302,6 +1389,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         public DateTimeOffset RequestedAt { get; } = requestedAt;
         public long QueueOrder { get; set; } = queueOrder;
         public string Source { get; set; } = "ReceiverRequest";
+        public string TransferMode { get; set; } = "Fuel";
         public string Status { get; set; } = "Pending";
         public string? OperationId { get; set; }
         public DateTimeOffset? TerminalAt { get; set; }

@@ -35,8 +35,11 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private string _tacticalLinkMessage = "TacticalLink is disconnected.";
     private string _aarProtectedReserveKgText = "0";
     private string _aarRequestedAmountText = "1000";
-    private string _aarPlannedAmountText = "1000";
+    private string _aarPlannedAmountText = string.Empty;
     private string _aarStatusText = "AAR unavailable";
+    private string _msfsAarBridgeStatusText = "Checking MSFS 2024 package folder…";
+    private readonly Msfs2024PackagePathResolver _msfsPackagePathResolver = new();
+    private readonly MsfsAarBridgeInstaller _msfsAarBridgeInstaller = new();
     private readonly DispatcherTimer _tacticalTelemetryTimer;
     private readonly HashSet<string> _activeAarOperations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, double> _aarAppliedWatermarks = new(StringComparer.Ordinal);
@@ -101,6 +104,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _configStore = new JsonConfigStore(configPath);
         Settings = _configStore.LoadDisplaySettings();
         Settings.AarFuelUnit = string.Equals(Settings.AarFuelUnit, "LB", StringComparison.OrdinalIgnoreCase) ? "LB" : "KG";
+        Settings.Msfs2024CommunityFolder = _msfsPackagePathResolver.ResolveCommunity2024(Settings.Msfs2024CommunityFolder) ?? Settings.Msfs2024CommunityFolder;
+        RefreshMsfsAarBridgeStatus();
         DataSourceDebugLog.SetEnabled(Settings.EnableDataSourceDebugLogging);
         DataSourceDebugLog.Info("App", $"Debug logging enabled={Settings.EnableDataSourceDebugLogging}");
         _classification = _configStore.LoadClassification();
@@ -167,6 +172,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         BreakawayAarOperationCommand = CreateUiCommand(nameof(BreakawayAarOperationCommand), () => _ = SendAarOperationCommandAsync("BREAKAWAY"));
         ReconcileAarOperationCommand = CreateUiCommand(nameof(ReconcileAarOperationCommand), () => _ = SendAarOperationCommandAsync("RECONCILE"));
         ToggleAarAvailabilityCommand = CreateUiCommand(nameof(ToggleAarAvailabilityCommand), () => _ = ToggleAarAvailabilityAsync());
+        SelectMsfs2024CommunityFolderCommand = CreateUiCommand(nameof(SelectMsfs2024CommunityFolderCommand), SelectMsfs2024CommunityFolder);
+        InstallMsfsAarBridgeCommand = CreateUiCommand(nameof(InstallMsfsAarBridgeCommand), () => _ = InstallMsfsAarBridgeAsync());
+        UninstallMsfsAarBridgeCommand = CreateUiCommand(nameof(UninstallMsfsAarBridgeCommand), UninstallMsfsAarBridge);
         ToggleAlwaysOnTopCommand = CreateUiCommand(nameof(ToggleAlwaysOnTopCommand), ToggleAlwaysOnTop);
         ToggleKneepadCommand = CreateUiCommand(nameof(ToggleKneepadCommand), ToggleKneepad);
         PreviousKneepadPageCommand = CreateUiCommand(nameof(PreviousKneepadPageCommand), PreviousKneepadPage);
@@ -625,6 +633,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public string AarStatusText { get => _aarStatusText; private set => SetField(ref _aarStatusText, value); }
     public string AarOperationStateText { get => _aarOperationStateText; private set => SetField(ref _aarOperationStateText, value); }
     public string AarTransferMode => _aarTransferMode;
+    public string MsfsAarBridgeStatusText { get => _msfsAarBridgeStatusText; private set => SetField(ref _msfsAarBridgeStatusText, value); }
     public string AarTankerMetricsText { get => _aarTankerMetricsText; private set => SetField(ref _aarTankerMetricsText, value); }
     public string AarAvailabilityButtonText => _tacticalLink.LocalTankerAvailable ? "SET UNAVAILABLE" : "SET AVAILABLE";
     public bool HasAarOperation => _aarActiveOperationId is not null;
@@ -930,6 +939,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand BreakawayAarOperationCommand { get; }
     public RelayCommand ReconcileAarOperationCommand { get; }
     public RelayCommand ToggleAarAvailabilityCommand { get; }
+    public RelayCommand SelectMsfs2024CommunityFolderCommand { get; }
+    public RelayCommand InstallMsfsAarBridgeCommand { get; }
+    public RelayCommand UninstallMsfsAarBridgeCommand { get; }
     public RelayCommand ToggleAlwaysOnTopCommand { get; }
     public RelayCommand ToggleKneepadCommand { get; }
     public RelayCommand PreviousKneepadPageCommand { get; }
@@ -2207,20 +2219,27 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         if (!IsAarReceiverCapable || SelectedAarTanker is null) return;
         await _tacticalLink.SendModuleMessageAsync("aar", 1, "REQUEST_REFUEL", null,
-            new { tankerParticipantId = SelectedAarTanker.ParticipantId, full = true }, _runCts.Token);
+            new { tankerParticipantId = SelectedAarTanker.ParticipantId, full = true, transferMode = AarTransferMode }, _runCts.Token);
         AarStatusText = "FULL request sent";
     }
 
     private async Task RequestAarAsync()
     {
         if (!IsAarReceiverCapable || SelectedAarTanker is null) return;
+        if (AarTransferMode == "DryHookup")
+        {
+            await _tacticalLink.SendModuleMessageAsync("aar", 1, "REQUEST_REFUEL", null,
+                new { tankerParticipantId = SelectedAarTanker.ParticipantId, full = true, transferMode = AarTransferMode }, _runCts.Token);
+            AarStatusText = "Dry Hookup request sent";
+            return;
+        }
         if (!TryParseAarDisplayedAmount(AarRequestedAmountText, out var requestedKg) || requestedKg <= 0)
         {
             AarStatusText = $"Enter a positive request amount in {AarFuelUnit}";
             return;
         }
         await _tacticalLink.SendModuleMessageAsync("aar", 1, "REQUEST_REFUEL", null,
-            new { tankerParticipantId = SelectedAarTanker.ParticipantId, full = false, requestedKg }, _runCts.Token);
+            new { tankerParticipantId = SelectedAarTanker.ParticipantId, full = false, requestedKg, transferMode = AarTransferMode }, _runCts.Token);
         AarStatusText = "Refuel request sent";
     }
 
@@ -2228,7 +2247,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     {
         if (!IsLocalTankerJoined || SelectedAarReceiver is null) return;
         await _tacticalLink.SendModuleMessageAsync("aar", 1, "ADD_RECEIVER_TO_QUEUE", null,
-            new { receiverParticipantId = SelectedAarReceiver.ParticipantId }, _runCts.Token);
+            new { receiverParticipantId = SelectedAarReceiver.ParticipantId, transferMode = AarTransferMode }, _runCts.Token);
     }
 
     private async Task RemoveAarQueueEntryAsync()
@@ -2277,10 +2296,98 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private async Task ToggleAarTransferModeAsync()
     {
-        if (_aarActiveOperationId is not { } operationId) return;
         var mode = AarTransferMode == "DryHookup" ? "Fuel" : "DryHookup";
+        if (_aarActiveOperationId is not { } operationId)
+        {
+            _aarTransferMode = mode;
+            Raise(nameof(AarTransferMode));
+            AarStatusText = mode == "DryHookup" ? "Dry Hookup selected; no bridge or fuel transfer is required" : "Live fuel transfer selected";
+            return;
+        }
         await _tacticalLink.SendModuleMessageAsync("aar", 1, "SET_TRANSFER_MODE", operationId,
             new { transferMode = mode }, _runCts.Token);
+    }
+
+    private void SelectMsfs2024CommunityFolder()
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = "Select the MSFS 2024 Community2024 folder",
+            InitialDirectory = Directory.Exists(Settings.Msfs2024CommunityFolder) ? Settings.Msfs2024CommunityFolder : string.Empty,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog() != true) return;
+        var resolved = _msfsPackagePathResolver.ResolveCommunity2024(dialog.FolderName, []);
+        if (resolved is null)
+        {
+            MsfsAarBridgeStatusText = "Select the existing Community2024 folder inside the MSFS 2024 package directory.";
+            return;
+        }
+        Settings.Msfs2024CommunityFolder = resolved;
+        _configStore.SaveDisplaySettings(Settings);
+        RefreshMsfsAarBridgeStatus();
+    }
+
+    private async Task InstallMsfsAarBridgeAsync()
+    {
+        var community = _msfsPackagePathResolver.ResolveCommunity2024(Settings.Msfs2024CommunityFolder);
+        if (community is null)
+        {
+            MsfsAarBridgeStatusText = "MSFS 2024 Community2024 folder could not be located. Select it first.";
+            return;
+        }
+        var bundledPackage = Path.Combine(AppContext.BaseDirectory, "Resources", "MSFS", MsfsAarBridgeInstaller.PackageName);
+        if (!Directory.Exists(bundledPackage))
+        {
+            MsfsAarBridgeStatusText = "This VTSD build does not contain the compiled MSFS AAR Bridge package.";
+            return;
+        }
+        try
+        {
+            var package = await _msfsAarBridgeInstaller.InstallOrUpdateAsync(bundledPackage, community, _runCts.Token);
+            Settings.Msfs2024CommunityFolder = community;
+            _configStore.SaveDisplaySettings(Settings);
+            MsfsAarBridgeStatusText = $"Bridge {package.Version} installed. Restart Microsoft Flight Simulator 2024 to load it.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            MsfsAarBridgeStatusText = $"Bridge installation failed: {ex.Message}";
+        }
+    }
+
+    private void UninstallMsfsAarBridge()
+    {
+        var community = _msfsPackagePathResolver.ResolveCommunity2024(Settings.Msfs2024CommunityFolder);
+        if (community is null)
+        {
+            MsfsAarBridgeStatusText = "MSFS 2024 Community2024 folder could not be located.";
+            return;
+        }
+        try
+        {
+            MsfsAarBridgeStatusText = _msfsAarBridgeInstaller.Uninstall(community)
+                ? "MSFS AAR Bridge removed. Restart Microsoft Flight Simulator 2024 if it is running."
+                : "MSFS AAR Bridge is not installed.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            MsfsAarBridgeStatusText = $"Bridge uninstall failed: {ex.Message}";
+        }
+    }
+
+    private void RefreshMsfsAarBridgeStatus()
+    {
+        var community = _msfsPackagePathResolver.ResolveCommunity2024(Settings.Msfs2024CommunityFolder);
+        if (community is null)
+        {
+            MsfsAarBridgeStatusText = "MSFS 2024 Community2024 folder not found. Select the folder to manage the bridge.";
+            return;
+        }
+        Settings.Msfs2024CommunityFolder = community;
+        var installed = _msfsAarBridgeInstaller.InspectInstalled(community);
+        MsfsAarBridgeStatusText = installed is null
+            ? "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not."
+            : $"AAR Bridge {installed.Version} installed. Restart MSFS 2024 to activate; runtime fuel capability is not connected in this build.";
     }
 
     private bool TryParseAarDisplayedAmount(string text, out double kilograms)
@@ -2310,8 +2417,22 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private async Task RespondToAarRequestAsync(bool accept)
     {
         if (!IsTankerCapable || !IsTacticalLinkConnected || !IsLocalTankerJoined || SelectedAarRequest is null) return;
+        var payload = new Dictionary<string, object>
+        {
+            ["requestId"] = SelectedAarRequest.RequestId,
+            ["transferMode"] = AarTransferMode
+        };
+        if (accept && !string.IsNullOrWhiteSpace(AarPlannedAmountText))
+        {
+            if (!TryParseAarDisplayedAmount(AarPlannedAmountText, out var planKg) || planKg <= 0)
+            {
+                AarStatusText = $"Enter a positive planned amount in {AarFuelUnit}, or leave it blank to use the safe maximum";
+                return;
+            }
+            payload["plannedKg"] = planKg;
+        }
         await _tacticalLink.SendModuleMessageAsync("aar", 1, accept ? "ACCEPT_REQUEST" : "REJECT_REQUEST", null,
-            new { requestId = SelectedAarRequest.RequestId }, _runCts.Token);
+            payload, _runCts.Token);
         AarStatusText = accept ? "Request accepted" : "Request rejected";
         if (!accept) _aarPendingRequests.Remove(SelectedAarRequest);
         SelectedAarRequest = null;

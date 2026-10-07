@@ -37,6 +37,12 @@
     <Content Include="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <Content Include="Resources\MSFS\vtsd-aar-bridge\**\*"
+             Condition="Exists('Resources\MSFS\vtsd-aar-bridge\manifest.json')">
+      <Link>Resources\MSFS\vtsd-aar-bridge\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

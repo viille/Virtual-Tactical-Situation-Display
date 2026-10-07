@@ -81,6 +81,23 @@ public static class AarContactGeometry
         relative.BelowMeters >= 0 && relative.BelowMeters <= configuration.ReleaseMaximumBelowMeters &&
         relative.RelativeSpeedMps <= configuration.ReleaseMaximumRelativeSpeedMps;
 
+    public static AarPose InterpolatePose(AarPose first, AarPose second, DateTimeOffset timestamp)
+    {
+        if (second.TimestampUtc <= first.TimestampUtc || timestamp < first.TimestampUtc || timestamp > second.TimestampUtc)
+            throw new ArgumentOutOfRangeException(nameof(timestamp));
+        var amount = (timestamp - first.TimestampUtc).TotalSeconds / (second.TimestampUtc - first.TimestampUtc).TotalSeconds;
+        static double Lerp(double a, double b, double t) => a + ((b - a) * t);
+        var headingDelta = ((second.HeadingDeg - first.HeadingDeg + 540) % 360) - 180;
+        return new AarPose(timestamp,
+            Lerp(first.LatitudeDeg, second.LatitudeDeg, amount),
+            Lerp(first.LongitudeDeg, second.LongitudeDeg, amount),
+            Lerp(first.AltitudeMeters, second.AltitudeMeters, amount),
+            (first.HeadingDeg + headingDelta * amount + 360) % 360,
+            Lerp(first.VelocityNorthMps, second.VelocityNorthMps, amount),
+            Lerp(first.VelocityEastMps, second.VelocityEastMps, amount),
+            Lerp(first.VelocityDownMps, second.VelocityDownMps, amount));
+    }
+
     private static bool IsValid(AarPose pose) =>
         double.IsFinite(pose.LatitudeDeg) && pose.LatitudeDeg is >= -90 and <= 90 &&
         double.IsFinite(pose.LongitudeDeg) && pose.LongitudeDeg is >= -180 and <= 180 &&

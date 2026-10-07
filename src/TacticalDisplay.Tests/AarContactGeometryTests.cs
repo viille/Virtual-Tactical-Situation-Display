@@ -54,6 +54,22 @@ public sealed class AarContactGeometryTests
         Assert.True(AarContactGeometry.IsInsideRelease(relative, config));
     }
 
+    [Fact]
+    public void PoseInterpolationUsesShortestHeadingArcAndInterpolatesVelocity()
+    {
+        var start = DateTimeOffset.UtcNow;
+        var first = new AarPose(start, 60, 25, 10_000, 350, 100, 10, 0);
+        var second = new AarPose(start.AddMilliseconds(100), 60.001, 25.001, 10_100, 10, 120, 30, 4);
+
+        var interpolated = AarContactGeometry.InterpolatePose(first, second, start.AddMilliseconds(50));
+
+        Assert.Equal(start.AddMilliseconds(50), interpolated.TimestampUtc);
+        Assert.InRange(Math.Min(interpolated.HeadingDeg, 360 - interpolated.HeadingDeg), 0, 0.01);
+        Assert.Equal(110, interpolated.VelocityNorthMps);
+        Assert.Equal(20, interpolated.VelocityEastMps);
+        Assert.Equal(10_050, interpolated.AltitudeMeters);
+    }
+
     private static AarPose OffsetPose(DateTimeOffset time, AarPose tanker, double northMeters, double eastMeters, double upMeters,
         double heading, double velocityNorth, double velocityEast, double velocityDown = 0)
     {

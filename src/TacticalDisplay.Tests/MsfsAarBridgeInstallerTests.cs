@@ -1,0 +1,83 @@
+using System.Text.Json;
+using TacticalDisplay.App.Data;
+using Xunit;
+
+namespace TacticalDisplay.Tests;
+
+public sealed class MsfsAarBridgeInstallerTests
+{
+    [Fact]
+    public void ResolverUsesConfiguredInstalledPackagesPath()
+    {
+        using var temp = new TempDirectory();
+        var root = Path.Combine(temp.Path, "MSFS");
+        var community = Directory.CreateDirectory(Path.Combine(root, "Community2024")).FullName;
+        var config = Path.Combine(temp.Path, "UserCfg.opt");
+        File.WriteAllText(config, $"InstalledPackagesPath \"{root}\"\r\n");
+
+        var result = new Msfs2024PackagePathResolver().ResolveCommunity2024(configPaths: [config]);
+
+        Assert.Equal(community, result);
+    }
+
+    [Fact]
+    public async Task InstallUpdateAndUninstallManageOnlyVtsdPackage()
+    {
+        using var temp = new TempDirectory();
+        var community = Directory.CreateDirectory(Path.Combine(temp.Path, "Community2024")).FullName;
+        var sibling = Directory.CreateDirectory(Path.Combine(community, "other-package")).FullName;
+        File.WriteAllText(Path.Combine(sibling, "keep.txt"), "keep");
+        var sourceV1 = CreatePackage(temp.Path, "source-v1", "1.0.0");
+        var sourceV2 = CreatePackage(temp.Path, "source-v2", "1.1.0");
+        var invalid = Directory.CreateDirectory(Path.Combine(temp.Path, "invalid-source")).FullName;
+        var installer = new MsfsAarBridgeInstaller();
+
+        var installed = await installer.InstallOrUpdateAsync(sourceV1, community, CancellationToken.None);
+        var updated = await installer.InstallOrUpdateAsync(sourceV2, community, CancellationToken.None);
+        await Assert.ThrowsAsync<InvalidDataException>(() => installer.InstallOrUpdateAsync(invalid, community, CancellationToken.None));
+
+        Assert.Equal("1.0.0", installed.Version);
+        Assert.Equal("1.1.0", updated.Version);
+        Assert.Equal("1.1.0", installer.InspectInstalled(community)!.Version);
+        Assert.True(File.Exists(Path.Combine(sibling, "keep.txt")));
+        Assert.True(installer.Uninstall(community));
+        Assert.False(Directory.Exists(updated.PackageDirectory));
+        Assert.True(File.Exists(Path.Combine(sibling, "keep.txt")));
+    }
+
+    [Fact]
+    public async Task InvalidCommunityFolderIsRejectedBeforeWriting()
+    {
+        using var temp = new TempDirectory();
+        var notCommunity = Directory.CreateDirectory(Path.Combine(temp.Path, "Packages")).FullName;
+        var source = CreatePackage(temp.Path, "source", "1.0.0");
+
+        await Assert.ThrowsAsync<ArgumentException>(() => new MsfsAarBridgeInstaller()
+            .InstallOrUpdateAsync(source, notCommunity, CancellationToken.None));
+        Assert.Empty(Directory.EnumerateFileSystemEntries(notCommunity));
+    }
+
+    private static string CreatePackage(string root, string name, string version)
+    {
+        var package = Directory.CreateDirectory(Path.Combine(root, name)).FullName;
+        Directory.CreateDirectory(Path.Combine(package, "modules"));
+        File.WriteAllText(Path.Combine(package, "modules", "vtsd_aar_bridge.wasm"), "test module bytes");
+        File.WriteAllText(Path.Combine(package, "manifest.json"), JsonSerializer.Serialize(new { package_version = version }));
+        File.WriteAllText(Path.Combine(package, "layout.json"), JsonSerializer.Serialize(new
+        {
+            content = new[]
+            {
+                new { path = "manifest.json" },
+                new { path = "layout.json" },
+                new { path = "modules/vtsd_aar_bridge.wasm" }
+            }
+        }));
+        return package;
+    }
+
+    private sealed class TempDirectory : IDisposable
+    {
+        public string Path { get; } = Directory.CreateTempSubdirectory("vtsd-aar-test-").FullName;
+        public void Dispose() => Directory.Delete(Path, recursive: true);
+    }
+}

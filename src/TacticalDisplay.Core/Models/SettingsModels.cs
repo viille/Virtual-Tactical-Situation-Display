@@ -5,6 +5,7 @@ public sealed class TacticalDisplaySettings
     public string DataSourceMode { get; set; } = "Demo";
     public string? MsfsExePath { get; set; }
     public string? PreferredSimConnectDllPath { get; set; }
+    public string? Msfs2024CommunityFolder { get; set; }
     public string XPlane12ApiBaseUrl { get; set; } = "http://localhost:8086/";
     public bool EnableWebServer { get; set; } = true;
     public bool EnableWebServerLanAccess { get; set; } = true;

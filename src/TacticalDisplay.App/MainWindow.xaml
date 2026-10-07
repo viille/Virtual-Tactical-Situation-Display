@@ -1015,6 +1015,7 @@
                                 </Style>
                             </StackPanel.Style>
                             <ComboBox ItemsSource="{Binding AvailableAarTankers}" SelectedItem="{Binding SelectedAarTanker}" DisplayMemberPath="Callsign" IsEditable="False" MinWidth="180" Margin="0,0,0,4" />
+                            <Button Content="{Binding AarTransferMode, StringFormat=MODE: {0}}" Command="{Binding ToggleAarTransferModeCommand}" HorizontalAlignment="Left" Margin="0,0,0,4" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
                                 <TextBox Text="{Binding AarRequestedAmountText, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,0,6,0" ToolTip="Requested amount" />
                                 <ComboBox SelectedValue="{Binding AarFuelUnit}" SelectedValuePath="Content" Width="58">
@@ -1046,6 +1047,13 @@
                                 </Style>
                             </StackPanel.Style>
                             <TextBlock Text="PENDING FIFO REQUESTS" Foreground="#83F2D0" Margin="0,0,0,4" />
+                            <TextBlock Text="Optional planned onload; blank accepts the safe maximum" Foreground="#7CB9A9" TextWrapping="Wrap" Margin="0,0,0,4" />
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
+                                <TextBox Text="{Binding AarPlannedAmountText, UpdateSourceTrigger=PropertyChanged}" Width="90" Margin="0,0,6,0" ToolTip="Optional tanker-selected plan" />
+                                <ComboBox SelectedValue="{Binding AarFuelUnit}" SelectedValuePath="Content" Width="58">
+                                    <ComboBoxItem Content="KG" /><ComboBoxItem Content="LB" />
+                                </ComboBox>
+                            </StackPanel>
                             <ComboBox ItemsSource="{Binding AvailableAarReceivers}" SelectedItem="{Binding SelectedAarReceiver}" DisplayMemberPath="Callsign" IsEditable="False" MinWidth="180" Margin="0,0,0,4" />
                             <Button Content="ADD AIRCRAFT" Command="{Binding AddAarReceiverCommand}" HorizontalAlignment="Left" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480" />
                             <Button Content="RETURN COMMITTED NEXT TO PENDING" Command="{Binding ReturnAarCommittedToPendingCommand}" HorizontalAlignment="Left" Margin="0,4,0,0" Padding="6,4" Foreground="#D9F2EC" Background="#283843" BorderBrush="#617480">
@@ -1292,6 +1300,22 @@
                                            Foreground="#7CB9A9"
                                            TextWrapping="Wrap" />
                             </StackPanel>
+                        </StackPanel>
+                    </GroupBox>
+
+                    <GroupBox Header="MSFS 2024 AAR Bridge" Foreground="#9AFAD7" Margin="0,0,0,8" Padding="8">
+                        <StackPanel>
+                            <TextBlock Text="AAR fuel transfer currently supports Microsoft Flight Simulator 2024. Dry Hookup remains available without the bridge."
+                                       Foreground="#7CB9A9" TextWrapping="Wrap" Margin="0,0,0,6" />
+                            <TextBlock Text="Community2024 folder" Foreground="#7CB9A9" />
+                            <TextBox Text="{Binding Settings.Msfs2024CommunityFolder, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                     Margin="0,4,0,4" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button Content="SELECT FOLDER" Command="{Binding SelectMsfs2024CommunityFolderCommand}" Margin="0,0,6,0" Padding="6,4" />
+                                <Button Content="INSTALL / UPDATE" Command="{Binding InstallMsfsAarBridgeCommand}" Margin="0,0,6,0" Padding="6,4" />
+                                <Button Content="UNINSTALL" Command="{Binding UninstallMsfsAarBridgeCommand}" Padding="6,4" />
+                            </StackPanel>
+                            <TextBlock Text="{Binding MsfsAarBridgeStatusText}" Foreground="#D9F2EC" TextWrapping="Wrap" Margin="0,6,0,0" />
                         </StackPanel>
                     </GroupBox>
 
