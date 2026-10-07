@@ -1,7 +1,4 @@
-using System.Net;
 using System.Net.Http;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
 using System.Text.Json;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.Core.Math;
@@ -25,6 +22,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         "sim/flightmodel/position/longitude",
         "sim/flightmodel/position/elevation",
         "sim/flightmodel/position/true_psi",
+        "sim/flightmodel/position/hpath",
         "sim/flightmodel/position/groundspeed"
     ];
 
@@ -43,30 +41,30 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     ];
 
     private readonly TacticalDisplaySettings _settings;
-    private readonly HttpClient _httpClient;
+    private readonly XPlane12WebApiClient _webApi;
     private readonly TimeSpan _reconnectDelay = TimeSpan.FromSeconds(3);
     private CancellationTokenSource? _loopCts;
     private Task? _loopTask;
     private bool _isRunning;
     private bool _isConnected;
-    private string _apiVersion = "v1";
+    private bool _aarSamplingEnabled;
     private readonly Dictionary<string, long> _dataRefIds = new(StringComparer.Ordinal);
     private DateTimeOffset _lastMultiplayerFallbackReadAt = DateTimeOffset.MinValue;
     private IReadOnlyList<TrafficContactState> _latestMultiplayerFallbackTraffic = [];
 
-    public XPlane12WebApiTrafficFeed(TacticalDisplaySettings settings)
+    public XPlane12WebApiTrafficFeed(TacticalDisplaySettings settings, HttpClient? httpClient = null)
     {
         _settings = settings;
-        _httpClient = new HttpClient
-        {
-            Timeout = TimeSpan.FromSeconds(5)
-        };
-        _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        _webApi = new XPlane12WebApiClient(settings.XPlane12ApiBaseUrl, httpClient);
     }
 
     public event EventHandler<TrafficSnapshot>? SnapshotReceived;
     public event EventHandler<bool>? ConnectionChanged;
+    public event EventHandler<OwnshipState>? AarPoseSampled;
     public bool IsConnected => _isConnected;
+    public bool AarSamplingEnabled { get => _aarSamplingEnabled; set => _aarSamplingEnabled = value; }
+
+    internal XPlane12WebApiClient WebApi => _webApi;
 
     public Task StartAsync(CancellationToken cancellationToken)
     {
@@ -109,7 +107,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
     public async ValueTask DisposeAsync()
     {
         await StopAsync();
-        _httpClient.Dispose();
+        _webApi.Dispose();
     }
 
     private async Task RunAsync(CancellationToken cancellationToken)
@@ -138,7 +136,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
 
     private async Task InitializeAsync(CancellationToken cancellationToken)
     {
-        _apiVersion = await DiscoverApiVersionAsync(cancellationToken);
+        await DiscoverApiVersionAsync(cancellationToken);
         _dataRefIds.Clear();
 
         foreach (var dataRefName in RequiredOwnshipDataRefs)
@@ -147,7 +145,6 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         }
 
         await TryResolveOptionalDataRefAsync("sim/flightmodel/position/mag_psi", cancellationToken);
-
         foreach (var dataRefName in OptionalTrafficDataRefs)
         {
             try
@@ -179,17 +176,23 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             })
             .Count(_dataRefIds.ContainsKey);
 
-        DataSourceDebugLog.Info(LogSource, $"Resolved XP12 datarefs via {_apiVersion} API | trafficRefs={tcasRefs}/{OptionalTrafficDataRefs.Length} multiplayerRefs={multiplayerRefs}/{MaxMultiplayerTargets * 4}");
+        DataSourceDebugLog.Info(LogSource, $"Resolved XP12 datarefs via {_webApi.ApiVersion} API | trafficRefs={tcasRefs}/{OptionalTrafficDataRefs.Length} multiplayerRefs={multiplayerRefs}/{MaxMultiplayerTargets * 4}");
     }
 
     private async Task PollLoopAsync(CancellationToken cancellationToken)
     {
-        var pollMs = (int)Math.Clamp(1000.0 / Math.Max(_settings.PollRateHz, 1), 100, 1000);
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(pollMs));
+        var normalPollMs = (int)Math.Clamp(1000.0 / Math.Max(_settings.PollRateHz, 1), 100, 1000);
+        var nextSampleAt = DateTimeOffset.MinValue;
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(100));
 
         while (await timer.WaitForNextTickAsync(cancellationToken))
         {
+            var now = DateTimeOffset.UtcNow;
+            var targetInterval = TimeSpan.FromMilliseconds(AarSamplingEnabled ? 100 : normalPollMs);
+            if (now < nextSampleAt) continue;
+            nextSampleAt = now + targetInterval;
             var snapshot = await ReadSnapshotAsync(cancellationToken);
+            if (AarSamplingEnabled) AarPoseSampled?.Invoke(this, snapshot.Ownship);
             SnapshotReceived?.Invoke(this, snapshot);
         }
     }
@@ -260,7 +263,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             LogSource,
             "snapshot-summary",
             TimeSpan.FromSeconds(2),
-            () => $"Snapshot emitted | trafficCount={contacts.Count} source={source} apiVersion={_apiVersion}");
+            () => $"Snapshot emitted | trafficCount={contacts.Count} source={source} apiVersion={_webApi.ApiVersion}");
 
         return new TrafficSnapshot(ownship, contacts, now);
     }
@@ -393,10 +396,11 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         var longitudeTask = GetDoubleAsync(_dataRefIds["sim/flightmodel/position/longitude"], cancellationToken);
         var elevationTask = GetDoubleAsync(_dataRefIds["sim/flightmodel/position/elevation"], cancellationToken);
         var headingTask = GetDoubleAsync(_dataRefIds["sim/flightmodel/position/true_psi"], cancellationToken);
+        var trackTask = GetDoubleAsync(_dataRefIds["sim/flightmodel/position/hpath"], cancellationToken);
         var magneticHeadingTask = GetOptionalDoubleAsync("sim/flightmodel/position/mag_psi", cancellationToken);
         var groundspeedTask = GetDoubleAsync(_dataRefIds["sim/flightmodel/position/groundspeed"], cancellationToken);
 
-        await Task.WhenAll(latitudeTask, longitudeTask, elevationTask, headingTask, magneticHeadingTask, groundspeedTask);
+        await Task.WhenAll(latitudeTask, longitudeTask, elevationTask, headingTask, trackTask, magneticHeadingTask, groundspeedTask);
 
         var trueHeading = GeoMath.NormalizeDegrees(headingTask.Result);
         var magneticVariation = magneticHeadingTask.Result.HasValue
@@ -411,7 +415,8 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
             trueHeading,
             groundspeedTask.Result * KnotsPerMeterPerSecond,
             timestamp,
-            magneticVariation);
+            magneticVariation,
+            GeoMath.NormalizeDegrees(trackTask.Result));
 
         DataSourceDebugLog.ThrottledDebug(
             LogSource,
@@ -484,56 +489,19 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         }
     }
 
-    private async Task<string> DiscoverApiVersionAsync(CancellationToken cancellationToken)
+    private async Task DiscoverApiVersionAsync(CancellationToken cancellationToken)
     {
-        HttpResponseMessage response;
         try
         {
-            response = await _httpClient.GetAsync(new Uri(GetBaseUri(), "api/capabilities"), cancellationToken);
+            await _webApi.DiscoverApiVersionAsync(cancellationToken).ConfigureAwait(false);
         }
         catch (HttpRequestException ex)
         {
             DataSourceDebugLog.Info(LogSource, $"Capabilities endpoint request failed; falling back to X-Plane Web API v1 | error={ex.Message}");
-            return "v1";
         }
         catch (TaskCanceledException ex) when (!cancellationToken.IsCancellationRequested)
         {
             DataSourceDebugLog.Info(LogSource, $"Capabilities endpoint timed out; falling back to X-Plane Web API v1 | error={ex.Message}");
-            return "v1";
-        }
-
-        using (response)
-        {
-            if (response.StatusCode == HttpStatusCode.NotFound)
-            {
-                DataSourceDebugLog.Info(LogSource, "Capabilities endpoint unavailable; falling back to X-Plane Web API v1");
-                return "v1";
-            }
-
-            if (response.StatusCode == HttpStatusCode.Forbidden)
-            {
-                throw new InvalidOperationException("X-Plane Web API rejected the connection. Check Network security policy and incoming traffic settings.");
-            }
-
-            response.EnsureSuccessStatusCode();
-
-            using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-            if (!document.RootElement.TryGetProperty("api", out var apiElement) ||
-                !apiElement.TryGetProperty("versions", out var versionsElement) ||
-                versionsElement.ValueKind != JsonValueKind.Array)
-            {
-                return "v1";
-            }
-
-            var versions = versionsElement
-                .EnumerateArray()
-                .Select(v => v.GetString())
-                .Where(v => !string.IsNullOrWhiteSpace(v))
-                .Select(v => v!)
-                .OrderByDescending(ParseApiVersionNumber)
-                .ToList();
-
-            return versions.FirstOrDefault() ?? "v1";
         }
     }
 
@@ -553,20 +521,7 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
 
     private async Task<long> ResolveDataRefIdAsync(string dataRefName, CancellationToken cancellationToken)
     {
-        var relative = $"api/{_apiVersion}/datarefs?filter[name]={Uri.EscapeDataString(dataRefName)}";
-        using var response = await _httpClient.GetAsync(new Uri(GetBaseUri(), relative), cancellationToken);
-        response.EnsureSuccessStatusCode();
-
-        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
-        var data = document.RootElement.TryGetProperty("data", out var dataElement)
-            ? dataElement
-            : document.RootElement;
-        if (data.ValueKind != JsonValueKind.Array || data.GetArrayLength() == 0)
-        {
-            throw new InvalidOperationException($"X-Plane dataref '{dataRefName}' was not found.");
-        }
-
-        return data[0].GetProperty("id").GetInt64();
+        return await _webApi.ResolveDataRefIdAsync(dataRefName, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<double> GetDoubleAsync(long dataRefId, CancellationToken cancellationToken)
@@ -595,20 +550,10 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
 
     private async Task<JsonDocument> GetValueDocumentAsync(long dataRefId, CancellationToken cancellationToken)
     {
-        var relative = $"api/{_apiVersion}/datarefs/{dataRefId}/value";
-        using var response = await _httpClient.GetAsync(new Uri(GetBaseUri(), relative), cancellationToken);
-        response.EnsureSuccessStatusCode();
-        var json = await response.Content.ReadAsStringAsync(cancellationToken);
-        return JsonDocument.Parse(json);
+        return await _webApi.GetValueDocumentAsync(dataRefId, cancellationToken).ConfigureAwait(false);
     }
 
-    private Uri GetBaseUri()
-    {
-        var value = string.IsNullOrWhiteSpace(_settings.XPlane12ApiBaseUrl)
-            ? "http://localhost:8086/"
-            : _settings.XPlane12ApiBaseUrl.Trim();
-        return value.EndsWith("/", StringComparison.Ordinal) ? new Uri(value) : new Uri($"{value}/");
-    }
+    private Uri GetBaseUri() => _webApi.BaseUri;
 
     private void SetConnected(bool value, bool forceNotify = false)
     {
@@ -620,16 +565,6 @@ public sealed class XPlane12WebApiTrafficFeed : ITrafficDataFeed
         _isConnected = value;
         DataSourceDebugLog.Info(LogSource, $"Connection state changed | connected={value}");
         ConnectionChanged?.Invoke(this, value);
-    }
-
-    private static int ParseApiVersionNumber(string? version)
-    {
-        if (string.IsNullOrWhiteSpace(version))
-        {
-            return 0;
-        }
-
-        return int.TryParse(version.TrimStart('v', 'V'), out var parsed) ? parsed : 0;
     }
 
     private static double ReadNumericValue(JsonElement element) =>

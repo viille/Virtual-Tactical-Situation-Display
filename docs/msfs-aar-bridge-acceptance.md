@@ -50,3 +50,9 @@ These checks require MSFS 2024, the SDK-built package, and a real aircraft. They
 | Update an installed bridge | Previous package remains intact if staging or validation fails; restart is required to load new module | Pending |
 | Uninstall bridge | Only `Community2024/vtsd-aar-bridge` is removed | Pending |
 | Two-client tanker/receiver transfer | Receiver gain and tanker loss match mutually acknowledged transferred kg | Pending |
+
+## XP12 AAR status
+
+XP12's local Web API feed is available for traffic and ownship telemetry, and AAR operation sampling increases ownship polling to 10 Hz. XP12 is not currently exposed as an AAR fuel adapter: the desktop does not advertise tanker fuel capability or send fuel state from this simulator. This keeps transfers unavailable until capacity units, per-tank usable-capacity semantics, and safe write/read-back behavior are confirmed from authoritative XP12 documentation and runtime checks. No fuel writes are attempted.
+
+XP12 manual acceptance remains pending: Web API disabled/forbidden behavior, reconnect and timeout handling, 10 Hz pose freshness during an active operation, aircraft with nonstandard tank layouts, and any future fuel adapter support must be exercised in XP12. No simulator runtime validation has been performed.
