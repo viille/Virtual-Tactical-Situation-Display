@@ -156,11 +156,10 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                 }
 
                 var operation = _operations.GetValueOrDefault(ackHistory.OperationId);
-                var payload = operation is not null && (operation.TankerId == context.ParticipantId || operation.ReceiverId == context.ParticipantId)
-                    ? context.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation)
-                    : new { messageId = key, duplicate = true };
-                context.Reply(ackHistory.Kind, ackHistory.OperationId, operation?.Revision ?? ackHistory.OperationRevision, payload);
-                if (operation is not null) SendCurrentSnapshot(context, null, operation.Id);
+                if (operation is not null && (operation.TankerId == context.ParticipantId || operation.ReceiverId == context.ParticipantId))
+                    SendCurrentSnapshot(context, null, operation.Id);
+                else
+                    context.Reply(ackHistory.Kind, ackHistory.OperationId, ackHistory.OperationRevision, new { messageId = key, duplicate = true });
                 return Task.CompletedTask;
             }
 
@@ -173,8 +172,9 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             var response = Execute(context, peer);
             if (context.Kind != "POSE_UPDATE" || response.Kind == "MODULE_ERROR")
                 context.Reply(response.Kind, response.OperationId, response.OperationRevision, response.Payload);
-            if (RequiresIdempotencyCache(context.Kind)) Remember(context.ParticipantId, key, requestHash, response);
-            if (context.Kind == "TRANSFER_ACK" && response.Kind != "MODULE_ERROR" && response.OperationId is { } ackOperationId)
+            var successfulTransferAck = context.Kind == "TRANSFER_ACK" && response.Kind != "MODULE_ERROR" && response.OperationId is not null;
+            if (RequiresIdempotencyCache(context.Kind) && !successfulTransferAck) Remember(context.ParticipantId, key, requestHash, response);
+            if (successfulTransferAck && response.OperationId is { } ackOperationId)
                 RememberTransferAck(context.ParticipantId, key, requestHash, response, ackOperationId);
             return Task.CompletedTask;
         }
@@ -1661,8 +1661,11 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             _requests.Remove(request.Id);
     }
 
-    private int GetParticipantEntryCount(string participantId) => _results.TryGetValue(participantId, out var entries) ? entries.Count : 0;
-    private int GetGlobalEntryCount() => _results.Values.Sum(entries => entries.Count);
+    private int GetParticipantEntryCount(string participantId) =>
+        (_results.TryGetValue(participantId, out var entries) ? entries.Count : 0) +
+        (_transferAckHistory.TryGetValue(participantId, out var ackEntries) ? ackEntries.Count : 0);
+
+    private int GetGlobalEntryCount() => _results.Values.Sum(entries => entries.Count) + _transferAckHistory.Values.Sum(entries => entries.Count);
 
     private DateTimeOffset GetExpiry(CachedResult entry)
     {

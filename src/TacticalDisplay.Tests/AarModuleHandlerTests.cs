@@ -62,12 +62,45 @@ public sealed class AarModuleHandlerTests
         Assert.Equal(fixture.TargetKg, appliedTransferredKg, 3);
 
         fixture.Clock.Advance(TimeSpan.FromMinutes(2));
+        var exactReplay = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, messageId, operationId: fixture.OperationId);
+        Assert.Equal(1, exactReplay.Events.Count);
+        Assert.Equal("OPERATION_SNAPSHOT", exactReplay.LastKind);
+
         var conflict = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload with { appliedKg = fixture.DeltaKg + 1 }, messageId,
             operationId: fixture.OperationId);
 
         Assert.Equal("MODULE_ERROR", conflict.LastKind);
         Assert.Contains("IDEMPOTENCY_CONFLICT", JsonSerializer.Serialize(conflict.LastPayload));
         Assert.Equal(appliedTransferredKg, fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg, 3);
+    }
+
+    [Fact]
+    public async Task TransferAckHistoryCountsTowardBoundedIdempotencyCapacity()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        var payload = new
+        {
+            proposalId = fixture.ProposalId,
+            operationRevision = fixture.Proposal.OperationRevision,
+            targetCumulativeKg = fixture.TargetKg,
+            appliedCumulativeKg = fixture.TargetKg,
+            appliedKg = fixture.DeltaKg
+        };
+        var first = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, "transfer-ack-capacity-0", operationId: fixture.OperationId);
+        Assert.Equal("TRANSFER_ACK_ACCEPTED", first.LastKind);
+        await fixture.Rig.Send("receiver", "TRANSFER_ACK", payload, operationId: fixture.OperationId);
+        fixture.Clock.Advance(TimeSpan.FromMinutes(2));
+
+        SendResult? last = null;
+        for (var i = 1; i < 256; i++)
+        {
+            last = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, $"transfer-ack-capacity-{i}", operationId: fixture.OperationId);
+            if (last.LastKind == "MODULE_ERROR") break;
+        }
+
+        Assert.NotNull(last);
+        Assert.Equal("MODULE_ERROR", last!.LastKind);
+        Assert.Contains("IDEMPOTENCY_CAPACITY", JsonSerializer.Serialize(last.LastPayload));
     }
 
     [Fact]
