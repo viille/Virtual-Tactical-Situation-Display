@@ -8,7 +8,7 @@ using TacticalDisplay.Core.Services;
 
 namespace TacticalDisplay.App.Data;
 
-public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
+public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed, IAarPoseSource, IAarFuelAdapter, IAarBridgeRuntimeStatusSource
 {
     private const string LogSource = "VATSIM";
     private const int RequiredStableCallsignMatches = 2;
@@ -61,12 +61,33 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
         _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Tactical-Situation-Display");
         _inner.SnapshotReceived += OnInnerSnapshotReceived;
         _inner.ConnectionChanged += OnInnerConnectionChanged;
+        if (_inner is IAarPoseSource poseSource) poseSource.AarPoseSampled += OnAarPoseSampled;
+        if (_inner is IAarFuelAdapter fuelAdapter) fuelAdapter.FuelSampled += OnFuelSampled;
+        if (_inner is IAarBridgeRuntimeStatusSource bridgeStatus) bridgeStatus.BridgeRuntimeStateChanged += OnBridgeRuntimeStateChanged;
         DataSourceDebugLog.Info(LogSource, $"VATSIM callsign lookup enabled | feed={GetFeedUri()} refreshSeconds={Math.Clamp(_settings.VatsimCallsignRefreshSeconds, 15, 300):0}");
     }
 
     public event EventHandler<TrafficSnapshot>? SnapshotReceived;
     public event EventHandler<bool>? ConnectionChanged;
+    public event EventHandler<OwnshipState>? AarPoseSampled;
+    public event EventHandler<AarFuelReading>? FuelSampled;
+    public event EventHandler<AarBridgeRuntimeState>? BridgeRuntimeStateChanged;
+    public AarBridgeRuntimeState? BridgeRuntimeState => (_inner as IAarBridgeRuntimeStatusSource)?.BridgeRuntimeState;
+    public string? BridgeVersion => (_inner as IAarBridgeRuntimeStatusSource)?.BridgeVersion;
+    public string? BridgeDiagnostic => (_inner as IAarBridgeRuntimeStatusSource)?.BridgeDiagnostic;
+    public bool AarSamplingEnabled
+    {
+        get => _inner is IAarPoseSource poseSource && poseSource.AarSamplingEnabled;
+        set { if (_inner is IAarPoseSource poseSource) poseSource.AarSamplingEnabled = value; }
+    }
     public bool IsConnected => _inner.IsConnected;
+    public bool IsAvailable => _inner is IAarFuelAdapter adapter && adapter.IsAvailable;
+    public bool CanReadFuel => _inner is IAarFuelAdapter adapter && adapter.CanReadFuel;
+    public bool CanWriteFuel => _inner is IAarFuelAdapter adapter && adapter.CanWriteFuel;
+    public AarFuelReading? ReadFuel() => _inner is IAarFuelAdapter adapter ? adapter.ReadFuel() : null;
+    public Task<AarFuelApplyResult> ApplyFuelDeltaKgAsync(double deltaKg, CancellationToken cancellationToken) => _inner is IAarFuelAdapter adapter
+        ? adapter.ApplyFuelDeltaKgAsync(deltaKg, cancellationToken)
+        : Task.FromResult(new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, "The selected simulator feed has no AAR fuel adapter."));
 
     public Task StartAsync(CancellationToken cancellationToken) =>
         _inner.StartAsync(cancellationToken);
@@ -78,6 +99,9 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
     {
         _inner.SnapshotReceived -= OnInnerSnapshotReceived;
         _inner.ConnectionChanged -= OnInnerConnectionChanged;
+        if (_inner is IAarPoseSource poseSource) poseSource.AarPoseSampled -= OnAarPoseSampled;
+        if (_inner is IAarFuelAdapter fuelAdapter) fuelAdapter.FuelSampled -= OnFuelSampled;
+        if (_inner is IAarBridgeRuntimeStatusSource bridgeStatus) bridgeStatus.BridgeRuntimeStateChanged -= OnBridgeRuntimeStateChanged;
         await _inner.DisposeAsync();
         _refreshLock.Dispose();
         _httpClient.Dispose();
@@ -107,6 +131,10 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed
 
         ConnectionChanged?.Invoke(sender, connected);
     }
+
+    private void OnAarPoseSampled(object? sender, OwnshipState sample) => AarPoseSampled?.Invoke(this, sample);
+    private void OnFuelSampled(object? sender, AarFuelReading sample) => FuelSampled?.Invoke(this, sample);
+    private void OnBridgeRuntimeStateChanged(object? sender, AarBridgeRuntimeState state) => BridgeRuntimeStateChanged?.Invoke(this, state);
 
     private void OnInnerSnapshotReceived(object? sender, TrafficSnapshot snapshot)
     {

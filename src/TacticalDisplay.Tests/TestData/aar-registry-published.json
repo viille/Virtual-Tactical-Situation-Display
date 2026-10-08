@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "version": 1,
+  "publishedAt": "2026-10-08T00:00:00.000Z",
+  "profiles": [
+    {
+      "profileKey": "kc135rt",
+      "displayName": "KC-135R/T",
+      "icaoDesignators": ["K35R"],
+      "enabled": true,
+      "canTanker": true,
+      "canReceive": false,
+      "tankerSystems": [{ "method": "Boom", "maxOffloadKgPerSecond": null, "valueProvenance": "unknown", "sourceIds": [] }],
+      "receiverSystems": [],
+      "sources": [],
+      "uncertainty": null,
+      "notes": "No confirmed aircraft-specific mass-flow value is seeded.",
+      "geometry": null
+    },
+    {
+      "profileKey": "f18-probe-receiver",
+      "displayName": "F/A-18C/D Hornet",
+      "icaoDesignators": ["F18"],
+      "enabled": true,
+      "canTanker": false,
+      "canReceive": true,
+      "tankerSystems": [],
+      "receiverSystems": [{ "method": "Probe", "maxReceiveKgPerSecond": null, "valueProvenance": "unknown", "sourceIds": [] }],
+      "sources": [],
+      "uncertainty": "F18 is a family-level ATS designator.",
+      "notes": "Receiver flow remains unknown.",
+      "geometry": null
+    },
+    {
+      "profileKey": "f35a-boom-receiver",
+      "displayName": "F-35A Lightning II",
+      "icaoDesignators": ["F35"],
+      "enabled": true,
+      "canTanker": false,
+      "canReceive": true,
+      "tankerSystems": [],
+      "receiverSystems": [{ "method": "BoomReceptacle", "maxReceiveKgPerSecond": null, "valueProvenance": "unknown", "sourceIds": [] }],
+      "sources": [],
+      "uncertainty": "F35 is a family-level ATS designator.",
+      "notes": "Receiver flow remains unknown.",
+      "geometry": null
+    }
+  ]
+}

@@ -37,6 +37,10 @@
     <Content Include="appsettings.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
+    <EmbeddedResource Include="Resources\MSFS\vtsd-aar-bridge.zip"
+                      Condition="Exists('Resources\MSFS\vtsd-aar-bridge.zip')">
+      <LogicalName>TacticalDisplay.App.Resources.MSFS.vtsd-aar-bridge.zip</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <ItemGroup>

@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Text.Json;
 using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Threading;
@@ -29,9 +30,15 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private TrafficRepository _repository = new();
     private ITrafficDataFeed _feed;
     private readonly TacticalLinkClient _tacticalLink;
+    private readonly AarClient _aarClient;
+    private readonly AarFuelTransferCoordinator _aarFuelTransferCoordinator;
+    public AarViewModel Aar { get; }
     private readonly AuthService _auth;
     private bool _showTacticalLinkMenu;
     private string _tacticalLinkMessage = "TacticalLink is disconnected.";
+    private string _msfsAarBridgeStatusText = "Checking MSFS 2024 package folder…";
+    private readonly Msfs2024PackagePathResolver _msfsPackagePathResolver = new();
+    private readonly MsfsAarBridgeInstaller _msfsAarBridgeInstaller = new();
     private readonly DispatcherTimer _tacticalTelemetryTimer;
     private OwnshipState? _latestOwnship;
     private readonly DispatcherTimer _renderTimer;
@@ -76,6 +83,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         DataSourceDebugLog.Info("App", $"Application startup | configDir={configPath} logFile={DataSourceDebugLog.CurrentLogFilePath}");
         _configStore = new JsonConfigStore(configPath);
         Settings = _configStore.LoadDisplaySettings();
+        Settings.AarFuelUnit = string.Equals(Settings.AarFuelUnit, "LB", StringComparison.OrdinalIgnoreCase) ? "LB" : "KG";
+        Settings.Msfs2024CommunityFolder = _msfsPackagePathResolver.ResolveCommunity2024(Settings.Msfs2024CommunityFolder) ?? Settings.Msfs2024CommunityFolder;
+        RefreshMsfsAarBridgeStatus();
         DataSourceDebugLog.SetEnabled(Settings.EnableDataSourceDebugLogging);
         DataSourceDebugLog.Info("App", $"Debug logging enabled={Settings.EnableDataSourceDebugLogging}");
         _classification = _configStore.LoadClassification();
@@ -84,10 +94,25 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _auth = CloudBootstrapper.Provider.GetRequiredService<AuthService>();
         _auth.StateChanged += OnCloudAuthStateChanged;
         _tacticalLink = new TacticalLinkClient(CloudBootstrapper.Provider.GetRequiredService<VtsdCloudClient>());
+        _aarClient = new AarClient(_tacticalLink, _runCts.Token);
         _tacticalLink.StateChanged += OnTacticalLinkStateChanged;
         _feed = TrafficFeedFactory.Create(Settings, () => _tacticalLink.NearbyPeers);
+        _aarFuelTransferCoordinator = new AarFuelTransferCoordinator(_aarClient, () => _feed as IAarFuelAdapter,
+            () => Aar?.ProtectedReserveKg ?? 0, _runCts.Token);
+        Aar = new AarViewModel(_aarClient, _aarFuelTransferCoordinator, _tacticalLink, Settings,
+            () => _feed as IAarFuelAdapter, () => TacticalLinkPeers, () => _tacticalLink.LocalCapabilities.Contains("aar.tanker"),
+            () => _tacticalLink.LocalCapabilities.Contains("aar.receiver"), () => IsTacticalLinkConnected,
+            UpdateAarSampling, _runCts.Token);
+        Aar.PropertyChanged += OnAarViewModelPropertyChanged;
         _feed.ConnectionChanged += OnConnectionChanged;
         _feed.SnapshotReceived += OnSnapshotReceived;
+        if (_feed is IAarPoseSource initialPoseSource) initialPoseSource.AarPoseSampled += OnAarPoseSampled;
+        if (_feed is IAarFuelAdapter initialFuelAdapter) initialFuelAdapter.FuelSampled += OnAarFuelSampled;
+        if (_feed is IAarBridgeRuntimeStatusSource initialBridgeStatus)
+        {
+            initialBridgeStatus.BridgeRuntimeStateChanged += OnAarBridgeRuntimeStateChanged;
+            RefreshMsfsAarBridgeStatus();
+        }
 
         ToggleOrientationCommand = CreateUiCommand(nameof(ToggleOrientationCommand), ToggleOrientation);
         IncreaseRangeCommand = CreateUiCommand(nameof(IncreaseRangeCommand), IncreaseRange);
@@ -115,7 +140,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         ToggleTacticalLinkMenuCommand = CreateUiCommand(nameof(ToggleTacticalLinkMenuCommand), ToggleTacticalLinkMenu);
         ConnectTacticalLinkCommand = CreateUiCommand(nameof(ConnectTacticalLinkCommand), () => _ = ConnectTacticalLinkAsync());
         DisconnectTacticalLinkCommand = CreateUiCommand(nameof(DisconnectTacticalLinkCommand), () => _ = DisconnectTacticalLinkAsync());
-        ToggleTankerAvailabilityCommand = CreateUiCommand(nameof(ToggleTankerAvailabilityCommand), () => _ = ToggleTankerAvailabilityAsync());
+        SelectMsfs2024CommunityFolderCommand = CreateUiCommand(nameof(SelectMsfs2024CommunityFolderCommand), SelectMsfs2024CommunityFolder);
+        InstallMsfsAarBridgeCommand = CreateUiCommand(nameof(InstallMsfsAarBridgeCommand), () => _ = InstallMsfsAarBridgeAsync());
+        UninstallMsfsAarBridgeCommand = CreateUiCommand(nameof(UninstallMsfsAarBridgeCommand), UninstallMsfsAarBridge);
         ToggleAlwaysOnTopCommand = CreateUiCommand(nameof(ToggleAlwaysOnTopCommand), ToggleAlwaysOnTop);
         ToggleKneepadCommand = CreateUiCommand(nameof(ToggleKneepadCommand), ToggleKneepad);
         PreviousKneepadPageCommand = CreateUiCommand(nameof(PreviousKneepadPageCommand), PreviousKneepadPage);
@@ -532,12 +559,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         var range = _repository.Ownship is { } ownship && peer.LatestTelemetry is { } state
             ? GeoMath.DistanceNm(ownship.LatitudeDeg, ownship.LongitudeDeg, state.LatitudeDeg, state.LongitudeDeg)
             : (double?)null;
-        return new TacticalLinkPeerDisplay(peer.Callsign, peer.AircraftType ?? "Aircraft", range is { } nm ? $"{nm:0} NM" : "--- NM", peer.StatusText);
+        return new TacticalLinkPeerDisplay(peer.ParticipantId, peer.Callsign, peer.AircraftType ?? "Aircraft", range is { } nm ? $"{nm:0} NM" : "--- NM", peer.StatusText);
     }).ToArray();
-    public string TankerButtonText => _tacticalLink.LocalTankerAvailable ? "LEAVE TANKER MODE" : "JOIN AS TANKER";
-    public bool IsTankerCapable => _tacticalLink.LocalCapabilities.Contains("aar.tanker");
-    public bool IsTankerReceiverCapable => _tacticalLink.LocalCapabilities.Contains("aar.receiver");
-    public bool CanOfferTanker => IsTankerCapable && IsTacticalLinkConnected;
+    public string MsfsAarBridgeStatusText { get => _msfsAarBridgeStatusText; private set => SetField(ref _msfsAarBridgeStatusText, value); }
     public bool IsTacticalLinkConnected => _tacticalLink.ConnectionState == TacticalLinkConnectionState.Connected;
 
     public bool IsAlwaysOnTop
@@ -606,6 +630,18 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         : string.IsNullOrWhiteSpace(InterceptTargetId) ? "INT" : "INT ON";
     public bool ShowMsfsSettings => DataSourceModes.IsMsfs(SelectedDataSource);
     public bool ShowXPlane12Settings => DataSourceModes.IsXPlane12(SelectedDataSource);
+    public string XPlane12AarStatusText
+    {
+        get
+        {
+            var connected = _feed?.IsConnected == true;
+            var pose = connected && _feed is IAarPoseSource ? "Ready (10 Hz during operations)" : "Unavailable";
+            var fuel = _feed as IAarFuelAdapter;
+            var read = connected && fuel?.CanReadFuel == true ? "Ready" : "Unavailable";
+            var write = connected && fuel?.CanWriteFuel == true ? "Ready" : "Unavailable";
+            return $"Web API {(connected ? "Connected" : "Disconnected")} · Pose {pose} · Fuel read {read} · write {write}";
+        }
+    }
     public bool ShowXPlaneLegacySettings => DataSourceModes.IsXPlaneLegacy(SelectedDataSource);
     public string SimulatorStatusLabel =>
         DataSourceModes.IsXPlane12(Settings.DataSourceMode) ? "X-Plane 12:" :
@@ -802,7 +838,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     public RelayCommand ToggleTacticalLinkMenuCommand { get; }
     public RelayCommand ConnectTacticalLinkCommand { get; }
     public RelayCommand DisconnectTacticalLinkCommand { get; }
-    public RelayCommand ToggleTankerAvailabilityCommand { get; }
+    public RelayCommand SelectMsfs2024CommunityFolderCommand { get; }
+    public RelayCommand InstallMsfsAarBridgeCommand { get; }
+    public RelayCommand UninstallMsfsAarBridgeCommand { get; }
     public RelayCommand ToggleAlwaysOnTopCommand { get; }
     public RelayCommand ToggleKneepadCommand { get; }
     public RelayCommand PreviousKneepadPageCommand { get; }
@@ -855,8 +893,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             _tacticalTelemetryTimer.Stop();
             _airspaceTimer.Stop();
             _runCts.Cancel();
+            Aar.Dispose();
+            _aarFuelTransferCoordinator.Dispose();
+            _aarClient.Dispose();
             await _tacticalLink.DisposeAsync();
             await _feed.StopAsync();
+            if (_feed is IAarBridgeRuntimeStatusSource bridgeStatus) bridgeStatus.BridgeRuntimeStateChanged -= OnAarBridgeRuntimeStateChanged;
             await _feed.DisposeAsync();
         }
         finally
@@ -1568,6 +1610,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
 
         SimConnected = connected;
+        Raise(nameof(XPlane12AarStatusText));
+        Aar.NotifyContextChanged();
         ConnectionText = connected ? "Connected" : "Disconnected";
         var simMode = DataSourceModes.UsesSimulatorConnection(Settings.DataSourceMode);
         SimConnectText = simMode ? (connected ? "Connected" : "Disconnected") : "N/A (Demo)";
@@ -1639,6 +1683,9 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
         _feed.ConnectionChanged -= OnConnectionChanged;
         _feed.SnapshotReceived -= OnSnapshotReceived;
+        if (_feed is IAarPoseSource oldPoseSource) oldPoseSource.AarPoseSampled -= OnAarPoseSampled;
+        if (_feed is IAarFuelAdapter oldFuelAdapter) oldFuelAdapter.FuelSampled -= OnAarFuelSampled;
+        if (_feed is IAarBridgeRuntimeStatusSource oldBridgeStatus) oldBridgeStatus.BridgeRuntimeStateChanged -= OnAarBridgeRuntimeStateChanged;
         await _feed.StopAsync();
         await _feed.DisposeAsync();
 
@@ -1653,6 +1700,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _feed = TrafficFeedFactory.Create(Settings, () => _tacticalLink.NearbyPeers);
         _feed.ConnectionChanged += OnConnectionChanged;
         _feed.SnapshotReceived += OnSnapshotReceived;
+        if (_feed is IAarPoseSource newPoseSource) newPoseSource.AarPoseSampled += OnAarPoseSampled;
+        if (_feed is IAarFuelAdapter newFuelAdapter) newFuelAdapter.FuelSampled += OnAarFuelSampled;
+        if (_feed is IAarBridgeRuntimeStatusSource newBridgeStatus) newBridgeStatus.BridgeRuntimeStateChanged += OnAarBridgeRuntimeStateChanged;
+        RefreshMsfsAarBridgeStatus();
+        Aar.NotifyContextChanged();
+        UpdateAarSampling();
         await _feed.StartAsync(_runCts.Token);
 
         UpdateSourceState(Settings.DataSourceMode);
@@ -1788,18 +1841,17 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
             return;
         }
         if (!IsTacticalLinkConnected) _repository.RemoveTacticalLinkContacts();
+        UpdateAarSampling();
+        Aar.NotifyContextChanged();
         Raise(nameof(TacticalLinkStatusText));
         Raise(nameof(TacticalLinkIdentityText));
         Raise(nameof(TacticalLinkAircraftTypeText));
-        Raise(nameof(IsTankerCapable));
-        Raise(nameof(IsTankerReceiverCapable));
         Raise(nameof(IsCloudSignedIn));
         Raise(nameof(TacticalLinkPeerCountText));
         Raise(nameof(TacticalLinkPeers));
         Raise(nameof(TacticalLinkState));
         Raise(nameof(IsTacticalLinkConnected));
-        Raise(nameof(TankerButtonText));
-        Raise(nameof(CanOfferTanker));
+        Raise(nameof(XPlane12AarStatusText));
         if (!IsTacticalLinkConnected) _latestOwnship = null;
     }
 
@@ -1857,16 +1909,161 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         await _tacticalLink.DisconnectAsync();
         TacticalLinkMessage = "Disconnected. Ownship sharing has stopped.";
         _repository.RemoveTacticalLinkContacts();
-        Raise(nameof(TankerButtonText));
     }
 
-    private async Task ToggleTankerAvailabilityAsync()
+    private void OnAarViewModelPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
     {
-        if (!IsTankerCapable || !IsTacticalLinkConnected) return;
-        await _tacticalLink.SetTankerAvailabilityAsync(!_tacticalLink.LocalTankerAvailable, _runCts.Token);
-        Raise(nameof(TankerButtonText));
-        Raise(nameof(CanOfferTanker));
-        Raise(nameof(IsTankerCapable));
+        if (e.PropertyName == nameof(AarViewModel.AarFuelUnit)) _configStore.SaveDisplaySettings(Settings);
+        Raise($"Aar.{e.PropertyName}");
+    }
+    private void SelectMsfs2024CommunityFolder()
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = "Select the MSFS 2024 Community2024 folder",
+            InitialDirectory = Directory.Exists(Settings.Msfs2024CommunityFolder) ? Settings.Msfs2024CommunityFolder : string.Empty,
+            Multiselect = false
+        };
+        if (dialog.ShowDialog() != true) return;
+        var resolved = _msfsPackagePathResolver.ResolveCommunity2024(dialog.FolderName, []);
+        if (resolved is null)
+        {
+            MsfsAarBridgeStatusText = "Select the existing Community2024 folder inside the MSFS 2024 package directory.";
+            return;
+        }
+        Settings.Msfs2024CommunityFolder = resolved;
+        _configStore.SaveDisplaySettings(Settings);
+        RefreshMsfsAarBridgeStatus();
+    }
+
+    private async Task InstallMsfsAarBridgeAsync()
+    {
+        var community = _msfsPackagePathResolver.ResolveCommunity2024(Settings.Msfs2024CommunityFolder);
+        if (community is null)
+        {
+            MsfsAarBridgeStatusText = "MSFS 2024 Community2024 folder could not be located. Select it first.";
+            return;
+        }
+        try
+        {
+            var package = await _msfsAarBridgeInstaller.InstallBundledAsync(typeof(MainViewModel).Assembly, community, _runCts.Token);
+            Settings.Msfs2024CommunityFolder = community;
+            _configStore.SaveDisplaySettings(Settings);
+            MsfsAarBridgeStatusText = $"Bridge {package.Version} installed. Restart Microsoft Flight Simulator 2024 to load it.";
+        }
+        catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
+        {
+            MsfsAarBridgeStatusText = $"Bridge installation failed: {ex.Message}";
+        }
+    }
+
+    private void UninstallMsfsAarBridge()
+    {
+        var community = _msfsPackagePathResolver.ResolveCommunity2024(Settings.Msfs2024CommunityFolder);
+        if (community is null)
+        {
+            MsfsAarBridgeStatusText = "MSFS 2024 Community2024 folder could not be located.";
+            return;
+        }
+        try
+        {
+            MsfsAarBridgeStatusText = _msfsAarBridgeInstaller.Uninstall(community)
+                ? "MSFS AAR Bridge removed. Restart Microsoft Flight Simulator 2024 if it is running."
+                : "MSFS AAR Bridge is not installed.";
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            MsfsAarBridgeStatusText = $"Bridge uninstall failed: {ex.Message}";
+        }
+    }
+
+    private void RefreshMsfsAarBridgeStatus()
+    {
+        var community = _msfsPackagePathResolver.ResolveCommunity2024(Settings.Msfs2024CommunityFolder);
+        if (community is null)
+        {
+            MsfsAarBridgeStatusText = "MSFS 2024 Community2024 folder not found. Select the folder to manage the bridge.";
+            return;
+        }
+        Settings.Msfs2024CommunityFolder = community;
+        var installation = _msfsAarBridgeInstaller.InspectInstallation(community);
+        var installationState = installation.State;
+        var installed = installation.Package;
+        var bridgeStatus = _feed as IAarBridgeRuntimeStatusSource;
+        var runtimeState = bridgeStatus?.BridgeRuntimeState;
+        var installedVersion = installed?.Version;
+        var runningVersion = bridgeStatus?.BridgeVersion;
+        var version = runningVersion ?? installedVersion;
+        var name = version is null ? "MSFS AAR Bridge" : $"MSFS AAR Bridge {version}";
+        if (installationState == AarBridgeInstallationState.Invalid && runtimeState is not (AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable))
+        {
+            MsfsAarBridgeStatusText = "An invalid MSFS AAR Bridge package is present. Use INSTALL / UPDATE to repair it; live fuel transfer is unavailable. Dry Hookup remains available.";
+            return;
+        }
+        if (installationState == AarBridgeInstallationState.NotInstalled && runtimeState is not (AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable))
+        {
+            MsfsAarBridgeStatusText = "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not.";
+            return;
+        }
+        if (runtimeState is { } state)
+        {
+            var adapter = _feed as IAarFuelAdapter;
+            var fuelRead = adapter?.CanReadFuel == true ? "ready" : "unavailable";
+            var fuelWrite = adapter?.CanWriteFuel == true ? "ready" : "unavailable";
+            var versionMismatch = installedVersion is not null && runningVersion is not null &&
+                !string.Equals(installedVersion, runningVersion, StringComparison.OrdinalIgnoreCase);
+            var restartNotice = versionMismatch ? $" Installed {installedVersion}, running {runningVersion}; restart MSFS 2024 to activate the installed version." : string.Empty;
+            var invalidPackageNotice = installationState == AarBridgeInstallationState.Invalid
+                ? " The package on disk is invalid; live fuel transfer will stop after an MSFS restart. Repair it with INSTALL / UPDATE."
+                : string.Empty;
+            MsfsAarBridgeStatusText = state switch
+            {
+                AarBridgeRuntimeState.NotInstalled => "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not." + invalidPackageNotice,
+                AarBridgeRuntimeState.InstalledNotRunning => $"{name} installed. Restart MSFS 2024 to activate it.{invalidPackageNotice}",
+                AarBridgeRuntimeState.Connecting => $"{name} connecting to MSFS 2024.{invalidPackageNotice}",
+                AarBridgeRuntimeState.ConnectedReadOnly => $"{name} connected. Fuel read {fuelRead}; fuel write unavailable.{restartNotice} {bridgeStatus?.BridgeDiagnostic ?? "Dry Hookup remains available."}{invalidPackageNotice}",
+                AarBridgeRuntimeState.ConnectedWritable => $"{name} connected. Fuel read {fuelRead}; fuel write {fuelWrite}.{restartNotice}{invalidPackageNotice}",
+                AarBridgeRuntimeState.ProtocolMismatch => $"{name} protocol is incompatible. Update the bridge.{restartNotice} {bridgeStatus?.BridgeDiagnostic}{invalidPackageNotice}",
+                _ => $"{name} error. {bridgeStatus?.BridgeDiagnostic ?? "Fuel transfer is stopped; Dry Hookup remains available."}{invalidPackageNotice}"
+            };
+            return;
+        }
+        MsfsAarBridgeStatusText = installationState switch
+        {
+            AarBridgeInstallationState.NotInstalled => "AAR Bridge not installed. Live fuel transfer requires the bridge; Dry Hookup does not.",
+            AarBridgeInstallationState.Invalid => "An invalid MSFS AAR Bridge package is present. Use INSTALL / UPDATE to repair it; live fuel transfer is unavailable. Dry Hookup remains available.",
+            _ => $"{name} installed. Start MSFS 2024 to connect the runtime bridge."
+        };
+    }
+
+    private void OnAarBridgeRuntimeStateChanged(object? sender, AarBridgeRuntimeState state)
+    {
+        if (!Application.Current.Dispatcher.CheckAccess())
+        {
+            Application.Current.Dispatcher.BeginInvoke(() => OnAarBridgeRuntimeStateChanged(sender, state));
+            return;
+        }
+        RefreshMsfsAarBridgeStatus();
+        Aar.NotifyContextChanged();
+    }
+
+    private void OnAarPoseSampled(object? sender, OwnshipState sample) => Aar.OnPose(sample);
+
+    private void OnAarFuelSampled(object? sender, AarFuelReading reading)
+    {
+        if (!Application.Current.Dispatcher.CheckAccess())
+        {
+            Application.Current.Dispatcher.BeginInvoke(() => OnAarFuelSampled(sender, reading));
+            return;
+        }
+        Aar.OnFuel(reading);
+        Aar.NotifyContextChanged();
+        Raise(nameof(XPlane12AarStatusText));
+    }
+
+    private void UpdateAarSampling()
+    {
+        Aar.SetConnectedOperationSampling(IsTacticalLinkConnected, _feed as IAarPoseSource);
     }
 
     private void PublishLatestTacticalTelemetry()
@@ -2153,7 +2350,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     }
 }
 
-public sealed record TacticalLinkPeerDisplay(string Callsign, string AircraftType, string RangeText, string StatusText);
+public sealed record TacticalLinkPeerDisplay(string ParticipantId, string Callsign, string AircraftType, string RangeText, string StatusText);
 
 public sealed class AirspaceRegionOptionViewModel : ViewModelBase
 {

@@ -5,6 +5,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using TacticalDisplay.Core.Services;
+using TacticalLink.Server.Aar;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -12,6 +13,46 @@ namespace TacticalDisplay.Tests;
 
 public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
 {
+    [Fact]
+    public async Task CanonicalRegistryDesignatorsControlAarCapabilitiesWithoutAliases()
+    {
+        var registry = new TestAarRegistryProvider(new AarRegistrySnapshot(1, 3, DateTimeOffset.UtcNow,
+        [
+            new("f35", "F-35", ["F35"], true, false, true, [], [new("BoomReceptacle", null, "unknown", [])], [], null, null),
+            new("f18", "F-18", ["F18"], true, false, true, [], [new("Probe", null, "unknown", [])], [], null, null),
+            new("kc135", "KC-135", ["K35R"], true, true, false, [new("Boom", null, "unknown", [])], [], [], null, null)
+        ]));
+        var hub = new TacticalLinkHub(new PeerInterestResolver(), aircraftCapabilities: new AarAircraftCapabilityResolver(registry));
+        var cases = new (string? AircraftType, string[] Expected)[]
+        {
+            ("F35", ["aar.receiver"]),
+            ("F18", ["aar.receiver"]),
+            ("K35R", ["aar.tanker"]),
+            ("UNKNOWN", []),
+            (null, [])
+        };
+
+        foreach (var (aircraftType, expected) in cases)
+        {
+            var userId = Guid.NewGuid().ToString();
+            var identity = new AuthenticatedParticipant(userId, "1234567", "TEST1", aircraftType, DateTimeOffset.UtcNow.AddMinutes(2));
+            using var peer = new TestPeer(hub, 60, 25, identity: identity);
+            await peer.StartAsync();
+            using var connected = await peer.ReadTypeAsync("CONNECTED");
+            Assert.Equal(aircraftType, connected.RootElement.GetProperty("aircraftType").ValueKind == JsonValueKind.Null
+                ? null
+                : connected.RootElement.GetProperty("aircraftType").GetString());
+            var capabilities = connected.RootElement.GetProperty("capabilities").EnumerateArray().Select(value => value.GetString()).ToArray();
+            Assert.Equal(expected.Order(StringComparer.Ordinal), capabilities.Where(value => value is "aar.tanker" or "aar.receiver").Order(StringComparer.Ordinal));
+            if (aircraftType is "UNKNOWN" or null)
+            {
+                Assert.DoesNotContain("aar.tanker", capabilities);
+                Assert.DoesNotContain("aar.receiver", capabilities);
+            }
+            await peer.StopAsync();
+        }
+    }
+
     [Fact]
     public void ServerAcceptsCloudRs256IdentityAndRejectsTampering()
     {
@@ -121,7 +162,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
     }
 
     [Fact]
-    public async Task AuthRefreshUpdatesAircraftIdentityAndClearsTankerAvailabilityAfterDowngrade()
+    public async Task LegacyCapabilityUpdateCannotSetTankerAvailabilityAndAuthRefreshClearsItAfterDowngrade()
     {
         using var rsa = RSA.Create(2048);
         var oldKey = Environment.GetEnvironmentVariable("TACTICAL_LINK_JWT_PUBLIC_KEY");
@@ -144,9 +185,7 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
 
             await tanker.SendAsync(new { type = "CAPABILITY_UPDATE", operationalStates = new { tankerAvailability = "Available" } });
             using var capabilityUpdate = await tanker.ReadTypeAsync("CAPABILITY_UPDATED");
-            Assert.Equal("Available", capabilityUpdate.RootElement.GetProperty("operationalStates").GetProperty("tankerAvailability").GetString());
-            using (var stateUpdate = await observer.ReadTypeAsync("PEER_UPDATE"))
-                Assert.Equal("Available", stateUpdate.RootElement.GetProperty("operationalStates").GetProperty("tankerAvailability").GetString());
+            Assert.DoesNotContain(capabilityUpdate.RootElement.GetProperty("operationalStates").EnumerateObject(), property => property.Name == "tankerAvailability");
 
             var refreshedToken = CreateToken(rsa, userId, "test-key", "F35A");
             await tanker.SendAsync(new { type = "AUTH_REFRESH", token = refreshedToken });
@@ -587,6 +626,16 @@ public sealed class TacticalLinkServerIntegrationTests(ITestOutputHelper output)
             }
         }
         public void Dispose() { _cts.Cancel(); _cts.Dispose(); _socket.Dispose(); }
+    }
+
+    private sealed class TestAarRegistryProvider : IAarRegistryProvider
+    {
+        private readonly AarRegistrySnapshot _snapshot;
+        public TestAarRegistryProvider(AarRegistrySnapshot snapshot) => _snapshot = snapshot;
+        public AarRegistrySnapshot? Current => _snapshot;
+        public bool IsAvailable => true;
+        public string? Status => $"Using published registry v{_snapshot.Version}.";
+        public event EventHandler? Changed { add { } remove { } }
     }
 
     private static string CreateToken(RSA rsa, string userId, string keyId, string? aircraftType = null)

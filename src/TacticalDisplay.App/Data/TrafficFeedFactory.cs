@@ -15,11 +15,15 @@ public static class TrafficFeedFactory
         ITrafficDataFeed feed;
         if (DataSourceModes.IsMsfs(settings.DataSourceMode))
         {
-            feed = new SimConnectTrafficFeed(settings);
+            var simConnectFeed = new SimConnectTrafficFeed(settings);
+            feed = new AarFuelAdapterFeed(simConnectFeed, new MsfsAarFuelAdapter(simConnectFeed));
         }
         else if (DataSourceModes.IsXPlane12(settings.DataSourceMode))
         {
-            feed = new XPlane12WebApiTrafficFeed(settings);
+            var xplane12Feed = new XPlane12WebApiTrafficFeed(settings);
+            var fuelAdapter = new XPlane12AarFuelAdapter(xplane12Feed);
+            xplane12Feed.AttachAarFuelAdapter(fuelAdapter);
+            feed = new AarFuelAdapterFeed(xplane12Feed, fuelAdapter);
         }
         else if (DataSourceModes.IsXPlaneLegacy(settings.DataSourceMode))
         {

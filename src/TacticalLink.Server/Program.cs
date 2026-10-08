@@ -6,14 +6,25 @@ using System.Text.Json;
 using System.Threading.Channels;
 using TacticalDisplay.Core.Models;
 using TacticalDisplay.Core.Services;
+using TacticalLink.Server.Aar;
+using TacticalLink.Server.Modules;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("TACTICAL_LINK_LISTEN_URL") ?? "http://0.0.0.0:8080");
 builder.Services.AddSingleton<IPeerInterestResolver, PeerInterestResolver>();
+builder.Services.AddHttpClient("AarRegistry", client => client.Timeout = Timeout.InfiniteTimeSpan);
+builder.Services.AddSingleton<AarRegistryService>();
+builder.Services.AddSingleton<IAarRegistryProvider>(services => services.GetRequiredService<AarRegistryService>());
+builder.Services.AddHostedService(services => services.GetRequiredService<AarRegistryService>());
+builder.Services.AddSingleton<IAircraftCapabilityResolver, AarAircraftCapabilityResolver>();
+builder.Services.AddSingleton<AarModuleHandler>();
+builder.Services.AddSingleton<IModuleMessageHandler>(services => services.GetRequiredService<AarModuleHandler>());
+builder.Services.AddHostedService(services => services.GetRequiredService<AarModuleHandler>());
+builder.Services.AddSingleton<ModuleRouter>();
 builder.Services.AddSingleton<TacticalLinkHub>();
 var app = builder.Build();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
-app.MapGet("/healthz", () => Results.Json(new { status = "ok" }));
+app.MapGet("/healthz", (IAarRegistryProvider registry) => Results.Json(TacticalLinkHealthResponse.From(registry)));
 app.Map("/v1", async (HttpContext context, TacticalLinkHub hub) =>
 {
     if (!context.WebSockets.IsWebSocketRequest)
@@ -106,7 +117,6 @@ public static class TacticalJwtValidator
 
 public sealed class TacticalLinkHub
 {
-    private static readonly IAircraftCapabilityResolver AircraftCapabilities = new StaticAircraftCapabilityResolver();
     private static readonly HashSet<string> AllowedTankerStates = ["Off", "Available", "Busy", "Unavailable"];
     private readonly ConcurrentDictionary<string, PeerConnection> _peers = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, PresenceIdentity> _presences = new(StringComparer.Ordinal);
@@ -125,13 +135,29 @@ public sealed class TacticalLinkHub
     private readonly int _telemetryTokensPerSecond;
     private readonly int _controlTokenLimit;
     private readonly int _controlTokensPerSecond;
+    private readonly IAircraftCapabilityResolver _aircraftCapabilities;
+    private readonly IAarRegistryProvider? _aarRegistryProvider;
+    private readonly AarModuleHandler? _aarModuleHandler;
+    private readonly ModuleRouter _moduleRouter;
     private readonly ConcurrentDictionary<string, System.Threading.RateLimiting.TokenBucketRateLimiter> _telemetryLimiters = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, System.Threading.RateLimiting.TokenBucketRateLimiter> _controlLimiters = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, long> _rateLimitEventsByParticipant = new(StringComparer.Ordinal);
     public TacticalLinkHub(IPeerInterestResolver interestResolver, TimeSpan? reconnectGrace = null, TimeProvider? timeProvider = null,
-        int telemetryTokenLimit = 50, int telemetryTokensPerSecond = 45, int controlTokenLimit = 20, int controlTokensPerSecond = 15)
+        int telemetryTokenLimit = 50, int telemetryTokensPerSecond = 45, int controlTokenLimit = 20, int controlTokensPerSecond = 15,
+        IAircraftCapabilityResolver? aircraftCapabilities = null, IAarRegistryProvider? aarRegistryProvider = null, ModuleRouter? moduleRouter = null,
+        AarModuleHandler? aarModuleHandler = null)
     {
         _interestResolver = interestResolver;
+        _aircraftCapabilities = aircraftCapabilities ?? new StaticAircraftCapabilityResolver();
+        _aarRegistryProvider = aarRegistryProvider;
+        _aarModuleHandler = aarModuleHandler;
+        if (_aarModuleHandler is not null)
+        {
+            _aarModuleHandler.EventReady += OnAarEventReady;
+            _aarModuleHandler.OperationalStateChangeRequested += OnModuleOperationalStateChange;
+        }
+        _moduleRouter = moduleRouter ?? new ModuleRouter([]);
+        if (_aarRegistryProvider is not null) _aarRegistryProvider.Changed += OnRegistryChanged;
         _reconnectGrace = reconnectGrace ?? TimeSpan.FromSeconds(12);
         _timeProvider = timeProvider ?? TimeProvider.System;
         _telemetryTokenLimit = telemetryTokenLimit;
@@ -152,6 +178,7 @@ public sealed class TacticalLinkHub
         if (replaced is not null) replaced.Dispose();
         peer.InterestRadiusNm = _defaultRadiusNm;
         peer.StartWriter(cancellationToken);
+        peer.PublishedTankerAvailability = peer.OperationalStates.GetValueOrDefault("tankerAvailability");
         peer.TrySend(new { type = "CONNECTED", participantId = peer.Identity.ParticipantId, callsign = peer.Identity.Callsign, aircraftType = peer.Identity.AircraftType, capabilities = peer.Capabilities, operationalStates = peer.OperationalStates, connectionGeneration = generation });
         _ = Task.Run(async () =>
         {
@@ -212,6 +239,7 @@ public sealed class TacticalLinkHub
             if (_peers.TryGetValue(publicId, out var current) && current.Generation == generation)
             {
                 current.MarkDisconnected();
+                _aarModuleHandler?.OnParticipantDisconnected(identity.UserId, current.Identity.ParticipantId, current.ExplicitlyDisconnected);
                 lock (_presenceLock)
                 {
                     if (_presences.TryGetValue(identity.UserId, out var presence) && presence.ParticipantId == publicId && presence.Generation == generation)
@@ -240,7 +268,8 @@ public sealed class TacticalLinkHub
             return;
         }
         var type = typeNode.GetString();
-        var isTelemetryMessage = type == "TELEMETRY";
+        var isAarPose = type == "MODULE_MESSAGE" && root.TryGetProperty("kind", out var moduleKind) && moduleKind.ValueKind == JsonValueKind.String && moduleKind.GetString() == "POSE_UPDATE";
+        var isTelemetryMessage = type == "TELEMETRY" || isAarPose;
         var limiters = isTelemetryMessage ? _telemetryLimiters : _controlLimiters;
         var limiter = limiters.GetOrAdd(peer.Identity.ParticipantId, _ => new System.Threading.RateLimiting.TokenBucketRateLimiter(new System.Threading.RateLimiting.TokenBucketRateLimiterOptions
         {
@@ -266,7 +295,17 @@ public sealed class TacticalLinkHub
         {
             case "CONNECT":
                 peer.IsConnected = true;
+                peer.ClientInstanceId = root.TryGetProperty("clientInstanceId", out var clientInstance) && clientInstance.ValueKind == JsonValueKind.String
+                    ? clientInstance.GetString()
+                    : null;
                 peer.UpdateOperationalStates(root);
+                var tankerAvailability = _aarModuleHandler?.OnParticipantConnected(ToAarSnapshot(peer));
+                if (tankerAvailability is not null) peer.SetTankerAvailability(tankerAvailability);
+                if (peer.PublishedTankerAvailability != peer.OperationalStates.GetValueOrDefault("tankerAvailability"))
+                {
+                    peer.PublishedTankerAvailability = peer.OperationalStates.GetValueOrDefault("tankerAvailability");
+                    peer.TrySend(new { type = "CAPABILITY_UPDATED", capabilities = peer.Capabilities, operationalStates = peer.OperationalStates });
+                }
                 await RefreshInterestAsync(cancellationToken);
                 break;
             case "DISCONNECT":
@@ -303,6 +342,23 @@ public sealed class TacticalLinkHub
                 peer.TrySend(new { type = "CAPABILITY_UPDATED", capabilities = peer.Capabilities, operationalStates = peer.OperationalStates });
                 await RefreshInterestAsync(cancellationToken);
                 break;
+            case "MODULE_MESSAGE":
+                var moduleContext = new ModuleConnectionContext(
+                    peer.Identity.ParticipantId,
+                    generation,
+                    () => IsCurrentGeneration(peer, generation),
+                    SendModuleEvent,
+                    (name, value) =>
+                    {
+                        if (name != "tankerAvailability" || !AllowedTankerStates.Contains(value)) return;
+                        peer.SetTankerAvailability(value);
+                        peer.PublishedTankerAvailability = value;
+                        ScheduleInterestRefresh();
+                    },
+                    ToAarSnapshot(peer),
+                    () => _peers.Values.Where(candidate => candidate.IsConnected).Select(ToAarSnapshot).ToArray());
+                await _moduleRouter.RouteAsync(root, moduleContext, cancellationToken);
+                break;
             case "AUTH_REFRESH":
                 if (root.TryGetProperty("token", out var refreshToken) && refreshToken.GetString() is { Length: > 0 } jwt)
                 {
@@ -312,15 +368,30 @@ public sealed class TacticalLinkHub
                         if (refreshed.UserId == peer.Identity.UserId && refreshed.VatsimCid == peer.Identity.VatsimCid)
                         {
                             peer.UpdateIdentity(new ParticipantIdentity(peer.Identity.ParticipantId, refreshed.UserId, refreshed.VatsimCid, refreshed.Callsign, refreshed.AircraftType, refreshed.ExpiresAt));
+                            var refreshedAvailability = _aarModuleHandler?.OnParticipantCapabilitiesChanged(ToAarSnapshot(peer));
+                            if (refreshedAvailability is not null) peer.SetTankerAvailability(refreshedAvailability);
                             peer.TrySend(new { type = "AUTH_REFRESHED", callsign = refreshed.Callsign, aircraftType = refreshed.AircraftType, capabilities = peer.Capabilities, operationalStates = peer.OperationalStates, expiresAt = refreshed.ExpiresAt });
                             await RefreshInterestAsync(cancellationToken);
                         }
-                        else peer.TrySend(new { type = "ERROR", code = "IDENTITY_MISMATCH", message = "The refreshed identity did not match this connection." });
+                        else
+                        {
+                            Interlocked.Increment(ref _authRefreshFailures);
+                            Console.Error.WriteLine("AUTH_REFRESH rejected: identity mismatch");
+                            peer.TrySend(new { type = "ERROR", code = "IDENTITY_MISMATCH", message = "The refreshed identity did not match this connection." });
+                        }
                     }
                     catch (UnauthorizedAccessException)
                     {
+                        Interlocked.Increment(ref _authRefreshFailures);
+                        Console.Error.WriteLine("AUTH_REFRESH rejected: token validation failed");
                         peer.TrySend(new { type = "ERROR", code = "AUTH_REFRESH_REJECTED", message = "The refreshed identity is invalid." });
                     }
+                }
+                else
+                {
+                    Interlocked.Increment(ref _authRefreshFailures);
+                    Console.Error.WriteLine("AUTH_REFRESH rejected: token missing");
+                    peer.TrySend(new { type = "ERROR", code = "AUTH_REFRESH_REJECTED", message = "The refreshed identity is invalid." });
                 }
                 break;
             case "PING": peer.TrySend(new { type = "PONG", timestampUtc = DateTimeOffset.UtcNow }); break;
@@ -344,7 +415,7 @@ public sealed class TacticalLinkHub
                     var replaced = _peers.TryGetValue(existing.ParticipantId, out var peer) ? peer : null;
                     _presences[identity.UserId] = existing with { Generation = generation, Connected = true, GraceExpiresAt = null };
                     var authenticatedIdentity = ToParticipantIdentity(existing.ParticipantId, identity);
-                    var current = replaced?.Resume(authenticatedIdentity, generation, socket) ?? new PeerConnection(authenticatedIdentity, generation, socket);
+                    var current = replaced?.Resume(authenticatedIdentity, generation, socket) ?? new PeerConnection(authenticatedIdentity, generation, socket, _aircraftCapabilities);
                     _peers[existing.ParticipantId] = current;
                     return (existing.ParticipantId, generation, current, replaced);
                 }
@@ -353,7 +424,7 @@ public sealed class TacticalLinkHub
 
             var participantId = "tl_" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16)).ToLowerInvariant();
             _presences[identity.UserId] = new PresenceIdentity(participantId, 1, true, null);
-            var newPeer = new PeerConnection(ToParticipantIdentity(participantId, identity), 1, socket);
+            var newPeer = new PeerConnection(ToParticipantIdentity(participantId, identity), 1, socket, _aircraftCapabilities);
             _peers[participantId] = newPeer;
             return (participantId, 1, newPeer, null);
         }
@@ -490,6 +561,29 @@ public sealed class TacticalLinkHub
         _ = cancellationToken;
     }
 
+    private bool SendModuleEvent(string participantId, string module, int moduleProtocolVersion, string kind, string? operationId, long? operationRevision, string? messageId, object payload)
+    {
+        if (!_peers.TryGetValue(participantId, out var peer)) return false;
+        return peer.TrySendModuleEvent(module, moduleProtocolVersion, kind, operationId, operationRevision, messageId, payload);
+    }
+
+    private static AarPeerSnapshot ToAarSnapshot(PeerConnection peer) => new(
+        peer.Identity.ParticipantId, peer.Identity.UserId, peer.Identity.VatsimCid, peer.Identity.Callsign,
+        peer.Identity.AircraftType, peer.IsConnected, peer.ClientInstanceId, peer.Generation, new HashSet<string>(peer.Capabilities, StringComparer.Ordinal),
+        new Dictionary<string, string>(peer.OperationalStates, StringComparer.Ordinal), peer.Telemetry);
+
+    private void OnAarEventReady(AarServerEvent item) =>
+        SendModuleEvent(item.ParticipantId, "aar", 1, item.Kind, item.OperationId, item.OperationRevision, null, item.Payload);
+
+    private void OnModuleOperationalStateChange(ModuleOperationalStateChange change)
+    {
+        if (change.Name != "tankerAvailability" || !_peers.TryGetValue(change.ParticipantId, out var peer)) return;
+        peer.SetTankerAvailability(change.Value);
+        peer.PublishedTankerAvailability = change.Value;
+        peer.TrySend(new { type = "CAPABILITY_UPDATED", capabilities = peer.Capabilities, operationalStates = peer.OperationalStates });
+        ScheduleInterestRefresh();
+    }
+
     private object PeerEvent(string type, PeerConnection peer) => new
     {
         type,
@@ -518,13 +612,25 @@ public sealed class TacticalLinkHub
         (!telemetry.VelocityEastMps.HasValue || double.IsFinite(telemetry.VelocityEastMps.Value)) &&
         (!telemetry.VelocityDownMps.HasValue || double.IsFinite(telemetry.VelocityDownMps.Value));
 
-    private static HashSet<string> CapabilitiesFor(string? aircraftType)
+    private static HashSet<string> CapabilitiesFor(string? aircraftType, IAircraftCapabilityResolver aircraftCapabilities)
     {
         var capabilities = new HashSet<string>(["identity", "telemetry"], StringComparer.Ordinal);
-        var profile = AircraftCapabilities.Resolve(aircraftType);
+        var profile = aircraftCapabilities.Resolve(aircraftType);
         if (profile.CanTanker) capabilities.Add("aar.tanker");
         if (profile.CanReceive) capabilities.Add("aar.receiver");
         return capabilities;
+    }
+
+    private void OnRegistryChanged(object? sender, EventArgs eventArgs)
+    {
+        foreach (var peer in _peers.Values)
+        {
+            peer.RefreshCapabilities();
+            var tankerAvailability = _aarModuleHandler?.OnParticipantCapabilitiesChanged(ToAarSnapshot(peer));
+            if (tankerAvailability is not null) peer.SetTankerAvailability(tankerAvailability);
+        }
+        _ = Task.Run(async () => await RefreshInterestAsync(CancellationToken.None));
+        _ = eventArgs;
     }
 
     private static double ReadRadius() => double.TryParse(Environment.GetEnvironmentVariable("TACTICAL_LINK_INTEREST_RADIUS_NM"), out var radius) ? System.Math.Clamp(radius, 1, ReadMaxRadius()) : 200;
@@ -537,21 +643,27 @@ public sealed class TacticalLinkHub
         private WebSocket _socket;
         private readonly Channel<string> _outbound = Channel.CreateBounded<string>(new BoundedChannelOptions(128) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = false });
         private readonly object _telemetryGate = new();
+        private readonly object _moduleSendGate = new();
+        private readonly IAircraftCapabilityResolver _aircraftCapabilities;
         private readonly Dictionary<string, string> _latestTelemetry = new(StringComparer.Ordinal);
         private readonly SemaphoreSlim _wakeWriter = new(0);
         private volatile bool _disposed;
-        public PeerConnection(ParticipantIdentity identity, long generation, WebSocket socket)
+        private long _moduleTransportSequence;
+        public PeerConnection(ParticipantIdentity identity, long generation, WebSocket socket, IAircraftCapabilityResolver aircraftCapabilities)
         {
             Identity = identity;
             Generation = generation;
             _socket = socket;
+            _aircraftCapabilities = aircraftCapabilities;
             IsConnected = true;
-            Capabilities = CapabilitiesFor(identity.AircraftType);
+            Capabilities = CapabilitiesFor(identity.AircraftType, _aircraftCapabilities);
             if (Capabilities.Contains("aar.tanker")) OperationalStates["tankerAvailability"] = "Off";
         }
         public ParticipantIdentity Identity { get; private set; }
         public long Generation { get; }
         public bool IsConnected { get; set; }
+        public string? ClientInstanceId { get; set; }
+        public string? PublishedTankerAvailability { get; set; }
         public bool InReconnectGrace { get; set; }
         public bool ExplicitlyDisconnected { get; set; }
         public TacticalTelemetry? Telemetry { get; set; }
@@ -564,13 +676,19 @@ public sealed class TacticalLinkHub
         public HashSet<string> Capabilities { get; private set; }
         public Dictionary<string, string> OperationalStates { get; private set; } = [];
         public int OutboundCount { get { lock (_telemetryGate) return _outbound.Reader.Count + _latestTelemetry.Count; } }
+        public long NextModuleTransportSequence() => Interlocked.Increment(ref _moduleTransportSequence);
+        public bool TrySendModuleEvent(string module, int moduleProtocolVersion, string kind, string? operationId, long? operationRevision, string? messageId, object payload)
+        {
+            lock (_moduleSendGate)
+                return TrySend(new { type = "MODULE_EVENT", module, moduleProtocolVersion, transportSequence = NextModuleTransportSequence(), messageId, kind, operationId, operationRevision, payload });
+        }
         public bool IsSlow => OutboundCount > 112;
         private bool _closeAfterDrain;
         private WebSocketCloseStatus _closeStatus = WebSocketCloseStatus.NormalClosure;
         private string _closeReason = "closed";
         public PeerConnection Resume(ParticipantIdentity identity, long generation, WebSocket socket)
         {
-            var resumed = new PeerConnection(identity, generation, socket)
+            var resumed = new PeerConnection(identity, generation, socket, _aircraftCapabilities)
             {
                 Telemetry = Telemetry,
                 LastTelemetryReceivedAt = LastTelemetryReceivedAt,
@@ -662,19 +780,14 @@ public sealed class TacticalLinkHub
 
         public void UpdateOperationalStates(JsonElement root)
         {
-            if (!Capabilities.Contains("aar.tanker"))
-            {
-                OperationalStates.Remove("tankerAvailability");
-                return;
-            }
-            if (root.TryGetProperty("operationalStates", out var states) && states.ValueKind == JsonValueKind.Object && Capabilities.Contains("aar.tanker"))
-            {
-                var requested = states.TryGetProperty("tankerAvailability", out var tanker) && tanker.ValueKind == JsonValueKind.String
-                    ? tanker.GetString()
-                    : null;
-                if (requested is not null && AllowedTankerStates.Contains(requested))
-                    OperationalStates["tankerAvailability"] = requested;
-            }
+            OperationalStates.Remove("tankerAvailability");
+            _ = root;
+        }
+
+        public void SetTankerAvailability(string state)
+        {
+            if (!Capabilities.Contains("aar.tanker") || !AllowedTankerStates.Contains(state)) return;
+            OperationalStates["tankerAvailability"] = state;
         }
 
         public void MarkDisconnected() { IsConnected = false; InReconnectGrace = true; }
@@ -683,10 +796,18 @@ public sealed class TacticalLinkHub
             var wasTanker = Capabilities.Contains("aar.tanker");
             var availability = OperationalStates.GetValueOrDefault("tankerAvailability", "Off");
             Identity = identity;
-            Capabilities = CapabilitiesFor(identity.AircraftType);
+            Capabilities = CapabilitiesFor(identity.AircraftType, _aircraftCapabilities);
             OperationalStates.Clear();
             if (Capabilities.Contains("aar.tanker"))
                 OperationalStates["tankerAvailability"] = wasTanker ? availability : "Off";
+        }
+        public void RefreshCapabilities()
+        {
+            var wasTanker = Capabilities.Contains("aar.tanker");
+            var availability = OperationalStates.GetValueOrDefault("tankerAvailability", "Off");
+            Capabilities = CapabilitiesFor(Identity.AircraftType, _aircraftCapabilities);
+            OperationalStates.Clear();
+            if (Capabilities.Contains("aar.tanker")) OperationalStates["tankerAvailability"] = wasTanker ? availability : "Off";
         }
         public void StartGrace(TimeSpan gracePeriod, TimeProvider timeProvider, Action expire)
         {

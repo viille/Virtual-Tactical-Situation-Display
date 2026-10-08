@@ -11,6 +11,7 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080
 EXPOSE 8080
+RUN mkdir -p /var/lib/tactical-link && chown -R $APP_UID:$APP_UID /var/lib/tactical-link
 COPY --from=build /out .
 USER $APP_UID
 ENTRYPOINT ["dotnet", "TacticalLink.Server.dll"]
