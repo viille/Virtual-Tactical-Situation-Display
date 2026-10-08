@@ -57,9 +57,9 @@ The implementation boundary is a generic module router/handler interface, an AAR
 
 ## Supported operation and state
 
-V0.16 supports human-controlled tankers and receivers, boom refueling only, one Active receiver per tanker, at most one additional Accepted/Committed receiver, and an in-memory FIFO queue of Pending requests. Probe/drogue operations, dedicated boom-operator controls, hose simulation, multiple simultaneous active receiver operations, AI participants, complete simulator fuel-system simulation, and persistence of active operations are out of scope.
+V0.16 supports a generic simulator AAR procedure for human-controlled tankers and receivers, one Active receiver per tanker, at most one additional Accepted/Committed receiver, and an in-memory FIFO queue of Pending requests. Registry Boom, Drogue, Probe, and Receptacle methods remain metadata; physical method compatibility is not an eligibility gate because v0.16 does not model the hardware. Dedicated operator controls, hose physics, multiple simultaneous active receiver operations, AI participants, complete simulator fuel-system simulation, and persistence of active operations are out of scope.
 
-Tanker availability is `Off`, `Available`, `Busy`, or `Unavailable`. The pilot explicitly joins as tanker, then selects Available; Busy is derived from an active operation. After an operation, availability returns to Available unless the pilot selected Unavailable or left tanker mode. Receiver has no persistent role mode. Discovery requires a connected peer, tanker registry capability, local adapter readiness, Available state, compatible boom methods, and normal TacticalLink interest. An active operation pins both participants into interest regardless of normal radius.
+Tanker availability is `Off`, `Available`, `Busy`, or `Unavailable`. The pilot explicitly joins as tanker, then selects Available; Busy is derived from an active operation. After an operation, availability returns to Available unless the pilot selected Unavailable or left tanker mode. Receiver has no persistent role mode. Discovery requires a connected peer, tanker registry capability, local adapter readiness, Available state, and normal TacticalLink interest. Method compatibility is not checked in v0.16. An active operation pins both participants into interest regardless of normal radius.
 
 Keep queue requests separate from operations. `PendingRequests` contain requests not yet accepted: they are FIFO-ordered by `RequestedAt`, reserve zero tanker fuel, and can be accepted/rejected by the tanker. Distance never reorders them. A request records request ID, authenticated requester, requested fixed kg or `FULL`, requested time, and current status. Do not create a committed operation until ACCEPT succeeds.
 
@@ -128,16 +128,15 @@ availableToPromiseKg = max(0, currentTankerFuelKg
 
 Transferred fuel is removed from current fuel and also reduces the outstanding commitment, so it is never subtracted twice. The server locks the accepted plan and effective rate for the operation.
 
-Per-side limits preserve provenance: `confirmed aircraft-specific value`, `method fallback`, or `unknown`. Unknown boom limits use the conservative VTSD method fallback independently on each side:
+Per-side limits preserve provenance: `confirmed aircraft-specific value`, historical `method_fallback`, or `unknown`. For each side, use the minimum confirmed positive aircraft-specific limit across its systems; if none exists, use the generic simulated AAR fallback of 10 kg/s:
 
 ```text
-DEFAULT_BOOM_LIMIT_KG_PER_SECOND = 10
-tankerLimit = tanker.MaxOffloadKgPerSecond ?? DEFAULT_BOOM_LIMIT_KG_PER_SECOND
-receiverLimit = receiver.MaxReceiveKgPerSecond ?? DEFAULT_BOOM_LIMIT_KG_PER_SECOND
+tankerLimit = minimum confirmed tanker system limit ?? 10 kg/s generic fallback
+receiverLimit = minimum confirmed receiver system limit ?? 10 kg/s generic fallback
 effectiveFlowKgPerSecond = min(tankerLimit, receiverLimit)
 ```
 
-The 10 kg/s fallback is not an aircraft-specific performance claim and must never be shown as a confirmed type value in either desktop UI or Cloud admin. A known high tanker limit therefore cannot bypass an unknown receiver limit.
+The 10 kg/s fallback is generic VTSD simulated AAR policy, not a confirmed aircraft, Boom, or Drogue value. For profiles with multiple systems and no selected method, use the minimum confirmed positive rate, never the highest rate. The fallback must never be shown as a confirmed type value in either desktop UI or Cloud admin.
 
 Only the server owns monotonic `TransferredKg`, the cumulative AAR mass confirmed as successfully applied by both participants. Engine burn remains independent and is never inferred as AAR transfer. To avoid counting a requested write as completed transfer, a server `TRANSFER_PROPOSAL` carries a proposed cumulative target but does not itself advance `TransferredKg`. Clients apply the difference between that target and their `LastAppliedTransferredKg`; receiver adds and tanker removes fuel. The server commits the proposed target to `TransferredKg` only after both clients acknowledge the same actually applied cumulative mass (within the adapters' declared mass resolution). A transfer proposal and its result are operation events and are ordered by `OperationRevision`.
 
@@ -161,7 +160,7 @@ Use explicit configuration bounds, with units, for maximum sample age, maximum a
 
 The geometry model defines aircraft body axes as +X forward, +Y right/starboard, +Z up. It transforms aircraft-body contact/receptacle offsets through attitude into WGS84 Earth-centered coordinates and then into a common local East/North/Up relative frame; velocity is compared in that same frame. Registry geometry may provide aircraft-family values and optional local technical overrides. Missing aircraft-specific geometry uses explicit, configurable synthetic simulation geometry; it is identified as such and calibrated in simulator testing, not presented as sourced aircraft data. Exact addon/model matching is not required, and future local overrides can restrict readiness for a technical incompatibility without expanding server capability.
 
-Contact capture requires the server's configured 3D position, relative attitude, and relative-velocity envelope to be satisfied continuously for a debounce interval. Release uses a larger hysteresis envelope and a stale-data timeout to prevent contact chatter. Geometry alone never starts fueling: tanker CLEAR CONTACT is a required explicit action after stable PreContact. Breakaway or envelope violation stops transfer before subsequent fuel deltas are issued. All envelope values and timing bounds are configuration with documented units and initial test values; they are calibrated as simulation behavior.
+Contact capture uses aircraft reference positions and the configured coarse position and relative-velocity envelope continuously for a debounce interval. The current defaults are 12–160 m behind, ±18 m lateral, 2–32 m below, ≤4 m/s relative speed, and 1 second capture debounce. Release hysteresis defaults are 6–210 m behind, ±28 m lateral, 0–48 m below, ≤7 m/s, and 250 ms debounce. These broad bounds tolerate simulator/network update timing and jitter; they do not model boom-tip/receptacle contact, basket/probe engagement, hose extension, nozzle position, or aircraft-specific refueling contact points. `Contact` means stable presence in the coarse server-approved region, not physical hardware engagement. The tanker explicitly executes `START_TRANSFER`; geometry alone never authorizes fuel. Invalid geometry, stale or misaligned poses, excessive relative motion, and failed debounce continue to revoke or prevent contact.
 
 ## Suspension, reconnect, and process lifecycle
 
@@ -270,7 +269,7 @@ The eventual v0.16 acceptance run connects human tanker and receiver participant
 
 ## Out of scope for v0.16
 
-Probe/drogue operations, a dedicated boom operator, manual boom control/animation, hose physics, multiple simultaneous receiver contacts, AI tanker/receiver, full internal aircraft fuel-system simulation, real-world clearance enforcement, and persistent active operations are explicitly excluded. Registry profiles may describe future probe/drogue systems, but v0.16 runtime remains boom-only.
+Physical Boom/Drogue compatibility enforcement, a dedicated boom operator, manual boom control/animation, hose physics, multiple simultaneous receiver contacts, AI tanker/receiver, full internal aircraft fuel-system simulation, real-world clearance enforcement, and persistent active operations are explicitly excluded. F-18 Probe and F-35 BoomReceptacle metadata can both enter the generic v0.16 procedure when profile roles permit. Future versions may add selected systems, a compatibility matrix, and physical-method-specific geometry without removing registry metadata.
 
 ## Initial source notes
 
