@@ -11,6 +11,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan CompletedResultTtl = TimeSpan.FromHours(24);
+    private static readonly TimeSpan TransferAckResultTtl = TimeSpan.FromMinutes(1);
     private const int MaxResultsPerParticipant = 256;
     private const int MaxResultsGlobal = 32_768;
     private const int MaxPendingPerTanker = 8;
@@ -396,13 +397,23 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             return SettleCancelledTransfer(context, peer, operation, cancelled, applied, appliedKg);
         }
 
-        if (operation.State != "Refueling" || operation.PendingTransfer is null)
+        if (operation.PendingTransfer is null)
+        {
+            if (applied <= operation.TransferredKg + 0.05)
+                return Result("TRANSFER_ACK_ACCEPTED", operation.Id, operation.Revision,
+                    peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation));
+            throw new InvalidOperationException("There is no pending transfer proposal to acknowledge.");
+        }
+        if (operation.State != "Refueling")
             throw new InvalidOperationException("There is no pending transfer proposal to acknowledge.");
         var pending = operation.PendingTransfer;
         if (proposalId != pending.Id || proposalRevision != pending.Revision ||
             Math.Abs(targetCumulative - pending.TargetCumulativeKg) > 0.01 ||
             applied + 0.05 < operation.TransferredKg || applied > pending.TargetCumulativeKg + 0.05)
         {
+            if ((proposalId != pending.Id || proposalRevision != pending.Revision) && applied <= operation.TransferredKg + 0.05)
+                return Result("TRANSFER_ACK_ACCEPTED", operation.Id, operation.Revision,
+                    peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation));
             Suspend(operation, "TRANSFER_ACK_MISMATCH", TimeSpan.FromSeconds(5));
             throw new InvalidOperationException("Transfer acknowledgement did not match the outstanding proposal.");
         }
@@ -1618,6 +1629,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
 
     private DateTimeOffset GetExpiry(CachedResult entry)
     {
+        if (entry.Kind == "TRANSFER_ACK_ACCEPTED") return entry.CreatedAt + TransferAckResultTtl;
         if (entry.RequestId is { } requestId && _requests.TryGetValue(requestId, out var request))
         {
             if (request.Status == "Pending") return DateTimeOffset.MaxValue;

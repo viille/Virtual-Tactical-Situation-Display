@@ -159,6 +159,20 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         if (id.Length > 80 || id.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_' and not '.'))
             throw new ArgumentException("The module message ID contains unsupported characters.", nameof(messageId));
         var payloadElement = JsonSerializer.SerializeToElement(payload, Json);
+        if (kind == "POSE_UPDATE")
+        {
+            await SendAsync(new
+            {
+                type = "MODULE_MESSAGE",
+                module,
+                moduleProtocolVersion,
+                messageId = id,
+                kind,
+                operationId,
+                payload = payloadElement
+            }, cancellationToken).ConfigureAwait(false);
+            return id;
+        }
         var pendingKey = module + "\n" + id;
         lock (_pendingModuleMessages)
         {

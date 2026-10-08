@@ -26,7 +26,22 @@ public static class AarRegistryValidator
                 !profile.CanTanker && !profile.CanReceive)
                 return Fail($"Profile {profile.ProfileKey} has an invalid capability/system definition.", out reason);
 
-            var sourceIds = new HashSet<string>(profile.Sources?.Select(source => source.Id) ?? [], StringComparer.Ordinal);
+            if (profile.Sources is null || profile.Sources.Count > 40)
+                return Fail($"Profile {profile.ProfileKey} has an invalid source collection.", out reason);
+            var sourceIds = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var source in profile.Sources)
+            {
+                if (source is null || string.IsNullOrWhiteSpace(source.Id) || source.Id.Length > 80 ||
+                    source.Id.Any(character => !char.IsAsciiLetterOrDigit(character) && character is not '.' and not '_' and not '-') ||
+                    string.IsNullOrWhiteSpace(source.Title) || source.Title.Length > 240 ||
+                    string.IsNullOrWhiteSpace(source.Publisher) || source.Publisher.Length > 160 ||
+                    string.IsNullOrWhiteSpace(source.Claim) || source.Claim.Length > 1000 ||
+                    source.Url is null || source.Url.Length > 2048 ||
+                    !Uri.TryCreate(source.Url, UriKind.Absolute, out var sourceUri) ||
+                    (sourceUri.Scheme != Uri.UriSchemeHttp && sourceUri.Scheme != Uri.UriSchemeHttps) ||
+                    source.RetrievedAt == default || !sourceIds.Add(source.Id))
+                    return Fail($"Profile {profile.ProfileKey} has an invalid or duplicated source.", out reason);
+            }
             foreach (var code in profile.IcaoDesignators)
             {
                 if (string.IsNullOrWhiteSpace(code) || code.Length is < 2 or > 4 || code.Any(character => !char.IsAsciiLetterOrDigit(character)) || code != code.ToUpperInvariant())
