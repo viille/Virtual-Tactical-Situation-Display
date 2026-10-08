@@ -633,9 +633,26 @@ public sealed class AarModuleHandlerTests
         Assert.Equal("REQUEST_ACCEPTED", accepted.LastKind);
     }
 
+    [Fact]
+    public async Task F18ProbeReceiverCanBeAcceptedByBoomTankerInV016()
+    {
+        var tanker = Rig.TankerProfile with { TankerSystems = [new("Boom", null, "unknown", [])] };
+        var receiver = Rig.ReceiverProfile with { ProfileKey = "f18", DisplayName = "F-18", IcaoDesignators = ["F18"], ReceiverSystems = [new("Probe", null, "unknown", [])] };
+        var rig = new Rig(tanker, receiver, receiverType: "F18");
+        await rig.PrepareTankerAndReceiver();
+
+        var request = await rig.Request("receiver", "tanker", 100);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+
+        Assert.Equal("REQUEST_QUEUED", request.LastKind);
+        Assert.Equal("REQUEST_ACCEPTED", accepted.LastKind);
+    }
+
     [Theory]
     [InlineData("missing")]
+    [InlineData("missing-tanker")]
     [InlineData("disabled")]
+    [InlineData("disabled-tanker")]
     [InlineData("receiver-role")]
     [InlineData("tanker-role")]
     public async Task RequestRefuelRequiresEnabledProfilesAndRoleCapabilities(string invalidProfile)
@@ -645,7 +662,9 @@ public sealed class AarModuleHandlerTests
         var receiverType = "F16";
         var tankerType = "K35R";
         if (invalidProfile == "missing") receiverType = "XXXX";
+        if (invalidProfile == "missing-tanker") tankerType = "XXXX";
         if (invalidProfile == "disabled") receiver = receiver with { Enabled = false };
+        if (invalidProfile == "disabled-tanker") tanker = tanker with { Enabled = false };
         if (invalidProfile == "receiver-role") receiver = receiver with { CanReceive = false };
         if (invalidProfile == "tanker-role") tanker = tanker with { CanTanker = false };
         var rig = new Rig(tanker, receiver, receiverType, tankerType);
