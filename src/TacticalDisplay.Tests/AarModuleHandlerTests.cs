@@ -63,7 +63,7 @@ public sealed class AarModuleHandlerTests
 
         fixture.Clock.Advance(TimeSpan.FromMinutes(2));
         var exactReplay = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, messageId, operationId: fixture.OperationId);
-        Assert.Equal(1, exactReplay.Events.Count);
+        Assert.Single(exactReplay.Events);
         Assert.Equal("OPERATION_SNAPSHOT", exactReplay.LastKind);
 
         var conflict = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload with { appliedKg = fixture.DeltaKg + 1 }, messageId,
