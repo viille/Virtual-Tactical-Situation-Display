@@ -603,7 +603,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         }
         if (!tankerState.TankerJoined || tankerState.Availability is not ("Available" or "Busy")) throw new InvalidOperationException("The selected tanker is not Available.");
         var requestAmount = ParseRequestAmount(context.Payload);
-        EnsureBoomCompatible(peer.AircraftType, tanker.AircraftType);
+        EnsureAarCompatible(peer.AircraftType, tanker.AircraftType);
         if (_requests.Count >= MaxRequestsGlobal) throw new InvalidOperationException("The AAR request history is at capacity.");
         var pending = _requests.Values.Count(request => request.TankerId == tankerId && request.Status == "Pending");
         if (pending >= MaxPendingPerTanker) throw new InvalidOperationException("The tanker pending request queue is full.");
@@ -634,7 +634,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         }
         if (!tankerState.TankerJoined || tankerState.Availability is not ("Available" or "Busy")) throw new InvalidOperationException("The tanker is not available for acceptance.");
         if (transferMode == "Fuel" && (!tankerState.AdapterReady || !receiverState.AdapterReady)) throw new InvalidOperationException("Both fuel adapters must be ready for live fuel transfer; choose DryHookup without a writable bridge.");
-        EnsureBoomCompatible(receiver.AircraftType, peer.AircraftType);
+        EnsureAarCompatible(receiver.AircraftType, peer.AircraftType);
         var tankerOps = _operations.Values.Where(operation => operation.TankerId == peer.ParticipantId && !IsTerminal(operation.State)).ToArray();
         if (tankerOps.Count(operation => operation.Slot == "Active") >= 1 && tankerOps.Any(operation => operation.Slot == "CommittedNext"))
             throw new InvalidOperationException("The CommittedNext slot is occupied; the request remains Pending.");
@@ -655,7 +655,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         if (_operations.Count >= MaxOperationsGlobal) throw new InvalidOperationException("The AAR operation history is at capacity.");
         var tankerProfile = ResolveProfile(registrySnapshot, peer.AircraftType)!;
         var receiverProfile = ResolveProfile(registrySnapshot, receiver.AircraftType)!;
-        var flow = EffectiveBoomFlow(tankerProfile, receiverProfile);
+        var flow = ResolveV016AarFlow(tankerProfile, receiverProfile);
         var operation = new AarOperation(
             "aar_" + Guid.NewGuid().ToString("N"), request.Id, peer.ParticipantId, receiver.ParticipantId,
             peer.ClientInstanceId, receiver.ClientInstanceId, peer.ConnectionGeneration, receiver.ConnectionGeneration,
@@ -709,7 +709,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         if (HasLiveReceiverWork(receiverId)) throw new InvalidOperationException("This receiver already has a pending request or live AAR operation.");
         var tankerState = GetParticipant(peer.ParticipantId);
         var receiverState = GetParticipant(receiverId);
-        EnsureBoomCompatible(receiver.AircraftType, peer.AircraftType);
+        EnsureAarCompatible(receiver.AircraftType, peer.AircraftType);
         var transferMode = OptionalString(context.Payload, "transferMode") ?? "Fuel";
         if (transferMode is not ("Fuel" or "DryHookup")) throw new ArgumentException("transferMode must be Fuel or DryHookup.");
         if (transferMode == "Fuel")
@@ -1342,15 +1342,13 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             throw new InvalidOperationException("A fresh ready fuel adapter status is required.");
     }
 
-    private void EnsureBoomCompatible(string? receiverType, string? tankerType)
+    private void EnsureAarCompatible(string? receiverType, string? tankerType)
     {
         var snapshot = registry.Current ?? throw new InvalidOperationException("AAR registry is unavailable.");
         var receiver = ResolveProfile(snapshot, receiverType);
         var tanker = ResolveProfile(snapshot, tankerType);
-        if (receiver is null || tanker is null || !receiver.CanReceive || !tanker.CanTanker ||
-            !receiver.ReceiverSystems.Any(system => system.Method == "BoomReceptacle") ||
-            !tanker.TankerSystems.Any(system => system.Method == "Boom"))
-            throw new InvalidOperationException("The registered profiles do not share the v0.16 boom method.");
+        if (receiver is null || tanker is null || !receiver.CanReceive || !tanker.CanTanker)
+            throw new InvalidOperationException("Both enabled aircraft profiles must permit their respective AAR roles.");
     }
 
     private static AarAircraftProfile? ResolveProfile(AarRegistrySnapshot snapshot, string? aircraftType)
@@ -1359,13 +1357,27 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         return snapshot.Profiles.FirstOrDefault(profile => profile.Enabled && profile.IcaoDesignators.Contains(designator, StringComparer.Ordinal));
     }
 
-    public const double DefaultBoomLimitKgPerSecond = 10;
-    public static double EffectiveBoomFlow(AarAircraftProfile tanker, AarAircraftProfile receiver)
+    public const double DefaultAarLimitKgPerSecond = 10;
+    public static double ResolveV016AarFlow(AarAircraftProfile tanker, AarAircraftProfile receiver)
     {
-        var tankerLimit = tanker.TankerSystems.Where(system => system.Method == "Boom").Select(system => system.MaxOffloadKgPerSecond).FirstOrDefault(value => value.HasValue) ?? DefaultBoomLimitKgPerSecond;
-        var receiverLimit = receiver.ReceiverSystems.Where(system => system.Method == "BoomReceptacle").Select(system => system.MaxReceiveKgPerSecond).FirstOrDefault(value => value.HasValue) ?? DefaultBoomLimitKgPerSecond;
+        var tankerLimit = tanker.TankerSystems
+            .Where(system => system.ValueProvenance == "confirmed_aircraft_specific_value")
+            .Select(system => system.MaxOffloadKgPerSecond)
+            .Where(IsConfirmedPositiveLimit)
+            .Select(value => value!.Value)
+            .DefaultIfEmpty(DefaultAarLimitKgPerSecond)
+            .Min();
+        var receiverLimit = receiver.ReceiverSystems
+            .Where(system => system.ValueProvenance == "confirmed_aircraft_specific_value")
+            .Select(system => system.MaxReceiveKgPerSecond)
+            .Where(IsConfirmedPositiveLimit)
+            .Select(value => value!.Value)
+            .DefaultIfEmpty(DefaultAarLimitKgPerSecond)
+            .Min();
         return Math.Min(tankerLimit, receiverLimit);
     }
+
+    private static bool IsConfirmedPositiveLimit(double? value) => value is > 0 && double.IsFinite(value.Value);
 
     private object OperationView(AarOperation operation)
     {

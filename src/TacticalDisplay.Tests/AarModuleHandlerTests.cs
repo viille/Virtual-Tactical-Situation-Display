@@ -584,19 +584,76 @@ public sealed class AarModuleHandlerTests
     }
 
     [Theory]
-    [InlineData(45d, null, 10d)]
-    [InlineData(null, 25d, 10d)]
+    [InlineData(60d, null, 10d)]
+    [InlineData(null, 15d, 10d)]
     [InlineData(null, null, 10d)]
-    [InlineData(45d, 25d, 25d)]
+    [InlineData(20d, 15d, 15d)]
     [InlineData(8d, 25d, 8d)]
-    public void EffectiveBoomFlowUsesIndependentFallbacksAndMinimum(double? tankerLimit, double? receiverLimit, double expected)
+    public void ResolveV016AarFlowUsesIndependentFallbacksAndMinimum(double? tankerLimit, double? receiverLimit, double expected)
     {
         var tanker = new AarAircraftProfile("tanker", "Tanker", ["TSTK"], true, true, false,
-            [new("Boom", tankerLimit, tankerLimit.HasValue ? "confirmed_aircraft_specific_value" : "unknown", [])], [], [], null, "");
+            [new("WingDrogue", tankerLimit, tankerLimit.HasValue ? "confirmed_aircraft_specific_value" : "unknown", [])], [], [], null, "");
         var receiver = new AarAircraftProfile("receiver", "Receiver", ["TSTR"], true, false, true,
-            [], [new("BoomReceptacle", receiverLimit, receiverLimit.HasValue ? "confirmed_aircraft_specific_value" : "unknown", [])], [], null, "");
+            [], [new("Probe", receiverLimit, receiverLimit.HasValue ? "confirmed_aircraft_specific_value" : "unknown", [])], [], null, "");
 
-        Assert.Equal(expected, AarModuleHandler.EffectiveBoomFlow(tanker, receiver));
+        Assert.Equal(expected, AarModuleHandler.ResolveV016AarFlow(tanker, receiver));
+    }
+
+    [Fact]
+    public void ResolveV016AarFlowUsesConservativeLimitAcrossMultipleSystems()
+    {
+        var tanker = Rig.TankerProfile with
+        {
+            TankerSystems = [new("Boom", 30, "confirmed_aircraft_specific_value", []), new("WingDrogue", 20, "confirmed_aircraft_specific_value", [])]
+        };
+        var receiver = Rig.ReceiverProfile with
+        {
+            ReceiverSystems = [new("BoomReceptacle", 40, "confirmed_aircraft_specific_value", []), new("Probe", 25, "confirmed_aircraft_specific_value", [])]
+        };
+
+        Assert.Equal(20, AarModuleHandler.ResolveV016AarFlow(tanker, receiver));
+    }
+
+    [Theory]
+    [InlineData("Boom", "BoomReceptacle")]
+    [InlineData("Boom", "Probe")]
+    [InlineData("CenterlineDrogue", "BoomReceptacle")]
+    [InlineData("WingDrogue", "Probe")]
+    public async Task RequestRefuelDoesNotRequireMatchingPhysicalMethods(string tankerMethod, string receiverMethod)
+    {
+        var tanker = Rig.TankerProfile with { TankerSystems = [new(tankerMethod, null, "unknown", [])] };
+        var receiver = Rig.ReceiverProfile with { ReceiverSystems = [new(receiverMethod, null, "unknown", [])] };
+        var rig = new Rig(tanker, receiver);
+        await rig.PrepareTankerAndReceiver();
+
+        var result = await rig.Request("receiver", "tanker", 100);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(result) });
+
+        Assert.Equal("REQUEST_QUEUED", result.LastKind);
+        Assert.Equal("REQUEST_ACCEPTED", accepted.LastKind);
+    }
+
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("disabled")]
+    [InlineData("receiver-role")]
+    [InlineData("tanker-role")]
+    public async Task RequestRefuelRequiresEnabledProfilesAndRoleCapabilities(string invalidProfile)
+    {
+        var tanker = Rig.TankerProfile;
+        var receiver = Rig.ReceiverProfile;
+        var receiverType = "F16";
+        var tankerType = "K35R";
+        if (invalidProfile == "missing") receiverType = "XXXX";
+        if (invalidProfile == "disabled") receiver = receiver with { Enabled = false };
+        if (invalidProfile == "receiver-role") receiver = receiver with { CanReceive = false };
+        if (invalidProfile == "tanker-role") tanker = tanker with { CanTanker = false };
+        var rig = new Rig(tanker, receiver, receiverType, tankerType);
+        await rig.PrepareTankerAndReceiver();
+
+        var result = await rig.Request("receiver", "tanker", 100);
+
+        Assert.Equal("MODULE_ERROR", result.LastKind);
     }
 
     private sealed class Rig
@@ -607,16 +664,17 @@ public sealed class AarModuleHandlerTests
             [], [new("BoomReceptacle", null, "unknown", [])], [], null, "");
         private readonly AarModuleHandler _handler;
         private readonly ModuleRouter _router;
-        private readonly Dictionary<string, AarPeerSnapshot> _peers = new(StringComparer.Ordinal)
-        {
-            ["tanker"] = new("tanker", "user-t", "1001", "TANKER", "K35R", true, "instance-t", 1, new HashSet<string>(["aar.tanker"]), new Dictionary<string, string>(), FreshTelemetry()),
-            ["receiver"] = new("receiver", "user-r", "1002", "VIPER11", "F16", true, "instance-r", 1, new HashSet<string>(["aar.receiver"]), new Dictionary<string, string>(), FreshTelemetry())
-        };
+        private readonly Dictionary<string, AarPeerSnapshot> _peers;
         private int _nextId;
 
-        public Rig()
+        public Rig(AarAircraftProfile? tankerProfile = null, AarAircraftProfile? receiverProfile = null, string receiverType = "F16", string tankerType = "K35R")
         {
-            _handler = new AarModuleHandler(new Registry(), contactConfiguration: new AarContactConfiguration(CaptureDebounce: TimeSpan.Zero));
+            _peers = new Dictionary<string, AarPeerSnapshot>(StringComparer.Ordinal)
+            {
+                ["tanker"] = new("tanker", "user-t", "1001", "TANKER", tankerType, true, "instance-t", 1, new HashSet<string>(["aar.tanker"]), new Dictionary<string, string>(), FreshTelemetry()),
+                ["receiver"] = new("receiver", "user-r", "1002", "VIPER11", receiverType, true, "instance-r", 1, new HashSet<string>(["aar.receiver"]), new Dictionary<string, string>(), FreshTelemetry())
+            };
+            _handler = new AarModuleHandler(new Registry(tankerProfile ?? TankerProfile, receiverProfile ?? ReceiverProfile), contactConfiguration: new AarContactConfiguration(CaptureDebounce: TimeSpan.Zero));
             _router = new ModuleRouter([_handler]);
         }
 
@@ -725,9 +783,9 @@ public sealed class AarModuleHandlerTests
         private static TacticalDisplay.Core.Models.TacticalTelemetry FreshTelemetry() =>
             new(1, DateTimeOffset.UtcNow, 60, 25, 10_000, 90, 90, 250);
 
-        private sealed class Registry : IAarRegistryProvider
+        private sealed class Registry(AarAircraftProfile tankerProfile, AarAircraftProfile receiverProfile) : IAarRegistryProvider
         {
-            public AarRegistrySnapshot? Current { get; } = new(1, 1, DateTimeOffset.UtcNow, [TankerProfile, ReceiverProfile]);
+            public AarRegistrySnapshot? Current { get; } = new(1, 1, DateTimeOffset.UtcNow, [tankerProfile, receiverProfile]);
             public bool IsAvailable => true;
             public string? Status => null;
             public event EventHandler? Changed { add { } remove { } }

@@ -18,6 +18,7 @@
 - Added bounded terminal AAR retention, failure cleanup and queue promotion, DryHookup reconnect reconciliation, and pending-request cancellation when leaving tanker mode.
 - Added MSFS AAR runtime diagnostics to `debug.log`, including bridge negotiation, fuel discovery/mutations, runtime transitions, and installer path/stage details. See `docs/msfs-aar-bridge-acceptance.md` before runtime qualification.
 - Added draft F-15 and F-16 receiver registry profiles with ICAO designator and boom-method sources in Cloud migration `0005_aar_receiver_seed`.
+- Made v0.16 AAR eligibility method-agnostic: enabled tanker/receiver role capabilities are sufficient, while registry method metadata remains available for conservative flow selection and future method-aware behavior. Contact remains a broad procedural region; only the tanker can authorize fuel with `START_TRANSFER`. See `docs/aar-v0.16-policy.md`.
 
 ## 0.15.0 - 2026-10-07
 
