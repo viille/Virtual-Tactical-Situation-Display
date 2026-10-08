@@ -24,7 +24,7 @@ builder.Services.AddSingleton<ModuleRouter>();
 builder.Services.AddSingleton<TacticalLinkHub>();
 var app = builder.Build();
 app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
-app.MapGet("/healthz", () => Results.Json(new { status = "ok" }));
+app.MapGet("/healthz", (IAarRegistryProvider registry) => Results.Json(TacticalLinkHealthResponse.From(registry)));
 app.Map("/v1", async (HttpContext context, TacticalLinkHub hub) =>
 {
     if (!context.WebSockets.IsWebSocketRequest)

@@ -14,6 +14,7 @@
 - Added bridge status and package management UI, safe Community2024 install/update/uninstall, and an embedded single-file package archive path.
 - Distinguishes invalid installed bridge packages from missing packages, supports repair, and preserves the previous package backup if rollback fails.
 - Contact loss returns the operation to Astern and revokes clearance; committed-next promotion and reconciliation require a fresh CLEAR ASTERN before another contact clearance.
+- v0.16 AAR eligibility is role-capability based and does not enforce Boom/Drogue compatibility. Registry method metadata remains available for conservative flow selection; the 10 kg/s fallback is generic. Broad procedural contact envelopes remain unchanged, and only tanker `START_TRANSFER` authorizes fuel.
 - Hardened cancelled in-flight fuel proposals so verified simulator read-backs can settle accounting without restoring fuel authorization; fuel watermarks are scoped to operation IDs.
 - Added bounded terminal AAR retention, failure cleanup and queue promotion, DryHookup reconnect reconciliation, and pending-request cancellation when leaving tanker mode.
 - Added MSFS AAR runtime diagnostics to `debug.log`, including bridge negotiation, fuel discovery/mutations, runtime transitions, and installer path/stage details. See `docs/msfs-aar-bridge-acceptance.md` before runtime qualification.

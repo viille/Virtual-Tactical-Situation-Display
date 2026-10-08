@@ -675,6 +675,132 @@ public sealed class AarModuleHandlerTests
         Assert.Equal("MODULE_ERROR", result.LastKind);
     }
 
+    [Theory]
+    [InlineData("STOP_TRANSFER", "Contact")]
+    [InlineData("HOLD", "Astern")]
+    [InlineData("CONTACT_LOSS", "Astern")]
+    public async Task IncompleteCancelledSettlementTimesOutToSuspendedAndRequiresReconcile(string safetyCommand, string safeState)
+    {
+        var fixture = await CreatePendingTransferAsync();
+        if (safetyCommand == "CONTACT_LOSS")
+        {
+            var now = fixture.Clock.GetUtcNow().AddMilliseconds(30);
+            var loss = await fixture.Rig.Send("receiver", "POSE_UPDATE", new
+            {
+                timestampUtc = now,
+                latitudeDeg = 60d - 30d / 111000d,
+                longitudeDeg = 25d + 200d / (111000d * Math.Cos(60d * Math.PI / 180)),
+                altitudeMeters = 9990d,
+                headingDeg = 0d,
+                velocityNorthMps = 100d,
+                velocityEastMps = 0d,
+                velocityDownMps = 0d
+            });
+            Assert.Null(loss.LastKind);
+            Assert.Equal("Astern", fixture.Rig.OperationState(fixture.OperationId));
+        }
+        else
+        {
+            var stopped = await fixture.Rig.Send("tanker", safetyCommand, new { }, operationId: fixture.OperationId);
+            Assert.NotEqual("MODULE_ERROR", stopped.LastKind);
+        }
+        Assert.Equal(safeState, fixture.Rig.OperationState(fixture.OperationId));
+
+        var tankerAck = await AcknowledgeCancelledTransferAsync(fixture, "tanker");
+        Assert.Equal("TRANSFER_SETTLEMENT_RECORDED", tankerAck.LastKind);
+        fixture.Clock.Advance(TimeSpan.FromSeconds(9));
+        fixture.Rig.Handler.ProcessLifecycleTick();
+
+        Assert.Equal("Suspended", fixture.Rig.OperationState(fixture.OperationId));
+        Assert.False(fixture.Rig.OperationForTests(fixture.OperationId)!.Value.FuelOnAuthorized);
+        var suspended = fixture.Rig.HandlerEvents.First(item => item.Kind == "OPERATION_SUSPENDED" && item.OperationId == fixture.OperationId &&
+            JsonSerializer.SerializeToElement(item.Payload).GetProperty("reason").GetString() == "TRANSFER_SETTLEMENT_TIMEOUT");
+        Assert.Equal("TRANSFER_SETTLEMENT_TIMEOUT", JsonSerializer.SerializeToElement(suspended.Payload).GetProperty("reason").GetString());
+        Assert.Equal("MODULE_ERROR", (await fixture.Rig.Send("tanker", "START_TRANSFER", new { }, operationId: fixture.OperationId)).LastKind);
+
+        fixture.Rig.RefreshPeerTelemetries();
+        await fixture.Rig.Send("tanker", "FUEL_STATUS", new { currentFuelKg = 1000, capacityKg = 2000, adapterReady = true, appliedOperationId = fixture.OperationId, lastAppliedTransferredKg = fixture.TargetKg });
+        await fixture.Rig.Send("receiver", "FUEL_STATUS", new { currentFuelKg = 100, capacityKg = 500, adapterReady = true, appliedOperationId = fixture.OperationId, lastAppliedTransferredKg = fixture.TargetKg });
+        var reconciled = await fixture.Rig.Send("receiver", "RECONCILE", new { operationId = fixture.OperationId }, operationId: fixture.OperationId);
+        Assert.Equal("OPERATION_RECONCILED", reconciled.LastKind);
+        Assert.Equal("Accepted", fixture.Rig.OperationState(fixture.OperationId));
+    }
+
+    [Fact]
+    public async Task ExactCancelledTransferSettlementBeforeDeadlineIsNotSuspendedLater()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        await fixture.Rig.Send("tanker", "STOP_TRANSFER", new { }, operationId: fixture.OperationId);
+        Assert.Equal("TRANSFER_SETTLEMENT_RECORDED", (await AcknowledgeCancelledTransferAsync(fixture, "tanker")).LastKind);
+        Assert.Equal("TRANSFER_SETTLEMENT_ACCEPTED", (await AcknowledgeCancelledTransferAsync(fixture, "receiver")).LastKind);
+        Assert.Equal(fixture.TargetKg, fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg, 3);
+
+        fixture.Clock.Advance(TimeSpan.FromSeconds(9));
+        fixture.Rig.RefreshPeerTelemetriesAndClearPoses();
+        await fixture.Rig.Send("tanker", "FUEL_STATUS", new { currentFuelKg = 1000, capacityKg = 2000, adapterReady = true });
+        await fixture.Rig.Send("receiver", "FUEL_STATUS", new { currentFuelKg = 100, capacityKg = 500, adapterReady = true });
+        var refreshedNow = fixture.Clock.GetUtcNow();
+        var freshTankerPose = new { timestampUtc = refreshedNow, latitudeDeg = 60d, longitudeDeg = 25d, altitudeMeters = 10000d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        var freshReceiverPose = new { timestampUtc = refreshedNow, latitudeDeg = 60d - 30d / 111000d, longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        await fixture.Rig.Send("tanker", "POSE_UPDATE", freshTankerPose);
+        await fixture.Rig.Send("receiver", "POSE_UPDATE", freshReceiverPose);
+        fixture.Rig.Handler.ProcessLifecycleTick();
+
+        Assert.Equal("Contact", fixture.Rig.OperationState(fixture.OperationId));
+        Assert.DoesNotContain(fixture.Rig.HandlerEvents, item => item.Kind == "OPERATION_SUSPENDED" &&
+            JsonSerializer.SerializeToElement(item.Payload).TryGetProperty("reason", out var reason) && reason.GetString() == "TRANSFER_SETTLEMENT_TIMEOUT");
+    }
+
+    [Fact]
+    public async Task ExpiredBreakawaySettlementNeverResurrectsTerminalOperation()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        Assert.Equal("BREAKAWAY", (await fixture.Rig.Send("tanker", "BREAKAWAY", new { }, operationId: fixture.OperationId)).LastKind);
+        fixture.Clock.Advance(TimeSpan.FromSeconds(9));
+        fixture.Rig.Handler.ProcessLifecycleTick();
+
+        Assert.Equal("Breakaway", fixture.Rig.OperationState(fixture.OperationId));
+        Assert.False(fixture.Rig.OperationForTests(fixture.OperationId)!.Value.FuelOnAuthorized);
+        Assert.DoesNotContain(fixture.Rig.HandlerEvents, item => item.Kind == "OPERATION_SUSPENDED" && item.OperationId == fixture.OperationId);
+    }
+
+    private static async Task<PendingTransferFixture> CreatePendingTransferAsync()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var rig = new Rig(clock);
+        await rig.PrepareTankerAndReceiver();
+        var request = await rig.Request("receiver", "tanker", 100);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+        var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
+        await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
+        await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
+
+        var now = clock.GetUtcNow();
+        var tankerPose = new { timestampUtc = now, latitudeDeg = 60d, longitudeDeg = 25d, altitudeMeters = 10000d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        var receiverPose = new { timestampUtc = now.AddMilliseconds(5), latitudeDeg = 60d - 30d / 111000d, longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose);
+        await rig.Send("receiver", "POSE_UPDATE", receiverPose);
+        await rig.Send("tanker", "POSE_UPDATE", tankerPose with { timestampUtc = now.AddMilliseconds(10) });
+        Assert.Equal("CONTACT_CAPTURED", rig.HandlerEvents.Last(item => item.Kind == "CONTACT_CAPTURED").Kind);
+        Assert.Equal("REFUELING_STARTED", (await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId)).LastKind);
+
+        rig.Handler.ProcessLifecycleTick();
+        var proposal = rig.HandlerEvents.Last(item => item.Kind == "TRANSFER_PROPOSAL" && item.ParticipantId == "tanker");
+        var payload = JsonSerializer.SerializeToElement(proposal.Payload);
+        return new PendingTransferFixture(rig, clock, operationId, proposal, payload.GetProperty("proposalId").GetString()!,
+            payload.GetProperty("targetCumulativeKg").GetDouble(), payload.GetProperty("deltaKg").GetDouble());
+    }
+
+    private static Task<SendResult> AcknowledgeCancelledTransferAsync(PendingTransferFixture fixture, string participant) =>
+        fixture.Rig.Send(participant, "TRANSFER_ACK", new
+        {
+            proposalId = fixture.ProposalId,
+            operationRevision = fixture.Proposal.OperationRevision,
+            targetCumulativeKg = fixture.TargetKg,
+            appliedCumulativeKg = fixture.TargetKg,
+            appliedKg = fixture.DeltaKg
+        }, operationId: fixture.OperationId);
+
     private sealed class Rig
     {
         public static AarAircraftProfile TankerProfile { get; } = new("kc135r", "KC-135R/T", ["K35R"], true, true, false,
@@ -683,22 +809,34 @@ public sealed class AarModuleHandlerTests
             [], [new("BoomReceptacle", null, "unknown", [])], [], null, "");
         private readonly AarModuleHandler _handler;
         private readonly ModuleRouter _router;
+        private readonly TimeProvider _clock;
         private readonly Dictionary<string, AarPeerSnapshot> _peers;
         private int _nextId;
 
         public Rig(AarAircraftProfile? tankerProfile = null, AarAircraftProfile? receiverProfile = null, string receiverType = "F16", string tankerType = "K35R")
+            : this(null, tankerProfile, receiverProfile, receiverType, tankerType) { }
+
+        public Rig(TimeProvider? clock)
+            : this(clock, null, null, "F16", "K35R") { }
+
+        private Rig(TimeProvider? clock, AarAircraftProfile? tankerProfile, AarAircraftProfile? receiverProfile, string receiverType, string tankerType)
         {
+            _clock = clock ?? TimeProvider.System;
             _peers = new Dictionary<string, AarPeerSnapshot>(StringComparer.Ordinal)
             {
                 ["tanker"] = new("tanker", "user-t", "1001", "TANKER", tankerType, true, "instance-t", 1, new HashSet<string>(["aar.tanker"]), new Dictionary<string, string>(), FreshTelemetry()),
                 ["receiver"] = new("receiver", "user-r", "1002", "VIPER11", receiverType, true, "instance-r", 1, new HashSet<string>(["aar.receiver"]), new Dictionary<string, string>(), FreshTelemetry())
             };
-            _handler = new AarModuleHandler(new Registry(tankerProfile ?? TankerProfile, receiverProfile ?? ReceiverProfile), contactConfiguration: new AarContactConfiguration(CaptureDebounce: TimeSpan.Zero));
+            _handler = new AarModuleHandler(new Registry(tankerProfile ?? TankerProfile, receiverProfile ?? ReceiverProfile), timeProvider: _clock,
+                contactConfiguration: new AarContactConfiguration(CaptureDebounce: TimeSpan.Zero, ReleaseDebounce: TimeSpan.Zero));
+            _handler.EventReady += _events.Add;
             _router = new ModuleRouter([_handler]);
         }
 
         public int RequestCount => _handler.RequestCountForTests;
         public AarModuleHandler Handler => _handler;
+        public IReadOnlyList<AarServerEvent> HandlerEvents => _events;
+        private readonly List<AarServerEvent> _events = [];
 
         public async Task<SendResult> PrepareTankerAndReceiver()
         {
@@ -781,7 +919,7 @@ public sealed class AarModuleHandlerTests
                 IsConnected = true,
                 ClientInstanceId = clientInstanceId,
                 ConnectionGeneration = generation,
-                Telemetry = new TacticalDisplay.Core.Models.TacticalTelemetry(1, DateTimeOffset.UtcNow, 60, 25, 10_000, 90, 90, 250)
+                Telemetry = new TacticalDisplay.Core.Models.TacticalTelemetry(1, _clock.GetUtcNow(), 60, 25, 10_000, 90, 90, 250)
             };
             _peers[participantId] = peer;
             _handler.OnParticipantConnected(peer);
@@ -799,8 +937,20 @@ public sealed class AarModuleHandlerTests
         public (string State, bool FuelOnAuthorized, double TransferredKg)? OperationForTests(string operationId) =>
             _handler.OperationForTests(operationId);
 
-        private static TacticalDisplay.Core.Models.TacticalTelemetry FreshTelemetry() =>
-            new(1, DateTimeOffset.UtcNow, 60, 25, 10_000, 90, 90, 250);
+        public void RefreshPeerTelemetries()
+        {
+            foreach (var participant in _peers.Keys.ToArray())
+                _peers[participant] = _peers[participant] with { Telemetry = FreshTelemetry() };
+        }
+
+        public void RefreshPeerTelemetriesAndClearPoses()
+        {
+            RefreshPeerTelemetries();
+            foreach (var peer in _peers.Values) _handler.OnParticipantConnected(peer);
+        }
+
+        private TacticalDisplay.Core.Models.TacticalTelemetry FreshTelemetry() =>
+            new(1, _clock.GetUtcNow(), 60, 25, 10_000, 90, 90, 250);
 
         private sealed class Registry(AarAircraftProfile tankerProfile, AarAircraftProfile receiverProfile) : IAarRegistryProvider
         {
@@ -813,4 +963,13 @@ public sealed class AarModuleHandlerTests
 
     private sealed record SentEvent(string Recipient, string Kind, string? OperationId, long? Revision, string? CorrelationId, JsonElement Payload);
     private sealed record SendResult(IReadOnlyList<SentEvent> Events, string? LastKind, JsonElement LastPayload);
+    private sealed record PendingTransferFixture(Rig Rig, ManualTimeProvider Clock, string OperationId, AarServerEvent Proposal,
+        string ProposalId, double TargetKg, double DeltaKg);
+
+    private sealed class ManualTimeProvider(DateTimeOffset initialTime) : TimeProvider
+    {
+        private DateTimeOffset _now = initialTime;
+        public override DateTimeOffset GetUtcNow() => _now;
+        public void Advance(TimeSpan amount) => _now += amount;
+    }
 }

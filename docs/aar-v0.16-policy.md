@@ -10,4 +10,6 @@ The default capture envelope is 12–160 m behind, up to 18 m lateral, 2–32 m 
 
 `Contact` means the receiver has remained sufficiently stable inside the coarse server-approved region. It does not mean physical refueling hardware has connected. The server preserves the tanker-controlled procedure: accept, `CLEAR_ASTERN`, astern positioning, `CLEAR_CONTACT`, stable geometry capture, then `Contact`. Contact never authorizes fuel by itself. The tanker must explicitly execute `START_TRANSFER`; the tanker decides when the receiver is in a suitable refueling position. Invalid geometry, stale or misaligned poses, excessive relative motion, and failed debounce checks continue to prevent or revoke contact under the existing state machine.
 
+The current defaults intentionally stay broad: capture is 12–160 m behind, ±18 m lateral, 2–32 m below, relative speed at most 4 m/s, and a 1 second debounce. Release is 6–210 m behind, ±28 m lateral, 0–48 m below, relative speed at most 7 m/s, and a 250 ms debounce. These bounds use aircraft reference positions and absorb simulator and network timing uncertainty; they do not detect hardware contact.
+
 Future versions can add selected tanker/receiver systems, a compatibility matrix, and method-specific or aircraft-specific contact geometry without removing the registry method metadata.

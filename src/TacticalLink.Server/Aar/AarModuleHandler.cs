@@ -388,6 +388,11 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             if (proposalId != cancelled.Proposal.Id || proposalRevision != cancelled.Proposal.Revision ||
                 Math.Abs(targetCumulative - cancelled.Proposal.TargetCumulativeKg) > 0.01)
                 throw new InvalidOperationException("The acknowledgement does not match the exact cancelled proposal settlement.");
+            if (!IsTerminal(operation.State) && cancelled.Deadline <= _clock.GetUtcNow())
+            {
+                ExpireCancelledTransferSettlement(operation, cancelled);
+                throw new InvalidOperationException("The cancelled transfer settlement expired; explicit reconciliation is required.");
+            }
             return SettleCancelledTransfer(context, peer, operation, cancelled, applied, appliedKg);
         }
 
@@ -1256,6 +1261,30 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         operation.PendingTransfer = null;
     }
 
+    private void ExpireCancelledTransferSettlement(AarOperation operation, CancelledTransferSettlement settlement)
+    {
+        if (settlement.TimedOut) return;
+        settlement.TimedOut = true;
+        if (IsTerminal(operation.State))
+        {
+            operation.FuelOnAuthorized = false;
+            return;
+        }
+        operation.SuspendedFromState = settlement.SafeState;
+        operation.State = "Suspended";
+        operation.ClearanceValid = false;
+        operation.FuelOnAuthorized = false;
+        operation.PendingTransfer = null;
+        operation.CaptureSince = null;
+        operation.ReleaseSince = null;
+        operation.ReconnectDeadline = null;
+        operation.Revision++;
+        Publish(operation.TankerId, "OPERATION_SUSPENDED", operation.Id, operation.Revision,
+            new { operation = OperationView(operation), reason = "TRANSFER_SETTLEMENT_TIMEOUT" });
+        Publish(operation.ReceiverId, "OPERATION_SUSPENDED", operation.Id, operation.Revision,
+            new { operation = ReceiverOperationView(operation), reason = "TRANSFER_SETTLEMENT_TIMEOUT" });
+    }
+
     private void Publish(string participantId, string kind, string? operationId, long? revision, object payload) =>
         EventReady?.Invoke(new AarServerEvent(participantId, kind, operationId, revision, payload));
 
@@ -1266,41 +1295,48 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         {
             while (await timer.WaitForNextTickAsync(cancellationToken))
             {
-                lock (_gate)
-                {
-                    var now = _clock.GetUtcNow();
-                    foreach (var operation in _operations.Values.Where(item => item.State == "Suspended" && item.ReconnectDeadline <= now).ToArray())
-                        FailOperation(operation, "RECONNECT_GRACE_EXPIRED", promoteCommittedNext: operation.Slot == "Active" && !operation.TankerReconnectRequired);
-                    foreach (var operation in _operations.Values.Where(item => item.State is "Contact" or "Refueling").ToArray())
-                    {
-                        var tanker = GetParticipant(operation.TankerId);
-                        var receiver = GetParticipant(operation.ReceiverId);
-                        var fuelStale = operation.TransferMode == "Fuel" &&
-                            (now - tanker.FuelUpdatedAt > TimeSpan.FromSeconds(5) || now - receiver.FuelUpdatedAt > TimeSpan.FromSeconds(5));
-                        var poseStale = tanker.Poses.Count == 0 || receiver.Poses.Count == 0 ||
-                            now - tanker.Poses.Last().TimestampUtc > _contactConfiguration.EffectiveMaximumPoseAge ||
-                            now - receiver.Poses.Last().TimestampUtc > _contactConfiguration.EffectiveMaximumPoseAge;
-                        if (fuelStale) Suspend(operation, "FUEL_STATUS_TIMEOUT", TimeSpan.FromSeconds(5));
-                        else if (poseStale) Suspend(operation, "POSE_STALE");
-                        else if (operation.State == "Refueling" && operation.FuelOnAuthorized && operation.TransferMode == "Fuel") ProposeTransfer(operation, now);
-                    }
-                    foreach (var participant in _participants.Where(pair => pair.Value.ReconnectDeadline <= now).ToArray())
-                    {
-                        foreach (var request in _requests.Values.Where(item => item.Status == "Pending" && (item.TankerId == participant.Key || item.ReceiverId == participant.Key)).ToArray())
-                        {
-                            request.Status = "Cancelled";
-                            request.TerminalAt = now;
-                            var payload = RequestView(request);
-                            Publish(request.TankerId, "REQUEST_CANCELLED", null, null, payload);
-                            Publish(request.ReceiverId, "REQUEST_CANCELLED", null, null, payload);
-                        }
-                        participant.Value.ReconnectDeadline = null;
-                    }
-                    ExpireResults();
-                }
+                ProcessLifecycleTick();
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { }
+    }
+
+    internal void ProcessLifecycleTick()
+    {
+        lock (_gate)
+        {
+            var now = _clock.GetUtcNow();
+            foreach (var operation in _operations.Values.Where(item => item.CancelledTransfer is { TimedOut: false } settlement && settlement.Deadline <= now).ToArray())
+                ExpireCancelledTransferSettlement(operation, operation.CancelledTransfer!);
+            foreach (var operation in _operations.Values.Where(item => item.State == "Suspended" && item.ReconnectDeadline <= now).ToArray())
+                FailOperation(operation, "RECONNECT_GRACE_EXPIRED", promoteCommittedNext: operation.Slot == "Active" && !operation.TankerReconnectRequired);
+            foreach (var operation in _operations.Values.Where(item => item.State is "Contact" or "Refueling").ToArray())
+            {
+                var tanker = GetParticipant(operation.TankerId);
+                var receiver = GetParticipant(operation.ReceiverId);
+                var fuelStale = operation.TransferMode == "Fuel" &&
+                    (now - tanker.FuelUpdatedAt > TimeSpan.FromSeconds(5) || now - receiver.FuelUpdatedAt > TimeSpan.FromSeconds(5));
+                var poseStale = tanker.Poses.Count == 0 || receiver.Poses.Count == 0 ||
+                    now - tanker.Poses.Last().TimestampUtc > _contactConfiguration.EffectiveMaximumPoseAge ||
+                    now - receiver.Poses.Last().TimestampUtc > _contactConfiguration.EffectiveMaximumPoseAge;
+                if (fuelStale) Suspend(operation, "FUEL_STATUS_TIMEOUT", TimeSpan.FromSeconds(5));
+                else if (poseStale) Suspend(operation, "POSE_STALE");
+                else if (operation.State == "Refueling" && operation.FuelOnAuthorized && operation.TransferMode == "Fuel") ProposeTransfer(operation, now);
+            }
+            foreach (var participant in _participants.Where(pair => pair.Value.ReconnectDeadline <= now).ToArray())
+            {
+                foreach (var request in _requests.Values.Where(item => item.Status == "Pending" && (item.TankerId == participant.Key || item.ReceiverId == participant.Key)).ToArray())
+                {
+                    request.Status = "Cancelled";
+                    request.TerminalAt = now;
+                    var payload = RequestView(request);
+                    Publish(request.TankerId, "REQUEST_CANCELLED", null, null, payload);
+                    Publish(request.ReceiverId, "REQUEST_CANCELLED", null, null, payload);
+                }
+                participant.Value.ReconnectDeadline = null;
+            }
+            ExpireResults();
+        }
     }
 
     private bool SameIdentity(AarPeerSnapshot left, AarPeerSnapshot right) =>
@@ -1689,6 +1725,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         public AarTransferProposal Proposal { get; } = proposal;
         public string SafeState { get; } = safeState;
         public DateTimeOffset Deadline { get; } = deadline;
+        public bool TimedOut { get; set; }
         public double? TankerAppliedKg { get; set; }
         public double? ReceiverAppliedKg { get; set; }
     }

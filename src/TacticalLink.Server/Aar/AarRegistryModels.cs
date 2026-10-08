@@ -35,6 +35,21 @@ public interface IAarRegistryProvider
     event EventHandler? Changed;
 }
 
+public sealed record AarRegistryReadiness(bool Available, int? Version, string? Status)
+{
+    public static AarRegistryReadiness From(IAarRegistryProvider registry)
+    {
+        var snapshot = registry.Current;
+        return new AarRegistryReadiness(snapshot is not null && registry.IsAvailable, snapshot?.Version, registry.Status);
+    }
+}
+
+public sealed record TacticalLinkHealthResponse(string Status, AarRegistryReadiness AarRegistry)
+{
+    public static TacticalLinkHealthResponse From(IAarRegistryProvider registry) =>
+        new("ok", AarRegistryReadiness.From(registry));
+}
+
 public sealed class AarAircraftCapabilityResolver(IAarRegistryProvider registry) : IAircraftCapabilityResolver
 {
     public AircraftCapabilityProfile Resolve(string? aircraftType)
