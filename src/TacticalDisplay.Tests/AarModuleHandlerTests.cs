@@ -42,6 +42,35 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task TransferAckMessageIdConflictIsRejectedAfterFullResultExpires()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        var messageId = "transfer-ack-retained";
+        var payload = new
+        {
+            proposalId = fixture.ProposalId,
+            operationRevision = fixture.Proposal.OperationRevision,
+            targetCumulativeKg = fixture.TargetKg,
+            appliedCumulativeKg = fixture.TargetKg,
+            appliedKg = fixture.DeltaKg
+        };
+
+        var accepted = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, messageId, operationId: fixture.OperationId);
+        Assert.Equal("TRANSFER_ACK_ACCEPTED", accepted.LastKind);
+        await fixture.Rig.Send("receiver", "TRANSFER_ACK", payload, operationId: fixture.OperationId);
+        var appliedTransferredKg = fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg;
+        Assert.Equal(fixture.TargetKg, appliedTransferredKg, 3);
+
+        fixture.Clock.Advance(TimeSpan.FromMinutes(2));
+        var conflict = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload with { appliedKg = fixture.DeltaKg + 1 }, messageId,
+            operationId: fixture.OperationId);
+
+        Assert.Equal("MODULE_ERROR", conflict.LastKind);
+        Assert.Contains("IDEMPOTENCY_CONFLICT", JsonSerializer.Serialize(conflict.LastPayload));
+        Assert.Equal(appliedTransferredKg, fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg, 3);
+    }
+
+    [Fact]
     public async Task QueueKeepsOnlyOneActiveAndOneCommittedNextAndPendingDoesNotReserveFuel()
     {
         var rig = new Rig();
