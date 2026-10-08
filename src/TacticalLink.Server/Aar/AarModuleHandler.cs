@@ -11,9 +11,13 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan CompletedResultTtl = TimeSpan.FromHours(24);
-    private static readonly TimeSpan TransferAckResultTtl = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan TransferAckReplayTtl = TimeSpan.FromMinutes(3);
     private const int MaxResultsPerParticipant = 256;
     private const int MaxResultsGlobal = 32_768;
+    private const int MaxTransferAckHistoryPerParticipant = MaxOperationsGlobal * 2;
+    private const int MaxTransferAckHistoryGlobal = MaxOperationsGlobal * 4;
+    private const int MaxSafetyResultsPerParticipant = 64;
+    private const int MaxSafetyResultsGlobal = 2_048;
     private const int MaxPendingPerTanker = 8;
     private const int MaxRequestsGlobal = 10_000;
     private const int MaxOperationsGlobal = 2_048;
@@ -25,6 +29,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     private readonly Dictionary<string, AarOperation> _operations = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, CachedResult>> _results = new(StringComparer.Ordinal);
     private readonly Dictionary<string, Dictionary<string, TransferAckHistory>> _transferAckHistory = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, Dictionary<string, CachedResult>> _safetyResults = new(StringComparer.Ordinal);
     private long _nextQueueOrder;
     private CancellationTokenSource? _lifecycleCts;
     private Task? _lifecycleTask;
@@ -135,6 +140,12 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             UpdateParticipant(peer);
             var key = context.MessageId;
             var requestHash = RequestHash(context);
+            if (context.Kind == "TRANSFER_ACK" && !HasProposalBoundAckId(context, key))
+            {
+                context.Reply("MODULE_ERROR", context.OperationId, null, new { messageId = key, code = "INVALID_TRANSFER_ACK_ID", message = "TRANSFER_ACK messageId must be transfer-ack-{proposalId}." });
+                return Task.CompletedTask;
+            }
+
             if (TryGetCached(context.ParticipantId, key, out var cached))
             {
                 if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(cached.RequestHash), Convert.FromHexString(requestHash)))
@@ -159,11 +170,13 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                 if (operation is not null && (operation.TankerId == context.ParticipantId || operation.ReceiverId == context.ParticipantId))
                     SendCurrentSnapshot(context, null, operation.Id);
                 else
-                    context.Reply(ackHistory.Kind, ackHistory.OperationId, ackHistory.OperationRevision, new { messageId = key, duplicate = true });
+                    context.Reply("TRANSFER_ACK_STALE", null, null, new { messageId = key, duplicate = true });
                 return Task.CompletedTask;
             }
 
-            if (RequiresIdempotencyCache(context.Kind) && (GetParticipantEntryCount(context.ParticipantId) >= MaxResultsPerParticipant || GetGlobalEntryCount() >= MaxResultsGlobal))
+            var safetyCommand = IsSafetyCommand(context.Kind);
+            if (RequiresIdempotencyCache(context.Kind) && !safetyCommand && context.Kind != "TRANSFER_ACK" &&
+                (GetParticipantEntryCount(context.ParticipantId) >= MaxResultsPerParticipant || GetGlobalEntryCount() >= MaxResultsGlobal))
             {
                 context.Reply("MODULE_ERROR", context.OperationId, null, new { messageId = key, code = "IDEMPOTENCY_CAPACITY", message = "The bounded command result cache is full; retry after expired entries are removed." });
                 return Task.CompletedTask;
@@ -172,10 +185,11 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             var response = Execute(context, peer);
             if (context.Kind != "POSE_UPDATE" || response.Kind == "MODULE_ERROR")
                 context.Reply(response.Kind, response.OperationId, response.OperationRevision, response.Payload);
-            var successfulTransferAck = context.Kind == "TRANSFER_ACK" && response.Kind != "MODULE_ERROR" && response.OperationId is not null;
-            if (RequiresIdempotencyCache(context.Kind) && !successfulTransferAck) Remember(context.ParticipantId, key, requestHash, response);
-            if (successfulTransferAck && response.OperationId is { } ackOperationId)
-                RememberTransferAck(context.ParticipantId, key, requestHash, response, ackOperationId);
+            var successfulTransferAck = context.Kind == "TRANSFER_ACK" && response.Kind is "TRANSFER_ACK_ACCEPTED" or "TRANSFER_SETTLEMENT_RECORDED" or "TRANSFER_SETTLEMENT_ACCEPTED";
+            if (RequiresIdempotencyCache(context.Kind) && context.Kind != "TRANSFER_ACK")
+                Remember(context.ParticipantId, key, requestHash, response, context.Kind);
+            if (successfulTransferAck && response.OperationId is { } ackOperationId && TryGetString(context.Payload, "proposalId", out var proposalId))
+                RememberTransferAck(context.ParticipantId, key, requestHash, proposalId, ackOperationId, response.OperationRevision);
             return Task.CompletedTask;
         }
     }
@@ -406,8 +420,9 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
 
         if (operation.CancelledTransfer is { } cancelled)
         {
-            if (proposalId != cancelled.Proposal.Id || proposalRevision != cancelled.Proposal.Revision ||
-                Math.Abs(targetCumulative - cancelled.Proposal.TargetCumulativeKg) > 0.01)
+            if (proposalId != cancelled.Proposal.Id)
+                return StaleTransferAck(peer, operation);
+            if (proposalRevision != cancelled.Proposal.Revision || Math.Abs(targetCumulative - cancelled.Proposal.TargetCumulativeKg) > 0.01)
                 throw new InvalidOperationException("The acknowledgement does not match the exact cancelled proposal settlement.");
             if (!IsTerminal(operation.State) && cancelled.Deadline <= _clock.GetUtcNow())
             {
@@ -418,22 +433,15 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         }
 
         if (operation.PendingTransfer is null)
-        {
-            if (applied <= operation.TransferredKg + 0.05)
-                return Result("TRANSFER_ACK_ACCEPTED", operation.Id, operation.Revision,
-                    peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation));
-            throw new InvalidOperationException("There is no pending transfer proposal to acknowledge.");
-        }
+            return StaleTransferAck(peer, operation);
         if (operation.State != "Refueling")
             throw new InvalidOperationException("There is no pending transfer proposal to acknowledge.");
         var pending = operation.PendingTransfer;
-        if (proposalId != pending.Id || proposalRevision != pending.Revision ||
-            Math.Abs(targetCumulative - pending.TargetCumulativeKg) > 0.01 ||
+        if (proposalId != pending.Id || proposalRevision != pending.Revision)
+            return StaleTransferAck(peer, operation);
+        if (Math.Abs(targetCumulative - pending.TargetCumulativeKg) > 0.01 ||
             applied + 0.05 < operation.TransferredKg || applied > pending.TargetCumulativeKg + 0.05)
         {
-            if ((proposalId != pending.Id || proposalRevision != pending.Revision) && applied <= operation.TransferredKg + 0.05)
-                return Result("TRANSFER_ACK_ACCEPTED", operation.Id, operation.Revision,
-                    peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation));
             Suspend(operation, "TRANSFER_ACK_MISMATCH", TimeSpan.FromSeconds(5));
             throw new InvalidOperationException("Transfer acknowledgement did not match the outstanding proposal.");
         }
@@ -469,6 +477,12 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         }
         return Result("TRANSFER_ACK_ACCEPTED", operation.Id, operation.Revision,
             peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation));
+    }
+
+    private CommandResponse StaleTransferAck(AarPeerSnapshot peer, AarOperation operation)
+    {
+        var view = peer.ParticipantId == operation.TankerId ? OperationView(operation) : ReceiverOperationView(operation);
+        return Result("OPERATION_SNAPSHOT", operation.Id, operation.Revision, view);
     }
 
     private CommandResponse SettleCancelledTransfer(ModuleCommandContext context, AarPeerSnapshot peer, AarOperation operation,
@@ -1609,15 +1623,18 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     private bool TryGetCached(string participantId, string messageId, out CachedResult cached)
     {
         if (_results.TryGetValue(participantId, out var entries) && entries.TryGetValue(messageId, out cached!)) return true;
+        if (_safetyResults.TryGetValue(participantId, out var safetyEntries) && safetyEntries.TryGetValue(messageId, out cached!)) return true;
         cached = null!;
         return false;
     }
 
-    private void Remember(string participantId, string messageId, string requestHash, CommandResponse response)
+    private void Remember(string participantId, string messageId, string requestHash, CommandResponse response, string commandKind)
     {
-        if (!_results.TryGetValue(participantId, out var entries)) _results[participantId] = entries = new(StringComparer.Ordinal);
+        var target = IsSafetyCommand(commandKind) ? _safetyResults : _results;
+        if (!target.TryGetValue(participantId, out var entries)) target[participantId] = entries = new(StringComparer.Ordinal);
         entries[messageId] = new CachedResult(requestHash, response.Kind, response.OperationId, response.OperationRevision, response.Payload,
             response.RequestId, _clock.GetUtcNow());
+        if (IsSafetyCommand(commandKind)) BoundSafetyResults(participantId);
     }
 
     private bool TryGetTransferAckHistory(string participantId, string messageId, out TransferAckHistory history)
@@ -1627,10 +1644,19 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         return false;
     }
 
-    private void RememberTransferAck(string participantId, string messageId, string requestHash, CommandResponse response, string operationId)
+    private void RememberTransferAck(string participantId, string messageId, string requestHash, string proposalId, string operationId, long? operationRevision)
     {
         if (!_transferAckHistory.TryGetValue(participantId, out var entries)) _transferAckHistory[participantId] = entries = new(StringComparer.Ordinal);
-        entries[messageId] = new TransferAckHistory(requestHash, response.Kind, operationId, response.OperationRevision, _clock.GetUtcNow());
+        if (entries.ContainsKey(messageId)) return;
+        while ((entries.Count >= MaxTransferAckHistoryPerParticipant || GetTransferAckHistoryCount() >= MaxTransferAckHistoryGlobal) &&
+               !EvictOldestSettledTransferAck())
+        {
+            // Protected records are bounded by the maximum live operation count.
+            // If that invariant changes, skipping an optional replay record remains
+            // safe because proposal-bound stale ACKs cannot mutate another proposal.
+            if (entries.Count >= MaxTransferAckHistoryPerParticipant || GetTransferAckHistoryCount() >= MaxTransferAckHistoryGlobal) return;
+        }
+        entries[messageId] = new TransferAckHistory(requestHash, proposalId, operationId, operationRevision, _clock.GetUtcNow());
     }
 
     private void ExpireResults()
@@ -1643,6 +1669,9 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         foreach (var participant in _transferAckHistory.Values)
             foreach (var pair in participant.Where(pair => IsTransferAckHistoryExpired(pair.Value, now)).ToArray()) participant.Remove(pair.Key);
         foreach (var participantId in _transferAckHistory.Where(pair => pair.Value.Count == 0).Select(pair => pair.Key).ToArray()) _transferAckHistory.Remove(participantId);
+        foreach (var participant in _safetyResults.Values)
+            foreach (var pair in participant.Where(pair => GetExpiry(pair.Value) <= now).ToArray()) participant.Remove(pair.Key);
+        foreach (var participantId in _safetyResults.Where(pair => pair.Value.Count == 0).Select(pair => pair.Key).ToArray()) _safetyResults.Remove(participantId);
 
         foreach (var operation in _operations.Values.Where(operation => IsTerminal(operation.State) &&
                      operation.TerminalAt is { } terminalAt && terminalAt + CompletedResultTtl <= now &&
@@ -1661,15 +1690,12 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             _requests.Remove(request.Id);
     }
 
-    private int GetParticipantEntryCount(string participantId) =>
-        (_results.TryGetValue(participantId, out var entries) ? entries.Count : 0) +
-        (_transferAckHistory.TryGetValue(participantId, out var ackEntries) ? ackEntries.Count : 0);
+    private int GetParticipantEntryCount(string participantId) => _results.TryGetValue(participantId, out var entries) ? entries.Count : 0;
 
-    private int GetGlobalEntryCount() => _results.Values.Sum(entries => entries.Count) + _transferAckHistory.Values.Sum(entries => entries.Count);
+    private int GetGlobalEntryCount() => _results.Values.Sum(entries => entries.Count);
 
     private DateTimeOffset GetExpiry(CachedResult entry)
     {
-        if (entry.Kind == "TRANSFER_ACK_ACCEPTED") return entry.CreatedAt + TransferAckResultTtl;
         if (entry.RequestId is { } requestId && _requests.TryGetValue(requestId, out var request))
         {
             if (request.Status == "Pending") return DateTimeOffset.MaxValue;
@@ -1685,9 +1711,56 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     private bool IsTransferAckHistoryExpired(TransferAckHistory entry, DateTimeOffset now)
     {
         if (_operations.TryGetValue(entry.OperationId, out var operation))
-            return IsTerminal(operation.State) && operation.TerminalAt is { } terminalAt && terminalAt + CompletedResultTtl <= now &&
-                   (operation.CancelledTransfer is null || operation.CancelledTransfer.Deadline <= now);
-        return entry.CreatedAt + CompletedResultTtl <= now;
+            if (operation.PendingTransfer?.Id == entry.ProposalId || operation.CancelledTransfer?.Proposal.Id == entry.ProposalId) return false;
+        return entry.CreatedAt + TransferAckReplayTtl <= now;
+    }
+
+    private bool IsTransferAckProtected(TransferAckHistory entry) =>
+        _operations.TryGetValue(entry.OperationId, out var operation) &&
+        (operation.PendingTransfer?.Id == entry.ProposalId || operation.CancelledTransfer?.Proposal.Id == entry.ProposalId);
+
+    private bool EvictOldestSettledTransferAck()
+    {
+        var candidate = _transferAckHistory
+            .SelectMany(participant => participant.Value.Select(entry => (ParticipantId: participant.Key, MessageId: entry.Key, Entry: entry.Value)))
+            .Where(item => !IsTransferAckProtected(item.Entry))
+            .OrderBy(item => item.Entry.CreatedAt)
+            .FirstOrDefault();
+        if (candidate.Entry is null) return false;
+        _transferAckHistory[candidate.ParticipantId].Remove(candidate.MessageId);
+        return true;
+    }
+
+    private int GetTransferAckHistoryCount() => _transferAckHistory.Values.Sum(entries => entries.Count);
+
+    private void BoundSafetyResults(string participantId)
+    {
+        while ((_safetyResults.TryGetValue(participantId, out var entries) && entries.Count > MaxSafetyResultsPerParticipant) ||
+               _safetyResults.Values.Sum(items => items.Count) > MaxSafetyResultsGlobal)
+        {
+            var candidate = _safetyResults.SelectMany(participant => participant.Value.Select(entry =>
+                    (ParticipantId: participant.Key, MessageId: entry.Key, Entry: entry.Value)))
+                .OrderBy(item => item.Entry.CreatedAt).First();
+            _safetyResults[candidate.ParticipantId].Remove(candidate.MessageId);
+            if (_safetyResults[candidate.ParticipantId].Count == 0) _safetyResults.Remove(candidate.ParticipantId);
+        }
+    }
+
+    private static bool IsSafetyCommand(string kind) => kind is "STOP_TRANSFER" or "HOLD" or "BREAKAWAY" or "DISCONNECT";
+
+    private static bool HasProposalBoundAckId(ModuleCommandContext context, string messageId) =>
+        TryGetString(context.Payload, "proposalId", out var proposalId) && messageId == "transfer-ack-" + proposalId;
+
+    private static bool TryGetString(JsonElement payload, string name, out string value)
+    {
+        if (payload.ValueKind == JsonValueKind.Object && payload.TryGetProperty(name, out var node) && node.ValueKind == JsonValueKind.String &&
+            !string.IsNullOrWhiteSpace(node.GetString()))
+        {
+            value = node.GetString()!;
+            return true;
+        }
+        value = string.Empty;
+        return false;
     }
 
     private static bool RequiresIdempotencyCache(string kind) => kind is not ("PING" or "GET_STATE" or "FUEL_STATUS" or "POSE_UPDATE");
@@ -1793,5 +1866,5 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     private sealed record CommandResponse(string Kind, string? OperationId, long? OperationRevision, object Payload, string? RequestId = null);
     private sealed record CachedResult(string RequestHash, string Kind, string? OperationId, long? OperationRevision, object Payload,
         string? RequestId, DateTimeOffset CreatedAt);
-    private sealed record TransferAckHistory(string RequestHash, string Kind, string OperationId, long? OperationRevision, DateTimeOffset CreatedAt);
+    private sealed record TransferAckHistory(string RequestHash, string ProposalId, string OperationId, long? OperationRevision, DateTimeOffset CreatedAt);
 }
