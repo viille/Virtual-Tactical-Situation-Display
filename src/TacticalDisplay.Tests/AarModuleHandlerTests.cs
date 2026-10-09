@@ -471,7 +471,8 @@ public sealed class AarModuleHandlerTests
     [InlineData("BREAKAWAY", "Breakaway", "BREAKAWAY")]
     public async Task SafetyCommandDominatesPendingProposalAndSettlesOnlyExactLateAcknowledgement(string safetyCommand, string expectedState, string expectedKind)
     {
-        var rig = new Rig();
+        var now = DateTimeOffset.UtcNow;
+        var rig = new Rig(new ManualTimeProvider(now));
         await rig.PrepareTankerAndReceiver();
         var request = await rig.Request("receiver", "tanker", 100);
         var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
@@ -479,7 +480,6 @@ public sealed class AarModuleHandlerTests
         await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
         await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
 
-        var now = DateTimeOffset.UtcNow;
         var tankerPose = new { timestampUtc = now, latitudeDeg = 60d, longitudeDeg = 25d, altitudeMeters = 10000d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
         var receiverPose = new { timestampUtc = now.AddMilliseconds(5), latitudeDeg = 60d - (30d / 111000d), longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
         await rig.Send("tanker", "POSE_UPDATE", tankerPose);
