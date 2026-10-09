@@ -6,6 +6,39 @@ namespace TacticalDisplay.Tests;
 
 public sealed class AarRegistryContractTests
 {
+    [Theory]
+    [InlineData("https://example.org/source", true)]
+    [InlineData("http://example.org/source", true)]
+    [InlineData("ftp://example.org/source", false)]
+    [InlineData("file:///source", false)]
+    public void SourceUrlContractAllowsOnlyHttpAndHttps(string url, bool expected)
+    {
+        var profile = ContractProfile() with
+        {
+            Sources = [new AarRegistrySource("source-1", "Reference", "Publisher", url, "Supports the measured value.", DateTimeOffset.UtcNow)],
+        };
+
+        Assert.Equal(expected, AarRegistryValidator.TryValidate(new AarRegistrySnapshot(1, 1, DateTimeOffset.UtcNow, [profile]), out _));
+    }
+
+    [Theory]
+    [InlineData("title")]
+    [InlineData("publisher")]
+    [InlineData("claim")]
+    public void SourceContractRejectsWhitespaceOnlyEvidenceText(string field)
+    {
+        var source = new AarRegistrySource("source-1", "Reference", "Publisher", "https://example.org/source", "Supports the measured value.", DateTimeOffset.UtcNow);
+        source = field switch
+        {
+            "title" => source with { Title = "   " },
+            "publisher" => source with { Publisher = "   " },
+            _ => source with { Claim = "   " },
+        };
+        var profile = ContractProfile() with { Sources = [source] };
+
+        Assert.False(AarRegistryValidator.TryValidate(new AarRegistrySnapshot(1, 1, DateTimeOffset.UtcNow, [profile]), out _));
+    }
+
     [Fact]
     public void PublishedCloudSnapshotFixtureDeserializesAndPassesServerValidation()
     {
@@ -18,4 +51,7 @@ public sealed class AarRegistryContractTests
         Assert.Contains(snapshot.Profiles, profile => profile.IcaoDesignators.Contains("F35") && profile.CanReceive && profile.ReceiverSystems.Single().Method == "BoomReceptacle");
         Assert.All(snapshot.Profiles.Where(profile => profile.CanReceive).SelectMany(profile => profile.ReceiverSystems), system => Assert.Null(system.MaxReceiveKgPerSecond));
     }
+
+    private static AarAircraftProfile ContractProfile() => new("test-tanker", "Test tanker", ["TST1"], true, true, false,
+        [new AarTankerSystem("Boom", null, "unknown", [])], [], [], null, "");
 }

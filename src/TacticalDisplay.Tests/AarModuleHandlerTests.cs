@@ -42,6 +42,203 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task ParticipantSafetyCacheEvictionPreservesOtherParticipantsEntries()
+    {
+        var rig = new Rig();
+        await rig.Send("receiver", "HOLD", new { attempt = 1 }, "receiver-safety-oldest");
+
+        for (var index = 0; index < 65; index++)
+            await rig.Send("tanker", "HOLD", new { attempt = 1 }, $"tanker-safety-{index}");
+
+        var replay = await rig.Send("receiver", "HOLD", new { attempt = 2 }, "receiver-safety-oldest");
+
+        Assert.Equal("MODULE_ERROR", replay.LastKind);
+        Assert.Contains("IDEMPOTENCY_CONFLICT", JsonSerializer.Serialize(replay.LastPayload));
+    }
+
+    [Fact]
+    public async Task TransferAckConflictIsRejectedWhileProposalReplayRecordIsRetained()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        var messageId = "transfer-ack-" + fixture.ProposalId;
+        var payload = new
+        {
+            proposalId = fixture.ProposalId,
+            operationRevision = fixture.Proposal.OperationRevision,
+            targetCumulativeKg = fixture.TargetKg,
+            appliedCumulativeKg = fixture.TargetKg,
+            appliedKg = fixture.DeltaKg
+        };
+
+        var accepted = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, messageId, operationId: fixture.OperationId);
+        Assert.Equal("TRANSFER_ACK_ACCEPTED", accepted.LastKind);
+        await fixture.Rig.Send("receiver", "TRANSFER_ACK", payload, operationId: fixture.OperationId);
+        var appliedTransferredKg = fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg;
+        Assert.Equal(fixture.TargetKg, appliedTransferredKg, 3);
+
+        fixture.Clock.Advance(TimeSpan.FromMinutes(2));
+        var exactReplay = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, messageId, operationId: fixture.OperationId);
+        Assert.Single(exactReplay.Events);
+        Assert.Equal("OPERATION_SNAPSHOT", exactReplay.LastKind);
+
+        var conflict = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload with { appliedKg = fixture.DeltaKg + 1 }, messageId,
+            operationId: fixture.OperationId);
+
+        Assert.Equal("MODULE_ERROR", conflict.LastKind);
+        Assert.Contains("IDEMPOTENCY_CONFLICT", JsonSerializer.Serialize(conflict.LastPayload));
+        Assert.Equal(appliedTransferredKg, fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg, 3);
+    }
+
+    [Fact]
+    public async Task TransferAckMessageIdCannotBeReusedForAnotherCommandKind()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        var messageId = "transfer-ack-" + fixture.ProposalId;
+        var payload = new
+        {
+            proposalId = fixture.ProposalId,
+            operationRevision = fixture.Proposal.OperationRevision,
+            targetCumulativeKg = fixture.TargetKg,
+            appliedCumulativeKg = fixture.TargetKg,
+            appliedKg = fixture.DeltaKg
+        };
+
+        var accepted = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, messageId, operationId: fixture.OperationId);
+        Assert.Equal("TRANSFER_ACK_ACCEPTED", accepted.LastKind);
+
+        var conflict = await fixture.Rig.Send("tanker", "BREAKAWAY", new { }, messageId, operationId: fixture.OperationId);
+
+        Assert.Equal("MODULE_ERROR", conflict.LastKind);
+        Assert.Contains("IDEMPOTENCY_CONFLICT", JsonSerializer.Serialize(conflict.LastPayload));
+        Assert.Equal("Refueling", fixture.Rig.OperationForTests(fixture.OperationId)!.Value.State);
+    }
+
+    [Fact]
+    public async Task RejectedTransferAckMessageIdCannotBeReusedWithCorrectedPayload()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        var messageId = "transfer-ack-" + fixture.ProposalId;
+        var payload = new
+        {
+            proposalId = fixture.ProposalId,
+            operationRevision = fixture.Proposal.OperationRevision,
+            targetCumulativeKg = fixture.TargetKg,
+            appliedCumulativeKg = fixture.TargetKg,
+            appliedKg = fixture.DeltaKg
+        };
+        var rejected = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload with
+        {
+            targetCumulativeKg = fixture.TargetKg + 1,
+            appliedCumulativeKg = fixture.TargetKg + 1,
+            appliedKg = fixture.DeltaKg + 1
+        }, messageId, operationId: fixture.OperationId);
+        Assert.Equal("MODULE_ERROR", rejected.LastKind);
+
+        var exactReplay = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload with
+        {
+            targetCumulativeKg = fixture.TargetKg + 1,
+            appliedCumulativeKg = fixture.TargetKg + 1,
+            appliedKg = fixture.DeltaKg + 1
+        }, messageId, operationId: fixture.OperationId);
+        Assert.Equal("MODULE_ERROR", exactReplay.LastKind);
+        Assert.Contains("AAR_NOT_ALLOWED", JsonSerializer.Serialize(exactReplay.LastPayload));
+
+        var corrected = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, messageId, operationId: fixture.OperationId);
+
+        Assert.Equal("MODULE_ERROR", corrected.LastKind);
+        Assert.Contains("IDEMPOTENCY_CONFLICT", JsonSerializer.Serialize(corrected.LastPayload));
+        Assert.Equal(0, fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg, 3);
+    }
+
+    [Fact]
+    public async Task TransferAckRequiresProposalBoundMessageId()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        var payload = new
+        {
+            proposalId = fixture.ProposalId,
+            operationRevision = fixture.Proposal.OperationRevision,
+            targetCumulativeKg = fixture.TargetKg,
+            appliedCumulativeKg = fixture.TargetKg,
+            appliedKg = fixture.DeltaKg
+        };
+        var invalid = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, "transfer-ack-another-proposal", operationId: fixture.OperationId);
+        Assert.Equal("MODULE_ERROR", invalid.LastKind);
+        Assert.Contains("INVALID_TRANSFER_ACK_ID", JsonSerializer.Serialize(invalid.LastPayload));
+    }
+
+    [Fact]
+    public async Task LongRunningTransferCompletesMoreThanThreeHundredSequentialProposals()
+    {
+        var fixture = await CreateLongRunningTransferAsync();
+        var proposalIds = await AcknowledgeSequentialProposalsAsync(fixture, 301);
+
+        Assert.True(proposalIds.Count > 300);
+        Assert.True(proposalIds.Distinct(StringComparer.Ordinal).SequenceEqual(proposalIds));
+        Assert.Equal("Refueling", fixture.Rig.OperationForTests(fixture.OperationId)!.Value.State);
+        Assert.True(fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg > 3000);
+        Assert.DoesNotContain(fixture.Rig.HandlerEvents, item => item.Kind == "OPERATION_SUSPENDED" && item.OperationId == fixture.OperationId);
+    }
+
+    [Theory]
+    [InlineData("STOP_TRANSFER", "TRANSFER_STOPPED")]
+    [InlineData("BREAKAWAY", "BREAKAWAY")]
+    public async Task SafetyCommandsRemainUsableAfterHeavyAckTrafficAndOrdinaryCachePressure(string command, string expectedKind)
+    {
+        var fixture = await CreateLongRunningTransferAsync();
+        await AcknowledgeSequentialProposalsAsync(fixture, 301);
+        await FillOrdinaryCommandCacheAsync(fixture);
+
+        var result = await fixture.Rig.Send("tanker", command, new { }, operationId: fixture.OperationId);
+
+        Assert.Equal(expectedKind, result.LastKind);
+        Assert.DoesNotContain("IDEMPOTENCY_CAPACITY", JsonSerializer.Serialize(result.LastPayload));
+    }
+
+    [Fact]
+    public async Task ExpiredOldProposalAckCannotAffectCurrentPendingProposal()
+    {
+        var fixture = await CreateLongRunningTransferAsync();
+        var proposalIds = await AcknowledgeSequentialProposalsAsync(fixture, 1);
+        fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+        await fixture.Rig.RefreshLongRunningTransferInputsAsync(20_000, 100);
+        fixture.Rig.Handler.ProcessLifecycleTick();
+        var current = fixture.Rig.HandlerEvents.Last(item => item.Kind == "TRANSFER_PROPOSAL" && item.ParticipantId == "tanker");
+        var currentPayload = JsonSerializer.SerializeToElement(current.Payload);
+        var priorTarget = fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg;
+        fixture.Clock.Advance(TimeSpan.FromMinutes(4));
+
+        var stale = await fixture.Rig.Send("tanker", "TRANSFER_ACK", new
+        {
+            proposalId = proposalIds[0],
+            operationRevision = current.OperationRevision!.Value - 1,
+            targetCumulativeKg = priorTarget + 10,
+            appliedCumulativeKg = priorTarget + 10,
+            appliedKg = 10
+        }, "transfer-ack-" + proposalIds[0], operationId: fixture.OperationId);
+
+        Assert.Equal("OPERATION_SNAPSHOT", stale.LastKind);
+        Assert.Equal(priorTarget, fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg, 3);
+        Assert.Equal("Refueling", fixture.Rig.OperationForTests(fixture.OperationId)!.Value.State);
+        Assert.NotEqual(proposalIds[0], currentPayload.GetProperty("proposalId").GetString());
+    }
+
+    [Fact]
+    public async Task TransferAckHistoryExpiresAfterSettledProposalReplayWindow()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        var firstAck = await AcknowledgeCancelledTransferAsync(fixture, "tanker");
+        Assert.Equal("TRANSFER_ACK_ACCEPTED", firstAck.LastKind);
+        await AcknowledgeCancelledTransferAsync(fixture, "receiver");
+        fixture.Clock.Advance(TimeSpan.FromMinutes(4));
+
+        var stale = await AcknowledgeCancelledTransferAsync(fixture, "tanker");
+
+        Assert.Equal("OPERATION_SNAPSHOT", stale.LastKind);
+        Assert.Equal(fixture.TargetKg, fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg, 3);
+    }
+
+    [Fact]
     public async Task QueueKeepsOnlyOneActiveAndOneCommittedNextAndPendingDoesNotReserveFuel()
     {
         var rig = new Rig();
@@ -274,7 +471,8 @@ public sealed class AarModuleHandlerTests
     [InlineData("BREAKAWAY", "Breakaway", "BREAKAWAY")]
     public async Task SafetyCommandDominatesPendingProposalAndSettlesOnlyExactLateAcknowledgement(string safetyCommand, string expectedState, string expectedKind)
     {
-        var rig = new Rig();
+        var now = DateTimeOffset.UtcNow;
+        var rig = new Rig(new ManualTimeProvider(now));
         await rig.PrepareTankerAndReceiver();
         var request = await rig.Request("receiver", "tanker", 100);
         var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
@@ -282,7 +480,6 @@ public sealed class AarModuleHandlerTests
         await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
         await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
 
-        var now = DateTimeOffset.UtcNow;
         var tankerPose = new { timestampUtc = now, latitudeDeg = 60d, longitudeDeg = 25d, altitudeMeters = 10000d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
         var receiverPose = new { timestampUtc = now.AddMilliseconds(5), latitudeDeg = 60d - (30d / 111000d), longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
         await rig.Send("tanker", "POSE_UPDATE", tankerPose);
@@ -323,17 +520,7 @@ public sealed class AarModuleHandlerTests
                 appliedCumulativeKg = targetKg,
                 appliedKg = deltaKg
             }, operationId: operationId);
-            Assert.Equal("MODULE_ERROR", unrelatedAck.LastKind);
-
-            var wrongTargetAck = await rig.Send("tanker", "TRANSFER_ACK", new
-            {
-                proposalId,
-                operationRevision = pending.OperationRevision,
-                targetCumulativeKg = targetKg + 1,
-                appliedCumulativeKg = targetKg,
-                appliedKg = deltaKg
-            }, operationId: operationId);
-            Assert.Equal("MODULE_ERROR", wrongTargetAck.LastKind);
+            Assert.Equal("OPERATION_SNAPSHOT", unrelatedAck.LastKind);
 
             var tankerAck = await rig.Send("tanker", "TRANSFER_ACK", new
             {
@@ -791,6 +978,71 @@ public sealed class AarModuleHandlerTests
             payload.GetProperty("targetCumulativeKg").GetDouble(), payload.GetProperty("deltaKg").GetDouble());
     }
 
+    private static async Task<LongRunningTransferFixture> CreateLongRunningTransferAsync()
+    {
+        var clock = new ManualTimeProvider(DateTimeOffset.UtcNow);
+        var rig = new Rig(clock, new AarContactConfiguration(CaptureDebounce: TimeSpan.Zero, ReleaseDebounce: TimeSpan.Zero,
+            MaximumPoseAge: TimeSpan.FromSeconds(2), MaximumAlignmentGap: TimeSpan.FromSeconds(2)));
+        await rig.PrepareTankerAndReceiver(20_000, 20_000, 100, 10_000);
+        var request = await rig.Request("receiver", "tanker", 3500);
+        var accepted = await rig.Send("tanker", "ACCEPT_REQUEST", new { requestId = rig.RequestIdFrom(request) });
+        var operationId = accepted.LastPayload.GetProperty("operationId").GetString()!;
+        await rig.Send("tanker", "CLEAR_ASTERN", new { }, operationId: operationId);
+        await rig.Send("tanker", "CLEAR_CONTACT", new { }, operationId: operationId);
+        await rig.RefreshLongRunningTransferInputsAsync(20_000, 100);
+        await rig.Send("tanker", "START_TRANSFER", new { }, operationId: operationId);
+        rig.Handler.ProcessLifecycleTick();
+        return new LongRunningTransferFixture(rig, clock, operationId);
+    }
+
+    private static async Task<List<string>> AcknowledgeSequentialProposalsAsync(LongRunningTransferFixture fixture, int count)
+    {
+        var proposalIds = new List<string>(count);
+        for (var index = 0; index < count; index++)
+        {
+            var proposalEvent = fixture.Rig.HandlerEvents.Last(item => item.Kind == "TRANSFER_PROPOSAL" && item.ParticipantId == "tanker" && item.OperationId == fixture.OperationId);
+            var proposal = JsonSerializer.SerializeToElement(proposalEvent.Payload);
+            var proposalId = proposal.GetProperty("proposalId").GetString()!;
+            var targetKg = proposal.GetProperty("targetCumulativeKg").GetDouble();
+            var deltaKg = proposal.GetProperty("deltaKg").GetDouble();
+            var payload = new
+            {
+                proposalId,
+                operationRevision = proposal.GetProperty("operationRevision").GetInt64(),
+                targetCumulativeKg = targetKg,
+                appliedCumulativeKg = targetKg,
+                appliedKg = deltaKg
+            };
+            var tankerAck = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, operationId: fixture.OperationId);
+            Assert.True(tankerAck.LastKind == "TRANSFER_ACK_ACCEPTED", JsonSerializer.Serialize(new { proposalId, payload, result = tankerAck.LastPayload }));
+            var receiverAck = await fixture.Rig.Send("receiver", "TRANSFER_ACK", payload, operationId: fixture.OperationId);
+            Assert.Equal("TRANSFER_ACK_ACCEPTED", receiverAck.LastKind);
+            proposalIds.Add(proposalId);
+
+            if (index + 1 < count)
+            {
+                fixture.Clock.Advance(TimeSpan.FromSeconds(1));
+                await fixture.Rig.RefreshLongRunningTransferInputsAsync(20_000 - targetKg, 100 + targetKg);
+                fixture.Rig.Handler.ProcessLifecycleTick();
+            }
+        }
+        return proposalIds;
+    }
+
+    private static async Task FillOrdinaryCommandCacheAsync(LongRunningTransferFixture fixture)
+    {
+        SendResult? result = null;
+        for (var index = 0; index < 300; index++)
+        {
+            result = await fixture.Rig.Send("tanker", "SET_PLANNED_ONLOAD", new { operationId = fixture.OperationId, plannedKg = 3500 },
+                $"cache-pressure-{index}", operationId: fixture.OperationId);
+            if (result.LastKind == "MODULE_ERROR" && JsonSerializer.Serialize(result.LastPayload).Contains("IDEMPOTENCY_CAPACITY", StringComparison.Ordinal))
+                break;
+        }
+        Assert.NotNull(result);
+        Assert.Contains("IDEMPOTENCY_CAPACITY", JsonSerializer.Serialize(result!.LastPayload));
+    }
+
     private static Task<SendResult> AcknowledgeCancelledTransferAsync(PendingTransferFixture fixture, string participant) =>
         fixture.Rig.Send(participant, "TRANSFER_ACK", new
         {
@@ -819,7 +1071,14 @@ public sealed class AarModuleHandlerTests
         public Rig(TimeProvider? clock)
             : this(clock, null, null, "F16", "K35R") { }
 
+        public Rig(TimeProvider? clock, AarContactConfiguration contactConfiguration)
+            : this(clock, null, null, "F16", "K35R", contactConfiguration) { }
+
         private Rig(TimeProvider? clock, AarAircraftProfile? tankerProfile, AarAircraftProfile? receiverProfile, string receiverType, string tankerType)
+            : this(clock, tankerProfile, receiverProfile, receiverType, tankerType, null) { }
+
+        private Rig(TimeProvider? clock, AarAircraftProfile? tankerProfile, AarAircraftProfile? receiverProfile, string receiverType, string tankerType,
+            AarContactConfiguration? contactConfiguration)
         {
             _clock = clock ?? TimeProvider.System;
             _peers = new Dictionary<string, AarPeerSnapshot>(StringComparer.Ordinal)
@@ -828,7 +1087,7 @@ public sealed class AarModuleHandlerTests
                 ["receiver"] = new("receiver", "user-r", "1002", "VIPER11", receiverType, true, "instance-r", 1, new HashSet<string>(["aar.receiver"]), new Dictionary<string, string>(), FreshTelemetry())
             };
             _handler = new AarModuleHandler(new Registry(tankerProfile ?? TankerProfile, receiverProfile ?? ReceiverProfile), timeProvider: _clock,
-                contactConfiguration: new AarContactConfiguration(CaptureDebounce: TimeSpan.Zero, ReleaseDebounce: TimeSpan.Zero));
+                contactConfiguration: contactConfiguration ?? new AarContactConfiguration(CaptureDebounce: TimeSpan.Zero, ReleaseDebounce: TimeSpan.Zero));
             _handler.EventReady += _events.Add;
             _router = new ModuleRouter([_handler]);
         }
@@ -838,10 +1097,11 @@ public sealed class AarModuleHandlerTests
         public IReadOnlyList<AarServerEvent> HandlerEvents => _events;
         private readonly List<AarServerEvent> _events = [];
 
-        public async Task<SendResult> PrepareTankerAndReceiver()
+        public async Task<SendResult> PrepareTankerAndReceiver(double tankerFuelKg = 1000, double tankerCapacityKg = 2000,
+            double receiverFuelKg = 100, double receiverCapacityKg = 500)
         {
-            await Send("tanker", "FUEL_STATUS", new { currentFuelKg = 1000, capacityKg = 2000, adapterReady = true });
-            await Send("receiver", "FUEL_STATUS", new { currentFuelKg = 100, capacityKg = 500, adapterReady = true });
+            await Send("tanker", "FUEL_STATUS", new { currentFuelKg = tankerFuelKg, capacityKg = tankerCapacityKg, adapterReady = true });
+            await Send("receiver", "FUEL_STATUS", new { currentFuelKg = receiverFuelKg, capacityKg = receiverCapacityKg, adapterReady = true });
             await Send("tanker", "JOIN_AS_TANKER", new { });
             await Send("tanker", "SET_PROTECTED_RESERVE", new { protectedReserveKg = 200 });
             return await Send("tanker", "SET_TANKER_AVAILABILITY", new { availability = "Available" });
@@ -864,9 +1124,11 @@ public sealed class AarModuleHandlerTests
 
         public async Task<SendResult> Send(string participant, string kind, object payload, string? messageId = null, long generation = 1, string? operationId = null)
         {
-            var id = messageId ?? "msg-" + Interlocked.Increment(ref _nextId);
             var serializedPayload = JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
             using var payloadDoc = JsonDocument.Parse(serializedPayload);
+            var id = messageId ?? (kind == "TRANSFER_ACK" && payloadDoc.RootElement.TryGetProperty("proposalId", out var proposalId)
+                ? "transfer-ack-" + proposalId.GetString()
+                : "msg-" + Interlocked.Increment(ref _nextId));
             using var envelope = JsonDocument.Parse(JsonSerializer.Serialize(new
             {
                 type = "MODULE_MESSAGE",
@@ -949,6 +1211,18 @@ public sealed class AarModuleHandlerTests
             foreach (var peer in _peers.Values) _handler.OnParticipantConnected(peer);
         }
 
+        public async Task RefreshLongRunningTransferInputsAsync(double tankerFuelKg, double receiverFuelKg)
+        {
+            await Send("tanker", "FUEL_STATUS", new { currentFuelKg = tankerFuelKg, capacityKg = 20_000, adapterReady = true });
+            await Send("receiver", "FUEL_STATUS", new { currentFuelKg = receiverFuelKg, capacityKg = 10_000, adapterReady = true });
+            var now = _clock.GetUtcNow();
+            var tankerPose = new { timestampUtc = now, latitudeDeg = 60d, longitudeDeg = 25d, altitudeMeters = 10000d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+            var receiverPose = new { timestampUtc = now.AddMilliseconds(5), latitudeDeg = 60d - 30d / 111000d, longitudeDeg = 25d, altitudeMeters = 9990d, headingDeg = 0d, velocityNorthMps = 100d, velocityEastMps = 0d, velocityDownMps = 0d };
+            await Send("tanker", "POSE_UPDATE", tankerPose);
+            await Send("receiver", "POSE_UPDATE", receiverPose);
+            await Send("tanker", "POSE_UPDATE", tankerPose with { timestampUtc = now.AddMilliseconds(10) });
+        }
+
         private TacticalDisplay.Core.Models.TacticalTelemetry FreshTelemetry() =>
             new(1, _clock.GetUtcNow(), 60, 25, 10_000, 90, 90, 250);
 
@@ -965,6 +1239,7 @@ public sealed class AarModuleHandlerTests
     private sealed record SendResult(IReadOnlyList<SentEvent> Events, string? LastKind, JsonElement LastPayload);
     private sealed record PendingTransferFixture(Rig Rig, ManualTimeProvider Clock, string OperationId, AarServerEvent Proposal,
         string ProposalId, double TargetKg, double DeltaKg);
+    private sealed record LongRunningTransferFixture(Rig Rig, ManualTimeProvider Clock, string OperationId);
 
     private sealed class ManualTimeProvider(DateTimeOffset initialTime) : TimeProvider
     {
