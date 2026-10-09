@@ -126,10 +126,14 @@ jobs:
               --repo $repo `
               --clobber
           } else {
-            gh release create $tag `
-              out/app/TacticalDisplay.App.exe `
-              out/app/TacticalDisplay.App.exe.sha256 `
-              --repo $repo `
-              --title "VTSD $tag" `
-              --generate-notes
+            $createArgs = @(
+              'release', 'create', $tag,
+              'out/app/TacticalDisplay.App.exe',
+              'out/app/TacticalDisplay.App.exe.sha256',
+              '--repo', $repo,
+              '--title', "VTSD $tag",
+              '--generate-notes'
+            )
+            if ($tag -match '-') { $createArgs += '--prerelease' }
+            gh @createArgs
           }
