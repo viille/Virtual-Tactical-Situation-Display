@@ -133,7 +133,7 @@ public sealed class TacticalScopeControl : FrameworkElement
         }
 
         var center = new Point(RenderSize.Width / 2.0, RenderSize.Height / 2.0);
-        var radius = System.Math.Min(RenderSize.Width, RenderSize.Height) * 0.45;
+        var radius = GetCompassRadius();
         var ownshipHeadingDeg = Picture.Ownship.HeadingDeg;
         DrawOptionalOverlay(() => DrawAirspaces(dc, center, radius, ownshipHeadingDeg));
         DrawOptionalOverlay(() => DrawBullseye(dc, center, radius, ownshipHeadingDeg));
@@ -189,15 +189,26 @@ public sealed class TacticalScopeControl : FrameworkElement
 
         var ringHaloPen = new Pen(new SolidColorBrush(Color.FromArgb(230, 0, 8, 10)), 3.6);
         var ringPen = new Pen(new SolidColorBrush(Color.FromArgb(210, 180, 255, 235)), 1.2);
+        var lastLabelNm = int.MinValue;
         for (var i = 1; i <= 4; i++)
         {
             var ringRadius = radius * i / 4.0;
             dc.DrawEllipse(null, ringHaloPen, center, ringRadius, ringRadius);
             dc.DrawEllipse(null, ringPen, center, ringRadius, ringRadius);
-            var label = $"{Settings.SelectedRangeNm * i / 4:0} NM";
-            DrawCenteredHaloText(dc, label, center.X, center.Y - ringRadius - 13, Color.FromRgb(175, 255, 220), 10, FontWeights.SemiBold);
+            var rangeNm = (int)Math.Round(Settings.SelectedRangeNm * i / 4.0, MidpointRounding.AwayFromZero);
+            if (rangeNm <= lastLabelNm)
+            {
+                continue;
+            }
+
+            lastLabelNm = rangeNm;
+            var label = $"{rangeNm} NM";
+            var labelY = center.Y - ringRadius - 13;
+            DrawCenteredHaloText(dc, label, center.X, labelY, Color.FromRgb(175, 255, 220), 10, FontWeights.SemiBold);
         }
     }
+
+    private double GetCompassRadius() => Math.Max(12, Math.Min(RenderSize.Width, RenderSize.Height) / 2.0 - 8);
 
     private void DrawFrameCompass(DrawingContext dc, Point center, double ownshipHeadingDeg)
     {
@@ -208,7 +219,7 @@ public sealed class TacticalScopeControl : FrameworkElement
 
         var directionVariationDeg = DisplayDirectionVariationDeg;
         var headingOffset = Settings.OrientationMode == ScopeOrientationMode.HeadingUp ? ownshipHeadingDeg : 0;
-        var compassRadius = Math.Max(12, Math.Min(RenderSize.Width, RenderSize.Height) / 2.0 - 8);
+        var compassRadius = GetCompassRadius();
         var haloPen = new Pen(new SolidColorBrush(Color.FromArgb(220, 0, 7, 10)), 3.4);
         var minorPen = new Pen(new SolidColorBrush(Color.FromArgb(155, 170, 205, 210)), 1.1);
         var majorPen = new Pen(new SolidColorBrush(Color.FromArgb(210, 215, 245, 240)), 1.7);

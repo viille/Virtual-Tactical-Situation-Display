@@ -205,7 +205,6 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed, IAarPoseSource
                 .Select(contact => contact.Callsign!)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             pilots = pilots.Where(pilot => !reservedCallsigns.Contains(pilot.Callsign)).ToArray();
-            LogCallsignMatchDiagnostics(snapshot, history, pilots);
             var proposed = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, history, pilots, identity);
             var confirmationStateBeforeSnapshot = new Dictionary<string, CallsignConfirmation>(_callsignConfirmations, StringComparer.OrdinalIgnoreCase);
             var confirmed = ConfirmCallsignMatches(snapshot, proposed, history, pilots);
@@ -230,7 +229,6 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed, IAarPoseSource
                 SnapshotReceived?.Invoke(this, published);
             }
 
-            LogCallsignPipelineDiagnostics(snapshot, proposed, confirmed, published, history, pilots, allPilots, identity);
             LogEnrichmentSummary(snapshot, published, pilots);
         }
         catch (Exception ex)
@@ -609,13 +607,14 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed, IAarPoseSource
         IReadOnlyList<TrafficSnapshot> history,
         IReadOnlyList<VatsimPilotCandidate> candidates,
         IReadOnlyList<VatsimPilotCandidate> allPilots,
-        VatsimOwnshipIdentity? identity)
+        VatsimOwnshipIdentity? identity,
+        IReadOnlyDictionary<string, CallsignConfirmation> confirmations)
     {
         var assignmentDiagnostics = VatsimCallsignMatcher.InspectCurrentAssignment(raw.Contacts, candidates);
         foreach (var contact in raw.Contacts.Take(12))
         {
             var key = ContactIdentityKey(contact);
-            _callsignConfirmations.TryGetValue(key, out var state);
+            confirmations.TryGetValue(key, out var state);
             var proposedCallsign = proposed.Contacts.FirstOrDefault(item => ContactIdentityKey(item) == key)?.Callsign;
             var confirmedCallsign = confirmed.Contacts.FirstOrDefault(item => ContactIdentityKey(item) == key)?.Callsign;
             var publishedCallsign = published.Contacts.FirstOrDefault(item => ContactIdentityKey(item) == key)?.Callsign;
@@ -702,18 +701,8 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed, IAarPoseSource
                         string.IsNullOrWhiteSpace(pair.First.Callsign) &&
                         !string.IsNullOrWhiteSpace(pair.Second.Callsign));
                 var missing = enriched.Contacts.Count(contact => string.IsNullOrWhiteSpace(contact.Callsign));
-                var nearest = original.Contacts.Count == 0
-                    ? VatsimMatchDiagnostics.None
-                    : original.Contacts
-                        .Select(contact => VatsimCallsignMatcher.InspectBestMatch(contact, pilots))
-                        .OrderBy(match => match.Score)
-                        .FirstOrDefault() ?? VatsimMatchDiagnostics.None;
-
                 return "Callsign enrichment summary | " +
-                    $"contacts={original.Contacts.Count} pilots={pilots.Count} added={added} missing={missing} " +
-                    $"nearest={nearest.Callsign ?? "n/a"} nearestDistanceNm={nearest.DistanceNm:0.00} " +
-                    $"nearestAltitudeDeltaFt={nearest.AltitudeDeltaFt:0} nearestMatch={nearest.IsMatch} " +
-                    $"reject={nearest.RejectReason ?? "none"}";
+                    $"contacts={original.Contacts.Count} pilots={pilots.Count} added={added} missing={missing}";
             });
     }
 

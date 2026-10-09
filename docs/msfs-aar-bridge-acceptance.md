@@ -37,6 +37,10 @@ Before every runtime test, enable **data-source debug logging** in VTSD. The dia
 %APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log
 ```
 
+When built with the MSFS 2024 SDK installed, VTSD bundles that SDK's native SimConnect client so end users do not need the SDK. Runtime prefers any configured or discovered client exposing both required CommBus functions over older clients. The log records the selected DLL and whether `SimConnect_CallCommBusEvent` and `SimConnect_SubscribeToCommBusEvent` were found. If CommBus is unavailable, check the `Loaded SimConnect API` line first; a DLL without both exports cannot support AAR bridge communication.
+
+An MSFS SimConnect internal exception while an AAR CommBus request is pending now fails that bridge request without closing the telemetry session. Inspect the MSFS DevMode **Debug > WASM Debug** window for the `vtsd-aar-bridge` module status and error details if it is not running.
+
 For the first smoke test, inspect the `[MSFS-AAR]` entries and confirm that SimConnect opens, the CommBus response subscription succeeds, `HELLO` returns a matching protocol, `GET_CAPABILITIES` and `GET_FUEL_STATE` succeed, discovered tanks and capacity look plausible, and the same-value write probe either succeeds or records a concrete read-only reason. Then perform a controlled `+10 kg` mutation (or another small amount appropriate to the aircraft), confirm the returned `AppliedKg`, and compare the read-back with the simulator fuel state. Keep the log if any step fails, along with the aircraft used, MSFS build/version, VTSD version and build SHA, and bridge version. Do not rely on screenshots when the log contains the failure details.
 
 | Check | Expected result | Status |

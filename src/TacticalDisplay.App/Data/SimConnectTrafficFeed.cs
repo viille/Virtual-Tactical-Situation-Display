@@ -392,6 +392,19 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
                     return false;
                 case SimConnectRecvId.Exception:
                     var exception = Marshal.PtrToStructure<SimConnectRecvException>(pData);
+                    if (exception.dwException == (uint)SimConnectException.Internal)
+                    {
+                        DataSourceDebugLog.Warn(
+                            LogSource,
+                            $"SimConnect internal exception received; keeping session open | sendId={exception.dwSendID} index={exception.dwIndex} pendingAarRequests={_pendingAarBridgeResponses.Count}");
+                        if (!_pendingAarBridgeResponses.IsEmpty)
+                        {
+                            FailPendingAarBridgeRequests(new IOException(
+                                $"SimConnect reported an internal error while processing the AAR CommBus request (sendId={exception.dwSendID})."));
+                        }
+                        break;
+                    }
+
                     DataSourceDebugLog.Warn(
                         LogSource,
                         $"SimConnect exception received; recycling session | exception={exception.dwException} sendId={exception.dwSendID} index={exception.dwIndex}");
@@ -749,30 +762,33 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
 
     private string? ResolveNativeDllPath()
     {
-        if (CanUseDll(NativeSimConnectDllName))
+        var candidates = new[]
         {
-            return NativeSimConnectDllName;
+            _settings.PreferredSimConnectDllPath,
+            Environment.GetEnvironmentVariable("MSFS_SIMCONNECT_DLL"),
+            FindNativeSimConnectDllPath(_settings.MsfsExePath),
+            NativeSimConnectDllName
+        }
+        .Where(path => !string.IsNullOrWhiteSpace(path))
+        .Cast<string>()
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .Where(CanUseDll)
+        .ToArray();
+
+        // A stale single-file extraction path can still load the bundled client,
+        // but that client may not have the MSFS 2024 CommBus exports. Prefer any
+        // compatible candidate over the first generally usable SimConnect DLL.
+        var commBusPath = candidates.FirstOrDefault(HasCommBusApi);
+        var selectedPath = commBusPath ?? candidates.FirstOrDefault();
+        if (selectedPath is not null)
+        {
+            if (!string.Equals(_settings.PreferredSimConnectDllPath, selectedPath, StringComparison.OrdinalIgnoreCase))
+                _settings.PreferredSimConnectDllPath = selectedPath;
+            if (commBusPath is null)
+                DataSourceDebugLog.Warn(LogSource, "No discovered SimConnect DLL exposes both MSFS 2024 CommBus functions; AAR bridge communication is unavailable.");
         }
 
-        if (CanUseDll(_settings.PreferredSimConnectDllPath))
-        {
-            return _settings.PreferredSimConnectDllPath;
-        }
-
-        var envPath = Environment.GetEnvironmentVariable("MSFS_SIMCONNECT_DLL");
-        if (CanUseDll(envPath))
-        {
-            return envPath;
-        }
-
-        var autoPath = FindNativeSimConnectDllPath(_settings.MsfsExePath);
-        if (!string.IsNullOrWhiteSpace(autoPath))
-        {
-            _settings.PreferredSimConnectDllPath = autoPath;
-            return autoPath;
-        }
-
-        return null;
+        return selectedPath;
     }
 
     private void SetConnected(bool value, bool forceNotify = false)
@@ -802,6 +818,20 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         catch (Exception ex)
         {
             DataSourceDebugLog.Error(LogSource, $"Failed to probe DLL '{dllPath}'", ex);
+            return false;
+        }
+    }
+
+    private static bool HasCommBusApi(string dllPath)
+    {
+        try
+        {
+            using var api = NativeSimConnectApi.TryCreate(dllPath);
+            return api?.CallCommBusEvent is not null && api.SubscribeToCommBusEvent is not null;
+        }
+        catch (Exception ex)
+        {
+            DataSourceDebugLog.Error(LogSource, $"Failed to check CommBus exports in '{dllPath}'", ex);
             return false;
         }
     }
@@ -868,12 +898,12 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
     {
         var paths = new List<string>();
 
-        if (!string.IsNullOrWhiteSpace(AppContext.BaseDirectory))
+        var sdkRoot = Environment.GetEnvironmentVariable("MSFS2024_SDK");
+        if (!string.IsNullOrWhiteSpace(sdkRoot))
         {
-            paths.Add(AppContext.BaseDirectory);
+            paths.Add(Path.Combine(sdkRoot, "SimConnect SDK", "lib", "x64"));
+            paths.Add(Path.Combine(sdkRoot, "SimConnect SDK", "lib"));
         }
-
-        paths.Add(Path.Combine(AppContext.BaseDirectory, "simconnect"));
 
         if (!string.IsNullOrWhiteSpace(msfsExePath))
         {
@@ -996,6 +1026,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
                 var subscribeToSystemEvent = GetDelegate<SimConnectSubscribeToSystemEventDelegate>(handle, "SimConnect_SubscribeToSystemEvent");
                 var callCommBusEvent = TryGetDelegate<SimConnectCallCommBusEventDelegate>(handle, "SimConnect_CallCommBusEvent");
                 var subscribeToCommBusEvent = TryGetDelegate<SimConnectSubscribeToCommBusEventDelegate>(handle, "SimConnect_SubscribeToCommBusEvent");
+                DataSourceDebugLog.Info(LogSource,
+                    $"Loaded SimConnect API | path={dllPath} commBusCall={callCommBusEvent is not null} commBusSubscribe={subscribeToCommBusEvent is not null}");
                 return new NativeSimConnectApi(handle, open, close, addToDef, requestOnObject, requestByType, getNextDispatch, subscribeToSystemEvent,
                     callCommBusEvent, subscribeToCommBusEvent);
             }
@@ -1182,6 +1214,11 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         SimobjectData = 8,
         SimobjectDataByType = 9,
         CommBus = 44
+    }
+
+    private enum SimConnectException : uint
+    {
+        Internal = 45
     }
 
     private enum SystemEventId : uint

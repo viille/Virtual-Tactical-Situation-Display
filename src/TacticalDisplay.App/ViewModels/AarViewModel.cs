@@ -157,6 +157,14 @@ public sealed class AarViewModel : ViewModelBase
     public bool IsAarTankerModeJoined => _client.IsTankerJoined;
     public bool IsLocalTankerJoined => _client.IsTankerJoined;
     public bool IsTankerCapable => _isTankerCapable();
+    public bool CanToggleTankerMode => CanOfferTanker;
+    public string TankerJoinStatusText => !_isConnected()
+        ? "Connect to TacticalLink to join as tanker."
+        : !_isTankerCapable()
+            ? "Tanker role is not enabled for the active aircraft in the AAR registry."
+            : _client.IsTankerJoined
+                ? "Joined as tanker. Set availability to accept requests."
+                : "Tanker role available for this aircraft.";
     public bool CanUseAar => _isConnected() && (_isTankerCapable() || _isReceiverCapable());
     public bool CanOfferTanker => _isConnected() && _isTankerCapable();
     public string AarFuelUnit
@@ -204,7 +212,8 @@ public sealed class AarViewModel : ViewModelBase
     public void NotifyContextChanged()
     {
         Raise(nameof(AvailableAarTankers)); Raise(nameof(AvailableAarReceivers)); Raise(nameof(CanUseAar));
-        Raise(nameof(CanOfferTanker)); Raise(nameof(IsAarReceiverCapable)); Raise(nameof(IsTankerCapable));
+        Raise(nameof(CanOfferTanker)); Raise(nameof(CanToggleTankerMode)); Raise(nameof(TankerJoinStatusText));
+        Raise(nameof(IsAarReceiverCapable)); Raise(nameof(IsTankerCapable));
         Raise(nameof(IsLocalTankerJoined)); Raise(nameof(TankerButtonText)); Raise(nameof(AarAvailabilityButtonText));
         RaiseOperationCommandStates();
     }
@@ -481,6 +490,7 @@ public sealed class AarViewModel : ViewModelBase
         Raise(nameof(AvailableAarTankers)); Raise(nameof(AvailableAarReceivers)); Raise(nameof(HasOwnAarPendingRequest));
         Raise(nameof(HasAarCommittedNext)); Raise(nameof(HasAarOperation)); Raise(nameof(IsLocalTankerForActiveOperation));
         Raise(nameof(IsLocalTankerJoined)); Raise(nameof(AarAvailabilityButtonText)); Raise(nameof(TankerButtonText));
+        Raise(nameof(TankerJoinStatusText));
         Raise(nameof(AarActiveOperationSummaryText));
         Raise(nameof(HasActiveOperations));
         RaiseOperationCommandStates();

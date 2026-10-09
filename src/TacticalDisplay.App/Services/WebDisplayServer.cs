@@ -1527,7 +1527,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
       }
 
       const center = { x: w / 2, y: h / 2 };
-      const radius = Math.max(40, Math.min(w, h) * 0.44);
+      const radius = Math.max(12, Math.min(w, h) / 2 - 8);
       labelHitBoxes = [];
 
       if (!snapshot || !snapshot.available || !snapshot.ownship) {
@@ -1552,6 +1552,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
     function drawRings(center, radius) {
       if (!snapshot?.showRangeRings) return;
       ctx.save();
+      let lastRingLabelNm = Number.NEGATIVE_INFINITY;
       for (let i = 1; i <= 4; i++) {
         const ring = radius * i / 4;
         ctx.strokeStyle = 'rgba(0,8,10,0.9)';
@@ -1564,7 +1565,11 @@ public sealed class WebDisplayServer : IAsyncDisposable
         ctx.beginPath();
         ctx.arc(center.x, center.y, ring, 0, Math.PI * 2);
         ctx.stroke();
-        drawCenteredText(`${Math.round((snapshot?.rangeNm || 40) * i / 4)} NM`, center.x, center.y - ring - 13, '#afffdc', 10, '600');
+        const ringLabelNm = Math.round((snapshot?.rangeNm || 40) * i / 4);
+        if (ringLabelNm > lastRingLabelNm) {
+          lastRingLabelNm = ringLabelNm;
+          drawCenteredText(`${ringLabelNm} NM`, center.x, center.y - ring - 13, '#afffdc', 10, '600');
+        }
       }
       ctx.restore();
     }
@@ -2131,7 +2136,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
     function calculateZoom() {
       const rect = mapElement.getBoundingClientRect();
-      const radiusPixels = Math.max(1, Math.min(rect.width, rect.height) * 0.45);
+      const radiusPixels = Math.max(12, Math.min(rect.width, rect.height) / 2 - 8);
       const rangeMeters = Math.max(1, snapshot.rangeNm) * metersPerNauticalMile;
       const metersPerPixel = rangeMeters / radiusPixels;
       const latitudeScale = Math.max(Math.cos(snapshot.ownship.latitudeDeg * Math.PI / 180.0), 0.05);

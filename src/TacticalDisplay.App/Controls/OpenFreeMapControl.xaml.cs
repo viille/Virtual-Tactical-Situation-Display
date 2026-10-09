@@ -4,6 +4,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.Core.Models;
@@ -25,6 +26,14 @@ public partial class OpenFreeMapControl : UserControl
     private bool _initializing;
     private string? _pendingMapStateJson;
     private bool _mapStateInFlight;
+    private bool _webMessageHandlerAttached;
+    private bool _processFailedHandlerAttached;
+    private DateTimeOffset _mapStateSentAt;
+    private DateTimeOffset _lastMapRecoveryAt;
+    private DateTimeOffset _mapHeartbeatWatchStartedAt;
+    private DateTimeOffset _lastMapHeartbeatAt;
+    private bool _mapShouldRender;
+    private readonly DispatcherTimer _mapWatchdogTimer;
 
     public static readonly DependencyProperty PictureProperty = DependencyProperty.Register(
         nameof(Picture),
@@ -45,6 +54,11 @@ public partial class OpenFreeMapControl : UserControl
         Unloaded += OnUnloaded;
         SizeChanged += (_, _) => UpdateMapState();
         MapWebView.NavigationCompleted += OnNavigationCompleted;
+        _mapWatchdogTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(2)
+        };
+        _mapWatchdogTimer.Tick += OnMapWatchdogTick;
     }
 
     public TacticalPicture? Picture
@@ -68,6 +82,8 @@ public partial class OpenFreeMapControl : UserControl
 
     private async void OnLoaded(object sender, RoutedEventArgs e)
     {
+        _mapWatchdogTimer.Start();
+        AttachWebViewHandlers();
         if (_webViewReady || _initializing)
         {
             UpdateMapState();
@@ -82,7 +98,7 @@ public partial class OpenFreeMapControl : UserControl
             await MapWebView.EnsureCoreWebView2Async(environment);
             MapWebView.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
             MapWebView.CoreWebView2.Settings.AreDevToolsEnabled = false;
-            MapWebView.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+            AttachWebViewHandlers();
             MapWebView.NavigateToString(CreateMapHtml());
         }
         catch (WebView2RuntimeNotFoundException ex)
@@ -104,18 +120,18 @@ public partial class OpenFreeMapControl : UserControl
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
-        if (MapWebView.CoreWebView2 is not null)
-        {
-            MapWebView.CoreWebView2.WebMessageReceived -= OnWebMessageReceived;
-        }
+        DetachWebViewHandlers();
 
         _pendingMapStateJson = null;
         _mapStateInFlight = false;
+        _mapWatchdogTimer.Stop();
     }
 
     private void OnNavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
         _webViewReady = e.IsSuccess;
+        _mapHeartbeatWatchStartedAt = e.IsSuccess ? DateTimeOffset.UtcNow : DateTimeOffset.MinValue;
+        _lastMapHeartbeatAt = DateTimeOffset.MinValue;
         StatusText.Visibility = e.IsSuccess ? Visibility.Collapsed : Visibility.Visible;
         if (!e.IsSuccess)
         {
@@ -132,6 +148,7 @@ public partial class OpenFreeMapControl : UserControl
         var settings = Settings;
         var picture = Picture;
         var showMap = settings?.ShowMapLayer == true && picture is not null;
+        _mapShouldRender = showMap;
         Opacity = showMap ? Math.Clamp(settings!.MapOpacity, 0.0, 1.0) : 0.0;
         Visibility = showMap ? Visibility.Visible : Visibility.Collapsed;
 
@@ -176,6 +193,7 @@ public partial class OpenFreeMapControl : UserControl
         var json = _pendingMapStateJson;
         _pendingMapStateJson = null;
         _mapStateInFlight = true;
+        _mapStateSentAt = DateTimeOffset.UtcNow;
         try
         {
             MapWebView.CoreWebView2.PostWebMessageAsJson(json);
@@ -194,13 +212,126 @@ public partial class OpenFreeMapControl : UserControl
 
     private void OnWebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        if (!string.Equals(e.TryGetWebMessageAsString(), "map-state-applied", StringComparison.Ordinal))
+        var message = e.TryGetWebMessageAsString();
+        if (string.Equals(message, "map-heartbeat", StringComparison.Ordinal))
+        {
+            _lastMapHeartbeatAt = DateTimeOffset.UtcNow;
+            return;
+        }
+
+        if (string.Equals(message, "map-webgl-context-lost", StringComparison.Ordinal))
+        {
+            DataSourceDebugLog.Warn("Map", "Mapbox WebGL context lost; reloading map renderer");
+            RecoverMapRenderer("WebGL context lost");
+            return;
+        }
+
+        if (message?.StartsWith("map-error:", StringComparison.Ordinal) == true)
+        {
+            DataSourceDebugLog.Warn("Map", $"Mapbox renderer error | {message[10..]}");
+            return;
+        }
+
+        if (!string.Equals(message, "map-state-applied", StringComparison.Ordinal))
         {
             return;
         }
 
         _mapStateInFlight = false;
+        _mapStateSentAt = DateTimeOffset.MinValue;
         SendPendingMapState();
+    }
+
+    private void AttachWebViewHandlers()
+    {
+        var core = MapWebView.CoreWebView2;
+        if (core is null)
+        {
+            return;
+        }
+
+        if (!_webMessageHandlerAttached)
+        {
+            core.WebMessageReceived += OnWebMessageReceived;
+            _webMessageHandlerAttached = true;
+        }
+
+        if (!_processFailedHandlerAttached)
+        {
+            core.ProcessFailed += OnWebViewProcessFailed;
+            _processFailedHandlerAttached = true;
+        }
+    }
+
+    private void DetachWebViewHandlers()
+    {
+        var core = MapWebView.CoreWebView2;
+        if (core is null)
+        {
+            return;
+        }
+
+        if (_webMessageHandlerAttached)
+        {
+            core.WebMessageReceived -= OnWebMessageReceived;
+            _webMessageHandlerAttached = false;
+        }
+
+        if (_processFailedHandlerAttached)
+        {
+            core.ProcessFailed -= OnWebViewProcessFailed;
+            _processFailedHandlerAttached = false;
+        }
+    }
+
+    private void OnWebViewProcessFailed(object? sender, CoreWebView2ProcessFailedEventArgs e)
+    {
+        DataSourceDebugLog.Warn("Map", $"WebView2 process failed | kind={e.ProcessFailedKind}");
+        RecoverMapRenderer($"WebView2 process failed ({e.ProcessFailedKind})");
+    }
+
+    private void OnMapWatchdogTick(object? sender, EventArgs e)
+    {
+        if (_mapShouldRender && _webViewReady && _mapHeartbeatWatchStartedAt != DateTimeOffset.MinValue)
+        {
+            var lastHeartbeat = _lastMapHeartbeatAt == DateTimeOffset.MinValue
+                ? _mapHeartbeatWatchStartedAt
+                : _lastMapHeartbeatAt;
+            if (DateTimeOffset.UtcNow - lastHeartbeat >= TimeSpan.FromSeconds(12))
+            {
+                DataSourceDebugLog.Warn("Map", "Mapbox WebView2 stopped sending renderer heartbeats");
+                RecoverMapRenderer("renderer heartbeat timeout");
+                return;
+            }
+        }
+
+        if (!_mapStateInFlight || _mapStateSentAt == DateTimeOffset.MinValue ||
+            DateTimeOffset.UtcNow - _mapStateSentAt < TimeSpan.FromSeconds(5))
+        {
+            return;
+        }
+
+        DataSourceDebugLog.Warn("Map", "Mapbox renderer stopped acknowledging map updates");
+        RecoverMapRenderer("map update acknowledgement timeout");
+    }
+
+    private void RecoverMapRenderer(string reason)
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (!_webViewReady || MapWebView.CoreWebView2 is null ||
+            now - _lastMapRecoveryAt < TimeSpan.FromSeconds(15))
+        {
+            return;
+        }
+
+        _lastMapRecoveryAt = now;
+        _webViewReady = false;
+        _mapStateInFlight = false;
+        _mapStateSentAt = DateTimeOffset.MinValue;
+        StatusText.Text = "Map restarting...";
+        StatusText.Visibility = Visibility.Visible;
+        DataSourceDebugLog.Warn("Map", $"Reloading WebView2 map | reason={reason}");
+        MapWebView.CoreWebView2.Reload();
     }
 
     private static string CreateMapHtml() =>
@@ -260,7 +391,7 @@ public partial class OpenFreeMapControl : UserControl
 
             const calculateZoom = state => {
               const rect = map.getContainer().getBoundingClientRect();
-              const radiusPixels = Math.max(1, Math.min(rect.width, rect.height) * 0.45);
+              const radiusPixels = Math.max(12, Math.min(rect.width, rect.height) / 2 - 8);
               const rangeMeters = Math.max(1, state.selectedRangeNm) * metersPerNauticalMile;
               const metersPerPixel = rangeMeters / radiusPixels;
               const latitudeScale = Math.max(Math.cos(state.latitudeDeg * Math.PI / 180.0), 0.05);
@@ -308,7 +439,16 @@ public partial class OpenFreeMapControl : UserControl
               map.keyboard.disable();
               map.doubleClickZoom.disable();
               map.touchZoomRotate.disable();
-              map.on('error', event => setStatus(`Map unavailable: ${event?.error?.message || 'Mapbox error'}`));
+              map.on('error', event => {
+                const message = event?.error?.message || 'Mapbox error';
+                setStatus(`Map unavailable: ${message}`);
+                window.chrome?.webview?.postMessage(`map-error:${message}`);
+              });
+              map.on('webglcontextlost', event => {
+                event.originalEvent?.preventDefault?.();
+                setStatus('Map restarting...');
+                window.chrome?.webview?.postMessage('map-webgl-context-lost');
+              });
               map.on('load', () => {
                 setStatus('');
               });
@@ -359,6 +499,7 @@ public partial class OpenFreeMapControl : UserControl
               window.chrome.webview.addEventListener('message', event => {
                 window.updateTacticalMap(event.data);
               });
+              setInterval(() => window.chrome.webview.postMessage('map-heartbeat'), 3000);
             }
           </script>
         </body>

@@ -9,6 +9,40 @@ namespace TacticalDisplay.Tests;
 public sealed class VatsimCallsignMatcherTests(ITestOutputHelper output)
 {
     [Fact]
+    public void EnrichSnapshotFromHistory_LargePilotFeedUsesIndexedHistory()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var contacts = Enumerable.Range(1, 4)
+            .Select(index => new TrafficContactState($"T{index}", null, 60 + index * 0.01, 24, 5000, 90, 250, now, Generation: 1))
+            .ToArray();
+        var history = Enumerable.Range(0, 120)
+            .Select(sampleIndex =>
+            {
+                var timestamp = now.AddMilliseconds(-sampleIndex * 500);
+                var historicalContacts = contacts.Select(contact => contact with { Timestamp = timestamp }).ToArray();
+                return new TrafficSnapshot(
+                    new OwnshipState("OWN", 60, 24, 5000, 90, 250, timestamp),
+                    historicalContacts,
+                    timestamp);
+            })
+            .Reverse()
+            .ToArray();
+        var snapshot = history[^1];
+        var pilots = Enumerable.Range(0, 1615)
+            .Select(index => new VatsimPilotCandidate(
+                $"OTHER{index}", 65 + index * 0.00001, 24, 5000, 250, 90, now.AddSeconds(-index % 20)))
+            .Append(new VatsimPilotCandidate("FIN123", contacts[0].LatitudeDeg, 24, 5000, 250, 90, now.AddSeconds(-2)))
+            .ToArray();
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(snapshot, history, pilots);
+        stopwatch.Stop();
+
+        Assert.Equal("FIN123", enriched.Contacts[0].Callsign);
+        output.WriteLine($"large-pilot-history-match | contacts={contacts.Length} historySnapshots={history.Length} pilots={pilots.Length} elapsedMs={stopwatch.Elapsed.TotalMilliseconds:F1}");
+    }
+
+    [Fact]
     public void EnrichSnapshotFromHistoryDoesNotAssignCallsignsToTacticalLinkTracks()
     {
         var timestamp = DateTimeOffset.UnixEpoch;
@@ -614,6 +648,31 @@ public sealed class VatsimCallsignMatcherTests(ITestOutputHelper output)
             current,
             [historical, current],
             [new VatsimPilotCandidate("FIN123", 60.10, 24.0, 5000, 250, 90, feedTime)]);
+
+        Assert.Equal("FIN123", enriched.Contacts.Single().Callsign);
+    }
+
+    [Fact]
+    public void EnrichSnapshotFromHistory_MatchesUniqueKinematicTrafficWithin100Nm()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var feedTime = now.AddSeconds(-2);
+        var historical = new TrafficSnapshot(
+            new OwnshipState("OWN", 60.0, 24.0, 5000, 0, 300, feedTime),
+            [new TrafficContactState("T1", null, 60.0, 24.0, 5000, 90, 250, feedTime)],
+            feedTime);
+        var farLatitude = 60.0 + (100.0 / 60.0);
+        var current = historical with
+        {
+            Timestamp = now,
+            Contacts = [historical.Contacts.Single() with { LatitudeDeg = farLatitude, Timestamp = now }]
+        };
+        var pilot = new VatsimPilotCandidate("FIN123", farLatitude, 24.0, 5000, 250, 90, feedTime);
+
+        var enriched = VatsimCallsignMatcher.EnrichSnapshotFromHistory(
+            current,
+            [historical, current],
+            [pilot]);
 
         Assert.Equal("FIN123", enriched.Contacts.Single().Callsign);
     }

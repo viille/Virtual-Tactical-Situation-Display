@@ -1,7 +1,20 @@
 # Changelog
 
-## Unreleased (v0.16.0 draft)
+## 0.16.0-alpha.4 - 2026-10-10
 
+- Keep range rings at exactly 25%, 50%, 75% and 100% of the selected range and show distinct whole-number NM labels.
+- Skip throttled debug message construction entirely when diagnostic logging is disabled.
+- Restore WebView2 map message handlers after control reload and recover the map after a WebView2 process failure.
+- Detect an unresponsive Mapbox WebView2 renderer with an idle-safe heartbeat and reload it when necessary.
+- Index historical traffic samples once per matcher pass and retry failed AAR bridge handshakes at a bounded interval.
+- Align the outer selected-range ring and plotted tactical contacts with the compass rose perimeter.
+- Keep debug logging lightweight by removing repeated full VATSIM candidate ranking and historical rematching from the live snapshot path.
+- Recover the Mapbox WebView2 layer when WebGL context is lost, render frames stop, or map state acknowledgements stop.
+- Keep the TacticalLink tanker join control visible and explain when connection or aircraft registry capability prevents joining.
+- Match VATSIM callsigns for simulator traffic up to 100 NM when altitude, motion, and global assignment identify a unique pilot; position-only fallback remains short-range.
+- Prefer an MSFS/SDK-specific SimConnect DLL before the bundled client and log whether the loaded DLL exposes the MSFS 2024 CommBus functions needed by the AAR bridge.
+- Bundle the MSFS 2024 SDK SimConnect client automatically when the SDK is available at build time, so end users do not need the SDK installed.
+- Keep a live SimConnect feed open when an AAR CommBus call produces MSFS's internal exception; fail the bridge request without recycling telemetry.
 - Added tanker-controlled AAR queue management, planned onload changes, astern clearance, HOLD, explicit transfer start/stop, and DryHookup mode to TacticalLink.Server.
 - Added receiver-side internal transfer proposal data and cumulative application acknowledgements with operation revision validation.
 - Added local KG/LB presentation and specific-amount or FULL receiver requests.

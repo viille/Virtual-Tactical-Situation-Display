@@ -6,6 +6,14 @@
     <DefaultMapboxStyleUrl></DefaultMapboxStyleUrl>
     <DefaultMapboxAreasStyleUrl>mapbox://styles/ottotuhkunen/cmq6e77v9001v01s76dap9va0</DefaultMapboxAreasStyleUrl>
     <DefaultTelemetryIngestKey></DefaultTelemetryIngestKey>
+    <_SimConnectSdkRoot>$(MSFS2024_SDK)</_SimConnectSdkRoot>
+    <_SimConnectSdkRoot Condition="'$(_SimConnectSdkRoot)' == '' and Exists('$(MSFS_SIMCONNECT_DLL)\SimConnect SDK\lib\SimConnect.dll')">$(MSFS_SIMCONNECT_DLL)</_SimConnectSdkRoot>
+    <_Msfs2024SdkSimConnectDll Condition="Exists('$(_SimConnectSdkRoot)\SimConnect SDK\lib\x64\SimConnect.dll')">$(_SimConnectSdkRoot)\SimConnect SDK\lib\x64\SimConnect.dll</_Msfs2024SdkSimConnectDll>
+    <_Msfs2024SdkSimConnectDll Condition="'$(_Msfs2024SdkSimConnectDll)' == '' and Exists('$(_SimConnectSdkRoot)\SimConnect SDK\lib\SimConnect.dll')">$(_SimConnectSdkRoot)\SimConnect SDK\lib\SimConnect.dll</_Msfs2024SdkSimConnectDll>
+    <_MsfsSimConnectDllExtension>$([System.IO.Path]::GetExtension('$(MSFS_SIMCONNECT_DLL)'))</_MsfsSimConnectDllExtension>
+    <SimConnectClientDll Condition="'$(MSFS_SIMCONNECT_DLL)' != '' and '$(_MsfsSimConnectDllExtension)' == '.dll' and Exists('$(MSFS_SIMCONNECT_DLL)')">$(MSFS_SIMCONNECT_DLL)</SimConnectClientDll>
+    <SimConnectClientDll Condition="'$(SimConnectClientDll)' == '' and '$(_Msfs2024SdkSimConnectDll)' != ''">$(_Msfs2024SdkSimConnectDll)</SimConnectClientDll>
+    <SimConnectClientDll Condition="'$(SimConnectClientDll)' == '' and Exists('$(MSBuildProjectDirectory)\simconnect\SimConnect.dll')">$(MSBuildProjectDirectory)\simconnect\SimConnect.dll</SimConnectClientDll>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,8 +21,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <KnownSimConnectDll Include="$(MSFS_SIMCONNECT_DLL)" Condition=" '$(MSFS_SIMCONNECT_DLL)' != '' and Exists('$(MSFS_SIMCONNECT_DLL)') " />
-    <KnownSimConnectDll Include="$(MSBuildProjectDirectory)\simconnect\SimConnect.dll" Condition=" Exists('$(MSBuildProjectDirectory)\simconnect\SimConnect.dll') " />
+    <KnownSimConnectDll Include="$(SimConnectClientDll)" Condition=" '$(SimConnectClientDll)' != '' " />
   </ItemGroup>
 
   <ItemGroup Condition="'@(KnownSimConnectDll)' != ''">
@@ -78,7 +85,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>0.16.0-alpha.2</Version>
+    <Version>0.16.0-alpha.4</Version>
     <ApplicationIcon>Assets\VTSD.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

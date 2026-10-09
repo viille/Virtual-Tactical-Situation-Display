@@ -47,7 +47,7 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
             _fuelState = null;
         }
         SetRuntime(AarBridgeRuntimeState.Connecting, null);
-        DataSourceDebugLog.Important(LogSource, $"===== MSFS AAR runtime session started | VTSD={ClientVersion} bridge=unknown protocol={SupportedProtocolVersion} =====");
+        DataSourceDebugLog.Info(LogSource, $"MSFS AAR bridge connection attempt started | VTSD={ClientVersion} protocol={SupportedProtocolVersion}");
         try
         {
             DataSourceDebugLog.Debug(LogSource, "CommBus transport available");
@@ -264,7 +264,7 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
                 DataSourceDebugLog.Warn(LogSource, "Writable fuel capability lost | " + message);
             else DataSourceDebugLog.Debug(LogSource, message);
             if (state is AarBridgeRuntimeState.NotInstalled or AarBridgeRuntimeState.InstalledNotRunning or AarBridgeRuntimeState.Error)
-                DataSourceDebugLog.Important(LogSource, "===== MSFS AAR runtime session ended =====");
+                DataSourceDebugLog.Warn(LogSource, "===== MSFS AAR runtime session ended =====");
         }
         if (changed) RuntimeStateChanged?.Invoke(this, state);
     }

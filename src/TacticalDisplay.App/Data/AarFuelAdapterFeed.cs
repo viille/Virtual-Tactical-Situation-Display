@@ -84,6 +84,7 @@ public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarF
     private async Task MonitorBridgeAsync(MsfsAarFuelAdapter adapter, CancellationToken cancellationToken)
     {
         var wasConnected = false;
+        var nextConnectionAttemptAt = DateTimeOffset.MinValue;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
@@ -91,11 +92,21 @@ public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarF
             {
                 if (wasConnected) adapter.MarkSimulatorDisconnected();
                 wasConnected = false;
+                nextConnectionAttemptAt = DateTimeOffset.MinValue;
                 continue;
             }
             wasConnected = true;
             if (adapter.RuntimeState is AarBridgeRuntimeState.Error or AarBridgeRuntimeState.InstalledNotRunning or AarBridgeRuntimeState.NotInstalled)
+            {
+                var now = DateTimeOffset.UtcNow;
+                if (now < nextConnectionAttemptAt)
+                {
+                    continue;
+                }
+
+                nextConnectionAttemptAt = now.AddSeconds(10);
                 await adapter.ConnectAsync(cancellationToken).ConfigureAwait(false);
+            }
             else if (adapter.RuntimeState is AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable)
             {
                 try { await adapter.RefreshFuelStateAsync(cancellationToken).ConfigureAwait(false); }
