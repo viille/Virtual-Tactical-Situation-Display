@@ -42,6 +42,21 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task ParticipantSafetyCacheEvictionPreservesOtherParticipantsEntries()
+    {
+        var rig = new Rig();
+        await rig.Send("receiver", "HOLD", new { attempt = 1 }, "receiver-safety-oldest");
+
+        for (var index = 0; index < 65; index++)
+            await rig.Send("tanker", "HOLD", new { attempt = 1 }, $"tanker-safety-{index}");
+
+        var replay = await rig.Send("receiver", "HOLD", new { attempt = 2 }, "receiver-safety-oldest");
+
+        Assert.Equal("MODULE_ERROR", replay.LastKind);
+        Assert.Contains("IDEMPOTENCY_CONFLICT", JsonSerializer.Serialize(replay.LastPayload));
+    }
+
+    [Fact]
     public async Task TransferAckConflictIsRejectedWhileProposalReplayRecordIsRetained()
     {
         var fixture = await CreatePendingTransferAsync();

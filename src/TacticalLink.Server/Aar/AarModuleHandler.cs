@@ -1745,12 +1745,18 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
 
     private void BoundSafetyResults(string participantId)
     {
-        while ((_safetyResults.TryGetValue(participantId, out var entries) && entries.Count > MaxSafetyResultsPerParticipant) ||
-               _safetyResults.Values.Sum(items => items.Count) > MaxSafetyResultsGlobal)
+        while (true)
         {
-            var candidate = _safetyResults.SelectMany(participant => participant.Value.Select(entry =>
-                    (ParticipantId: participant.Key, MessageId: entry.Key, Entry: entry.Value)))
-                .OrderBy(item => item.Entry.CreatedAt).First();
+            var participantOverLimit = _safetyResults.TryGetValue(participantId, out var participantEntries) &&
+                                       participantEntries.Count > MaxSafetyResultsPerParticipant;
+            var globalOverLimit = _safetyResults.Values.Sum(items => items.Count) > MaxSafetyResultsGlobal;
+            if (!participantOverLimit && !globalOverLimit) return;
+
+            var candidates = participantOverLimit
+                ? participantEntries!.Select(entry => (ParticipantId: participantId, MessageId: entry.Key, Entry: entry.Value))
+                : _safetyResults.SelectMany(participant => participant.Value.Select(entry =>
+                    (ParticipantId: participant.Key, MessageId: entry.Key, Entry: entry.Value)));
+            var candidate = candidates.OrderBy(item => item.Entry.CreatedAt).First();
             _safetyResults[candidate.ParticipantId].Remove(candidate.MessageId);
             if (_safetyResults[candidate.ParticipantId].Count == 0) _safetyResults.Remove(candidate.ParticipantId);
         }

@@ -141,14 +141,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
             velocityEastMps = horizontalSpeedMps is { } eastSpeed ? eastSpeed * System.Math.Sin(trackRadians) : (double?)null,
             velocityDownMps = verticalSpeedFpm.HasValue ? -verticalSpeedFpm.Value * 0.00508 : (double?)null
         };
-        if (!await _sendLock.WaitAsync(0, cancellationToken).ConfigureAwait(false)) return;
-        try
-        {
-            var socket = _socket;
-            if (socket is { State: WebSocketState.Open })
-                await socket.SendAsync(SerializeVersioned(telemetry), WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
-        }
-        finally { _sendLock.Release(); }
+        await TrySendWithoutQueueingAsync(telemetry, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<string> SendModuleMessageAsync(string module, int moduleProtocolVersion, string kind, string? operationId,
@@ -161,7 +154,7 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         var payloadElement = JsonSerializer.SerializeToElement(payload, Json);
         if (kind == "POSE_UPDATE")
         {
-            await SendAsync(new
+            await TrySendWithoutQueueingAsync(new
             {
                 type = "MODULE_MESSAGE",
                 module,
@@ -441,6 +434,18 @@ public sealed class TacticalLinkClient : IAsyncDisposable
         var bytes = SerializeVersioned(message);
         await _sendLock.WaitAsync(cancellationToken).ConfigureAwait(false);
         try { await socket.SendAsync(bytes, WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false); }
+        finally { _sendLock.Release(); }
+    }
+
+    private async Task TrySendWithoutQueueingAsync(object message, CancellationToken cancellationToken)
+    {
+        if (!await _sendLock.WaitAsync(0, cancellationToken).ConfigureAwait(false)) return;
+        try
+        {
+            var socket = _socket;
+            if (socket is { State: WebSocketState.Open })
+                await socket.SendAsync(SerializeVersioned(message), WebSocketMessageType.Text, true, cancellationToken).ConfigureAwait(false);
+        }
         finally { _sendLock.Release(); }
     }
 
