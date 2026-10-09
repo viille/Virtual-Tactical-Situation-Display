@@ -87,7 +87,7 @@ public sealed class VatsimCallsignTrafficFeedTests
     }
 
     [Fact]
-    public async Task Enrichment_FormationBecomingAmbiguousRevokesUnsupportedAssignmentsAfterRetention()
+    public async Task Enrichment_FormationBecomingAmbiguousRetainsConfirmedLabelsUntilEvidenceExpires()
     {
         var inner = new ManualTrafficFeed();
         var settings = new TacticalDisplaySettings { VatsimDataFeedUrl = "https://unit.test/feed.json" };
@@ -113,9 +113,16 @@ public sealed class VatsimCallsignTrafficFeedTests
         inner.Publish(FormationSnapshot(start.AddSeconds(1), 60.11, 60.11));
         await signal.WaitAsync(TimeSpan.FromSeconds(5));
         var ambiguous = published.Last();
-        Assert.All(ambiguous.Contacts, contact => Assert.Null(contact.Callsign));
+        Assert.Equal("RETRO61", ambiguous.Contacts[0].Callsign);
+        Assert.Equal("RETRO62", ambiguous.Contacts[1].Callsign);
 
         inner.Publish(FormationSnapshot(start.AddSeconds(16), 60.11, 60.11));
+        await signal.WaitAsync(TimeSpan.FromSeconds(5));
+        var retained = published.Last();
+        Assert.Equal("RETRO61", retained.Contacts[0].Callsign);
+        Assert.Equal("RETRO62", retained.Contacts[1].Callsign);
+
+        inner.Publish(FormationSnapshot(start.AddSeconds(31), 60.11, 60.11));
         await signal.WaitAsync(TimeSpan.FromSeconds(5));
         var expired = published.Last();
         Assert.All(expired.Contacts, contact =>

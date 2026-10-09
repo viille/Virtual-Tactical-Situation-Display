@@ -2,6 +2,7 @@
 
 ## 0.16.0-alpha.4 - 2026-10-10
 
+- Keep previously confirmed callsign labels visible through temporary matcher gaps for 30 seconds; revoke them if supporting evidence does not return.
 - Keep range rings at exactly 25%, 50%, 75% and 100% of the selected range and show distinct whole-number NM labels.
 - Skip throttled debug message construction entirely when diagnostic logging is disabled.
 - Restore WebView2 map message handlers after control reload and recover the map after a WebView2 process failure.

@@ -18,7 +18,7 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed, IAarPoseSource
     private const double StrongSwitchMaxDistanceNm = 0.75;
     private const double StrongSwitchMaxAltitudeDeltaFt = 400;
     private static readonly TimeSpan SnapshotHistoryRetention = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan ConfirmedCallsignEvidenceRetention = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan ConfirmedCallsignEvidenceRetention = TimeSpan.FromSeconds(30);
 
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
@@ -441,11 +441,17 @@ public sealed class VatsimCallsignTrafficFeed : ITrafficDataFeed, IAarPoseSource
             {
                 var contactIdentity = ContactIdentityKey(enrichedContact);
                 if (_callsignConfirmations.TryGetValue(contactIdentity, out var previous) &&
-                    previous.ConfirmedCallsign is not null && previous.LastObservationTime.HasValue &&
-                    original.Timestamp - previous.LastObservationTime.Value > ConfirmedCallsignEvidenceRetention)
+                    previous.ConfirmedCallsign is not null && previous.LastObservationTime.HasValue)
                 {
-                    _callsignConfirmations.Remove(contactIdentity);
-                    confirmedContacts.Add(enrichedContact with { Callsign = null, CallsignRevoked = true });
+                    if (original.Timestamp - previous.LastObservationTime.Value > ConfirmedCallsignEvidenceRetention)
+                    {
+                        _callsignConfirmations.Remove(contactIdentity);
+                        confirmedContacts.Add(enrichedContact with { Callsign = null, CallsignRevoked = true });
+                    }
+                    else
+                    {
+                        confirmedContacts.Add(enrichedContact with { Callsign = previous.ConfirmedCallsign });
+                    }
                 }
                 else
                 {
