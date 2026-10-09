@@ -32,7 +32,8 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
     private readonly TacticalLinkClient _tacticalLink;
     private readonly AarClient _aarClient;
     private readonly AarFuelTransferCoordinator _aarFuelTransferCoordinator;
-    public AarViewModel Aar { get; }
+    private AarViewModel? _aarViewModel;
+    public AarViewModel Aar => _aarViewModel!;
     private readonly AuthService _auth;
     private bool _showTacticalLinkMenu;
     private string _tacticalLinkMessage = "TacticalLink is disconnected.";
@@ -98,12 +99,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         _tacticalLink.StateChanged += OnTacticalLinkStateChanged;
         _feed = TrafficFeedFactory.Create(Settings, () => _tacticalLink.NearbyPeers);
         _aarFuelTransferCoordinator = new AarFuelTransferCoordinator(_aarClient, () => _feed as IAarFuelAdapter,
-            () => Aar?.ProtectedReserveKg ?? 0, _runCts.Token);
-        Aar = new AarViewModel(_aarClient, _aarFuelTransferCoordinator, _tacticalLink, Settings,
+            () => _aarViewModel?.ProtectedReserveKg ?? 0, _runCts.Token);
+        _aarViewModel = new AarViewModel(_aarClient, _aarFuelTransferCoordinator, _tacticalLink, Settings,
             () => _feed as IAarFuelAdapter, () => TacticalLinkPeers, () => _tacticalLink.LocalCapabilities.Contains("aar.tanker"),
             () => _tacticalLink.LocalCapabilities.Contains("aar.receiver"), () => IsTacticalLinkConnected,
             UpdateAarSampling, _runCts.Token);
-        Aar.PropertyChanged += OnAarViewModelPropertyChanged;
+        _aarViewModel.PropertyChanged += OnAarViewModelPropertyChanged;
         _feed.ConnectionChanged += OnConnectionChanged;
         _feed.SnapshotReceived += OnSnapshotReceived;
         if (_feed is IAarPoseSource initialPoseSource) initialPoseSource.AarPoseSampled += OnAarPoseSampled;
@@ -2063,7 +2064,10 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
 
     private void UpdateAarSampling()
     {
-        Aar.SetConnectedOperationSampling(IsTacticalLinkConnected, _feed as IAarPoseSource);
+        if (_aarViewModel is { } aar)
+        {
+            aar.SetConnectedOperationSampling(IsTacticalLinkConnected, _feed as IAarPoseSource);
+        }
     }
 
     private void PublishLatestTacticalTelemetry()
