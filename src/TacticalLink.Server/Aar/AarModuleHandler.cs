@@ -158,7 +158,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                 return Task.CompletedTask;
             }
 
-            if (context.Kind == "TRANSFER_ACK" && TryGetTransferAckHistory(context.ParticipantId, key, out var ackHistory))
+            if (TryGetTransferAckHistory(context.ParticipantId, key, out var ackHistory))
             {
                 if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(ackHistory.RequestHash), Convert.FromHexString(requestHash)))
                 {
@@ -166,11 +166,17 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
                     return Task.CompletedTask;
                 }
 
-                var operation = _operations.GetValueOrDefault(ackHistory.OperationId);
+                if (ackHistory.Response.Kind == "MODULE_ERROR")
+                {
+                    context.Reply(ackHistory.Response.Kind, ackHistory.Response.OperationId, ackHistory.Response.OperationRevision, ackHistory.Response.Payload);
+                    return Task.CompletedTask;
+                }
+
+                var operation = ackHistory.OperationId is { } operationId ? _operations.GetValueOrDefault(operationId) : null;
                 if (operation is not null && (operation.TankerId == context.ParticipantId || operation.ReceiverId == context.ParticipantId))
                     SendCurrentSnapshot(context, null, operation.Id);
                 else
-                    context.Reply("TRANSFER_ACK_STALE", null, null, new { messageId = key, duplicate = true });
+                    context.Reply(ackHistory.Response.Kind, ackHistory.Response.OperationId, ackHistory.Response.OperationRevision, ackHistory.Response.Payload);
                 return Task.CompletedTask;
             }
 
@@ -185,11 +191,15 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             var response = Execute(context, peer);
             if (context.Kind != "POSE_UPDATE" || response.Kind == "MODULE_ERROR")
                 context.Reply(response.Kind, response.OperationId, response.OperationRevision, response.Payload);
-            var successfulTransferAck = context.Kind == "TRANSFER_ACK" && response.Kind is "TRANSFER_ACK_ACCEPTED" or "TRANSFER_SETTLEMENT_RECORDED" or "TRANSFER_SETTLEMENT_ACCEPTED";
             if (RequiresIdempotencyCache(context.Kind) && context.Kind != "TRANSFER_ACK")
                 Remember(context.ParticipantId, key, requestHash, response, context.Kind);
-            if (successfulTransferAck && response.OperationId is { } ackOperationId && TryGetString(context.Payload, "proposalId", out var proposalId))
-                RememberTransferAck(context.ParticipantId, key, requestHash, proposalId, ackOperationId, response.OperationRevision);
+            if (context.Kind == "TRANSFER_ACK" && TryGetString(context.Payload, "proposalId", out var proposalId))
+            {
+                var ackOperationId = response.OperationId ?? context.OperationId;
+                if (ackOperationId is null && TryGetString(context.Payload, "operationId", out var payloadOperationId))
+                    ackOperationId = payloadOperationId;
+                RememberTransferAck(context.ParticipantId, key, requestHash, proposalId, ackOperationId, response);
+            }
             return Task.CompletedTask;
         }
     }
@@ -1644,7 +1654,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
         return false;
     }
 
-    private void RememberTransferAck(string participantId, string messageId, string requestHash, string proposalId, string operationId, long? operationRevision)
+    private void RememberTransferAck(string participantId, string messageId, string requestHash, string proposalId, string? operationId, CommandResponse response)
     {
         if (!_transferAckHistory.TryGetValue(participantId, out var entries)) _transferAckHistory[participantId] = entries = new(StringComparer.Ordinal);
         if (entries.ContainsKey(messageId)) return;
@@ -1656,7 +1666,7 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
             // safe because proposal-bound stale ACKs cannot mutate another proposal.
             if (entries.Count >= MaxTransferAckHistoryPerParticipant || GetTransferAckHistoryCount() >= MaxTransferAckHistoryGlobal) return;
         }
-        entries[messageId] = new TransferAckHistory(requestHash, proposalId, operationId, operationRevision, _clock.GetUtcNow());
+        entries[messageId] = new TransferAckHistory(requestHash, proposalId, operationId, response, _clock.GetUtcNow());
     }
 
     private void ExpireResults()
@@ -1710,13 +1720,13 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
 
     private bool IsTransferAckHistoryExpired(TransferAckHistory entry, DateTimeOffset now)
     {
-        if (_operations.TryGetValue(entry.OperationId, out var operation))
+        if (entry.OperationId is { } operationId && _operations.TryGetValue(operationId, out var operation))
             if (operation.PendingTransfer?.Id == entry.ProposalId || operation.CancelledTransfer?.Proposal.Id == entry.ProposalId) return false;
         return entry.CreatedAt + TransferAckReplayTtl <= now;
     }
 
     private bool IsTransferAckProtected(TransferAckHistory entry) =>
-        _operations.TryGetValue(entry.OperationId, out var operation) &&
+        entry.OperationId is { } operationId && _operations.TryGetValue(operationId, out var operation) &&
         (operation.PendingTransfer?.Id == entry.ProposalId || operation.CancelledTransfer?.Proposal.Id == entry.ProposalId);
 
     private bool EvictOldestSettledTransferAck()
@@ -1866,5 +1876,5 @@ public sealed class AarModuleHandler(IAarRegistryProvider registry, TimeProvider
     private sealed record CommandResponse(string Kind, string? OperationId, long? OperationRevision, object Payload, string? RequestId = null);
     private sealed record CachedResult(string RequestHash, string Kind, string? OperationId, long? OperationRevision, object Payload,
         string? RequestId, DateTimeOffset CreatedAt);
-    private sealed record TransferAckHistory(string RequestHash, string ProposalId, string OperationId, long? OperationRevision, DateTimeOffset CreatedAt);
+    private sealed record TransferAckHistory(string RequestHash, string ProposalId, string? OperationId, CommandResponse Response, DateTimeOffset CreatedAt);
 }

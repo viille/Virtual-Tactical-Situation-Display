@@ -75,6 +75,67 @@ public sealed class AarModuleHandlerTests
     }
 
     [Fact]
+    public async Task TransferAckMessageIdCannotBeReusedForAnotherCommandKind()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        var messageId = "transfer-ack-" + fixture.ProposalId;
+        var payload = new
+        {
+            proposalId = fixture.ProposalId,
+            operationRevision = fixture.Proposal.OperationRevision,
+            targetCumulativeKg = fixture.TargetKg,
+            appliedCumulativeKg = fixture.TargetKg,
+            appliedKg = fixture.DeltaKg
+        };
+
+        var accepted = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, messageId, operationId: fixture.OperationId);
+        Assert.Equal("TRANSFER_ACK_ACCEPTED", accepted.LastKind);
+
+        var conflict = await fixture.Rig.Send("tanker", "BREAKAWAY", new { }, messageId, operationId: fixture.OperationId);
+
+        Assert.Equal("MODULE_ERROR", conflict.LastKind);
+        Assert.Contains("IDEMPOTENCY_CONFLICT", JsonSerializer.Serialize(conflict.LastPayload));
+        Assert.Equal("Refueling", fixture.Rig.OperationForTests(fixture.OperationId)!.Value.State);
+    }
+
+    [Fact]
+    public async Task RejectedTransferAckMessageIdCannotBeReusedWithCorrectedPayload()
+    {
+        var fixture = await CreatePendingTransferAsync();
+        var messageId = "transfer-ack-" + fixture.ProposalId;
+        var payload = new
+        {
+            proposalId = fixture.ProposalId,
+            operationRevision = fixture.Proposal.OperationRevision,
+            targetCumulativeKg = fixture.TargetKg,
+            appliedCumulativeKg = fixture.TargetKg,
+            appliedKg = fixture.DeltaKg
+        };
+        var rejected = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload with
+        {
+            targetCumulativeKg = fixture.TargetKg + 1,
+            appliedCumulativeKg = fixture.TargetKg + 1,
+            appliedKg = fixture.DeltaKg + 1
+        }, messageId, operationId: fixture.OperationId);
+        Assert.Equal("MODULE_ERROR", rejected.LastKind);
+
+        var exactReplay = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload with
+        {
+            targetCumulativeKg = fixture.TargetKg + 1,
+            appliedCumulativeKg = fixture.TargetKg + 1,
+            appliedKg = fixture.DeltaKg + 1
+        }, messageId, operationId: fixture.OperationId);
+        Assert.Equal("MODULE_ERROR", exactReplay.LastKind);
+        Assert.Contains("AAR_NOT_ALLOWED", JsonSerializer.Serialize(exactReplay.LastPayload));
+
+        var corrected = await fixture.Rig.Send("tanker", "TRANSFER_ACK", payload, messageId, operationId: fixture.OperationId);
+
+        Assert.Equal("MODULE_ERROR", corrected.LastKind);
+        Assert.Contains("IDEMPOTENCY_CONFLICT", JsonSerializer.Serialize(corrected.LastPayload));
+        Assert.Equal(0, fixture.Rig.OperationForTests(fixture.OperationId)!.Value.TransferredKg, 3);
+    }
+
+    [Fact]
     public async Task TransferAckRequiresProposalBoundMessageId()
     {
         var fixture = await CreatePendingTransferAsync();
@@ -445,16 +506,6 @@ public sealed class AarModuleHandlerTests
                 appliedKg = deltaKg
             }, operationId: operationId);
             Assert.Equal("OPERATION_SNAPSHOT", unrelatedAck.LastKind);
-
-            var wrongTargetAck = await rig.Send("tanker", "TRANSFER_ACK", new
-            {
-                proposalId,
-                operationRevision = pending.OperationRevision,
-                targetCumulativeKg = targetKg + 1,
-                appliedCumulativeKg = targetKg,
-                appliedKg = deltaKg
-            }, operationId: operationId);
-            Assert.Equal("MODULE_ERROR", wrongTargetAck.LastKind);
 
             var tankerAck = await rig.Send("tanker", "TRANSFER_ACK", new
             {
