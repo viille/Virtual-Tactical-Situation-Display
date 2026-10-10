@@ -911,7 +911,11 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
 
     private static IEnumerable<string> BuildSearchPaths(string? msfsExePath)
     {
-        var paths = new List<string>();
+        var paths = new List<string>
+        {
+            AppContext.BaseDirectory,
+            Path.Combine(AppContext.BaseDirectory, "simconnect")
+        };
 
         var sdkRoot = Environment.GetEnvironmentVariable("MSFS2024_SDK");
         if (!string.IsNullOrWhiteSpace(sdkRoot))

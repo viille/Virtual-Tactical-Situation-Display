@@ -1527,7 +1527,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
       }
 
       const center = { x: w / 2, y: h / 2 };
-      const radius = Math.max(12, Math.min(w, h) / 2 - 8);
+      const radius = getScopeRadius(w, h);
       labelHitBoxes = [];
 
       if (!snapshot || !snapshot.available || !snapshot.ownship) {
@@ -2136,7 +2136,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
 
     function calculateZoom() {
       const rect = mapElement.getBoundingClientRect();
-      const radiusPixels = Math.max(12, Math.min(rect.width, rect.height) / 2 - 8);
+      const radiusPixels = getScopeRadius(rect.width, rect.height);
       const rangeMeters = Math.max(1, snapshot.rangeNm) * metersPerNauticalMile;
       const metersPerPixel = rangeMeters / radiusPixels;
       const latitudeScale = Math.max(Math.cos(snapshot.ownship.latitudeDeg * Math.PI / 180.0), 0.05);
@@ -2170,6 +2170,10 @@ public sealed class WebDisplayServer : IAsyncDisposable
       return { x: center.x + east, y: center.y - north };
     }
 
+    function getScopeRadius(width, height) {
+      return Math.max(12, Math.min(width, height) / 2 - 8);
+    }
+
     function merc(lat, lon, earth) {
       const clamped = Math.max(-85.05112878, Math.min(85.05112878, lat));
       const latRad = clamped * Math.PI / 180;
@@ -2189,7 +2193,7 @@ public sealed class WebDisplayServer : IAsyncDisposable
       }
 
       const center = { x: canvas.clientWidth / 2, y: canvas.clientHeight / 2 };
-      const radius = Math.max(40, Math.min(canvas.clientWidth, canvas.clientHeight) * 0.44);
+      const radius = getScopeRadius(canvas.clientWidth, canvas.clientHeight);
       const scale = Math.min(Math.max(snapshot.targetSymbolScale || 1, 0.6), 1.8);
       const hitRadius = 14 * scale;
       let best = null;

@@ -193,7 +193,11 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
                 var attemptBefore = baselineResponse.FuelState is { } baseline && IsValid(baseline) ? baseline : before;
                 UpdateFuelState(attemptBefore);
                 DataSourceDebugLog.Important(LogSource, $"Fuel write strategy | method={method} requestedKg={deltaKg:0.00} beforeKg={attemptBefore.CurrentFuelKg:0.00}");
+                var movementToleranceKg = Math.Max(0.01, Math.Min(0.25, Math.Abs(deltaKg) * 0.001));
+                var requestToleranceKg = Math.Max(0.01, Math.Min(0.25, Math.Abs(deltaKg) * 0.001));
+                var stableToleranceKg = Math.Max(0.05, Math.Min(3, Math.Abs(deltaKg) * 0.01));
                 AarBridgeResponse response;
+                var requestError = (string?)null;
                 try
                 {
                     response = await SendAsync("APPLY_FUEL_DELTA", cancellationToken, deltaKg,
@@ -201,10 +205,10 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
-                    lastError = $"{method}: {ex.Message}";
+                    requestError = $"{method}: {ex.Message}";
+                    lastError = requestError;
                     DataSourceDebugLog.Warn(LogSource, $"Fuel write strategy request failed | method={method} error={ex.Message}");
-                    if (method == "a32nx-native") await FinishFuelOperationAsync(CancellationToken.None).ConfigureAwait(false);
-                    continue;
+                    response = new AarBridgeResponse();
                 }
 
                 if (response.FuelState is { } immediate && IsValid(immediate)) UpdateFuelState(immediate);
@@ -213,6 +217,11 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
 
                 AarBridgeFuelState? previousSample = null;
                 AarBridgeFuelState? verifiedState = null;
+                AarBridgeFuelState? lastObservedState = response.FuelState is { } responseState && IsValid(responseState)
+                    ? responseState
+                    : null;
+                var possibleMutationObserved = lastObservedState is not null &&
+                    Math.Abs(lastObservedState.CurrentFuelKg - attemptBefore.CurrentFuelKg) >= movementToleranceKg;
                 var isAircraftNativeMethod = string.Equals(method, "a32nx-native", StringComparison.Ordinal);
                 var sampleCount = isAircraftNativeMethod ? 30 : method == preferredMethod ? 2 : 3;
                 for (var sample = 0; sample < sampleCount; sample++)
@@ -225,11 +234,13 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
                     if (stateResponse.FuelState is not { } current || !IsValid(current)) continue;
                     UpdateFuelState(current);
                     var applied = current.CurrentFuelKg - attemptBefore.CurrentFuelKg;
-                    var directionMatches = Math.Abs(applied) >= 1 && Math.Sign(applied) == Math.Sign(deltaKg);
-                    var withinRequest = Math.Abs(applied) <= Math.Abs(deltaKg) + 5;
-                    var stable = previousSample is not null && Math.Abs(current.CurrentFuelKg - previousSample.CurrentFuelKg) <= 3;
+                    possibleMutationObserved |= Math.Abs(applied) >= movementToleranceKg;
+                    var directionMatches = Math.Abs(applied) >= movementToleranceKg && Math.Sign(applied) == Math.Sign(deltaKg);
+                    var withinRequest = Math.Abs(applied) <= Math.Abs(deltaKg) + requestToleranceKg;
+                    var stable = previousSample is not null && Math.Abs(current.CurrentFuelKg - previousSample.CurrentFuelKg) <= stableToleranceKg;
                     DataSourceDebugLog.Debug(LogSource, $"Fuel write verification | method={method} sample={sample + 1} beforeKg={attemptBefore.CurrentFuelKg:0.00} readKg={current.CurrentFuelKg:0.00} appliedKg={applied:0.00} direction={directionMatches} stable={stable}");
                     previousSample = current;
+                    lastObservedState = current;
                     verifiedState = directionMatches && withinRequest && stable ? current : null;
                     if (verifiedState is not null) break;
                 }
@@ -239,12 +250,23 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
                 {
                     lastError = $"{method}: the simulator did not retain a stable change in the requested direction.";
                     DataSourceDebugLog.Warn(LogSource, $"Fuel write strategy not retained | method={method}");
+                    if (possibleMutationObserved && lastObservedState is not null)
+                    {
+                        var observedDelta = lastObservedState.CurrentFuelKg - attemptBefore.CurrentFuelKg;
+                        var directionMatches = Math.Abs(observedDelta) >= movementToleranceKg && Math.Sign(observedDelta) == Math.Sign(deltaKg);
+                        var withinRequest = Math.Abs(observedDelta) <= Math.Abs(deltaKg) + requestToleranceKg;
+                        var reconciledStatus = directionMatches && withinRequest ? AarFuelApplyStatus.Partial : AarFuelApplyStatus.Failed;
+                        var error = $"{method} changed fuel, but the result did not settle to a verified value; no fallback write was attempted.";
+                        DataSourceDebugLog.Warn(LogSource, $"Fuel write strategy reconciled without retry | method={method} observedKg={observedDelta:0.00} status={reconciledStatus}");
+                        return new AarFuelApplyResult(deltaKg, observedDelta, reconciledStatus, error);
+                    }
+                    if (requestError is not null) lastError = requestError;
                     continue;
                 }
 
                 var actual = verifiedState.CurrentFuelKg - attemptBefore.CurrentFuelKg;
                 lock (_gate) _preferredWriteMethod = method;
-                var status = Math.Abs(actual - deltaKg) <= 5 ? AarFuelApplyStatus.Success : AarFuelApplyStatus.Partial;
+                var status = Math.Abs(actual - deltaKg) <= requestToleranceKg ? AarFuelApplyStatus.Success : AarFuelApplyStatus.Partial;
                 var mutationMessage = $"Fuel mutation verified | method={method} beforeKg={attemptBefore.CurrentFuelKg:0.00} afterKg={verifiedState.CurrentFuelKg:0.00} requestedKg={deltaKg:0.00} appliedKg={actual:0.00} status={status}";
                 if (status == AarFuelApplyStatus.Success) DataSourceDebugLog.Important(LogSource, mutationMessage);
                 else DataSourceDebugLog.Warn(LogSource, mutationMessage);

@@ -17,7 +17,7 @@ public sealed class MsfsAarFuelAdapterTests
 
         Assert.Equal(AarBridgeRuntimeState.ConnectedWritable, adapter.RuntimeState);
         Assert.Equal(3, result.AppliedKg, 2);
-        Assert.Equal(AarFuelApplyStatus.Failed, result.Status);
+        Assert.Equal(AarFuelApplyStatus.Partial, result.Status);
         Assert.Equal(98, adapter.ReadFuel()!.CurrentFuelKg);
     }
 
@@ -71,27 +71,27 @@ public sealed class MsfsAarFuelAdapterTests
     }
 
     [Fact]
-    public async Task WritableCapabilityIsRejectedWhenAnyTankIsNotVerifiedWritable()
+    public async Task WritableCapabilityUsesBridgeProbeRatherThanSnapshotTankWritableFlag()
     {
         var adapter = new MsfsAarFuelAdapter(new FakeTransport(tankWritable: false));
 
         await adapter.ConnectAsync(CancellationToken.None);
 
-        Assert.Equal(AarBridgeRuntimeState.ConnectedReadOnly, adapter.RuntimeState);
+        Assert.Equal(AarBridgeRuntimeState.ConnectedWritable, adapter.RuntimeState);
         Assert.True(adapter.CanReadFuel);
-        Assert.False(adapter.CanWriteFuel);
+        Assert.True(adapter.CanWriteFuel);
     }
 
     [Fact]
-    public async Task MissingAppliedMassFailsFuelAcknowledgementClosed()
+    public async Task MissingAppliedMassUsesStableFuelReadbackForPartialAcknowledgement()
     {
         var adapter = new MsfsAarFuelAdapter(new FakeTransport(omitAppliedKg: true));
         await adapter.ConnectAsync(CancellationToken.None);
 
         var result = await adapter.ApplyFuelDeltaKgAsync(50, CancellationToken.None);
 
-        Assert.Equal(AarFuelApplyStatus.Failed, result.Status);
-        Assert.Equal(0, result.AppliedKg);
+        Assert.Equal(AarFuelApplyStatus.Partial, result.Status);
+        Assert.Equal(3, result.AppliedKg, 2);
     }
 
     [Fact]
@@ -169,7 +169,7 @@ public sealed class MsfsAarFuelAdapterTests
             var responseRequestId = request.Action == "HELLO" && invalidReply ? "wrong-request-id" : request.RequestId;
             var response = request.Action switch
             {
-                "HELLO" => new AarBridgeResponse { RequestId = responseRequestId, Action = request.Action, ProtocolVersion = protocolVersion, BridgeVersion = "1.0.0", Status = "Success" },
+                "HELLO" => new AarBridgeResponse { RequestId = responseRequestId, Action = request.Action, ProtocolVersion = protocolVersion, BridgeVersion = "1.1.9", Status = "Success" },
                 "GET_CAPABILITIES" => new AarBridgeResponse { RequestId = request.RequestId, Action = request.Action, ProtocolVersion = 1, Capabilities = writable ? ["fuel.read", "fuel.write"] : ["fuel.read"], Status = "Success" },
                 "GET_FUEL_STATE" => new AarBridgeResponse { RequestId = request.RequestId, Action = request.Action, ProtocolVersion = 1, FuelState = State(_fuelKg), Status = "Success" },
                 "APPLY_FUEL_DELTA" => Apply(request),
