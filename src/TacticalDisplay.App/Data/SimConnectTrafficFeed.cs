@@ -31,7 +31,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
     private static readonly JsonSerializerOptions AarBridgeJson = new(JsonSerializerDefaults.Web);
     private readonly object _stateLock = new();
     private readonly object _commBusLock = new();
-    private readonly ConcurrentDictionary<string, TaskCompletionSource<AarBridgeResponse>> _pendingAarBridgeResponses = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, PendingAarBridgeResponse> _pendingAarBridgeResponses = new(StringComparer.Ordinal);
     private readonly StringBuilder _aarBridgeResponseBuffer = new();
     private NativeSimConnectApi? _activeSimConnectApi;
     private IntPtr _activeSimConnectHandle;
@@ -96,7 +96,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
     {
         cancellationToken.ThrowIfCancellationRequested();
         var completion = new TaskCompletionSource<AarBridgeResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
-        if (!_pendingAarBridgeResponses.TryAdd(request.RequestId, completion))
+        var pending = new PendingAarBridgeResponse(request.RequestId, request.Action, completion);
+        if (!_pendingAarBridgeResponses.TryAdd(request.RequestId, pending))
             throw new InvalidOperationException("A duplicate AAR bridge request ID is already pending.");
 
         try
@@ -132,7 +133,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
             try { return await responseTask.ConfigureAwait(false); }
             catch (TimeoutException)
             {
-                DataSourceDebugLog.Warn(LogSource, $"Bridge response timeout | action={request.Action} requestId={request.RequestId} timeoutMs={AarBridgeResponseTimeout.TotalMilliseconds:0} simConnectConnected={IsConnected} pendingRequests={_pendingAarBridgeResponses.Count}");
+                DataSourceDebugLog.Important(LogSource, $"Bridge response timeout | action={request.Action} requestId={request.RequestId} timeoutMs={AarBridgeResponseTimeout.TotalMilliseconds:0} simConnectConnected={IsConnected} pendingRequests={_pendingAarBridgeResponses.Count}");
                 throw;
             }
         }
@@ -251,10 +252,10 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
             {
                 var subscribeResult = subscribeCommBus(simHandle, AarBridgeResponseEventId, AarBridgeResponseEvent);
                 if (subscribeResult != 0)
-                    DataSourceDebugLog.Warn(LogSource, $"AAR bridge CommBus response subscription failed | hresult=0x{subscribeResult:X8}");
+                    DataSourceDebugLog.Important(LogSource, $"AAR bridge CommBus response subscription failed | hresult=0x{subscribeResult:X8}");
                 else DataSourceDebugLog.Info(LogSource, "Subscribed to bridge response event");
             }
-            else DataSourceDebugLog.Warn(LogSource, "CommBus API unavailable | response event subscription function missing");
+            else DataSourceDebugLog.Important(LogSource, "CommBus API unavailable | response event subscription function missing");
             api.SubscribeToSystemEvent(simHandle, (uint)SystemEventId.ObjectAdded, "ObjectAdded");
             api.SubscribeToSystemEvent(simHandle, (uint)SystemEventId.ObjectRemoved, "ObjectRemoved");
             ConfigureDataDefinitions(api, simHandle);
@@ -400,7 +401,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
                         if (!_pendingAarBridgeResponses.IsEmpty)
                         {
                             FailPendingAarBridgeRequests(new IOException(
-                                $"SimConnect reported an internal error while processing the AAR CommBus request (sendId={exception.dwSendID})."));
+                                BuildAarCommBusExceptionMessage(exception.dwSendID)));
                         }
                         break;
                     }
@@ -457,8 +458,8 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         {
             var response = JsonSerializer.Deserialize<AarBridgeResponse>(completeMessage, AarBridgeJson)
                 ?? throw new InvalidDataException("The AAR Bridge returned an empty CommBus response.");
-            if (string.IsNullOrWhiteSpace(response.RequestId) || !_pendingAarBridgeResponses.TryGetValue(response.RequestId, out var completion)) return;
-            completion.TrySetResult(response);
+            if (string.IsNullOrWhiteSpace(response.RequestId) || !_pendingAarBridgeResponses.TryGetValue(response.RequestId, out var pending)) return;
+            pending.Completion.TrySetResult(response);
         }
         catch (Exception ex) when (ex is JsonException or InvalidDataException)
         {
@@ -468,9 +469,20 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
 
     private void FailPendingAarBridgeRequests(Exception error)
     {
-        foreach (var pending in _pendingAarBridgeResponses.Values) pending.TrySetException(error);
+        foreach (var pending in _pendingAarBridgeResponses.Values) pending.Completion.TrySetException(error);
         _pendingAarBridgeResponses.Clear();
     }
+
+    private string BuildAarCommBusExceptionMessage(uint sendId)
+    {
+        var pending = _pendingAarBridgeResponses.Values
+            .Select(request => $"{request.Action} requestId={request.RequestId}")
+            .ToArray();
+        var description = pending.Length == 0 ? "no tracked bridge action" : string.Join(", ", pending);
+        return $"SimConnect reported an internal error while VTSD was waiting for {description} (SimConnect sendId={sendId}).";
+    }
+
+    private sealed record PendingAarBridgeResponse(string RequestId, string Action, TaskCompletionSource<AarBridgeResponse> Completion);
 
     private void HandleObjectAddRemove(IntPtr pData)
     {
@@ -741,15 +753,18 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
 
     private static bool IsLikelyOwnshipMirror(OwnshipState ownship, TrafficContactState target)
     {
-        var dLat = System.Math.Abs(ownship.LatitudeDeg - target.LatitudeDeg);
-        var dLon = System.Math.Abs(ownship.LongitudeDeg - target.LongitudeDeg);
+        var rangeNm = GeoMath.DistanceNm(
+            ownship.LatitudeDeg,
+            ownship.LongitudeDeg,
+            target.LatitudeDeg,
+            target.LongitudeDeg);
         var dAlt = System.Math.Abs(ownship.AltitudeFt - target.AltitudeFt);
         var dSpd = System.Math.Abs((ownship.SpeedKt ?? 0) - (target.SpeedKt ?? 0));
         var dHdg = target.HeadingDeg.HasValue
             ? System.Math.Abs(NormalizeHeadingDelta(ownship.HeadingDeg, target.HeadingDeg.Value))
             : 180.0;
 
-        return dLat < 0.0002 && dLon < 0.0002 && dAlt < 300 && dSpd < 40 && dHdg < 12;
+        return rangeNm < 0.1 && dAlt < 300 && dSpd < 40 && dHdg < 12;
     }
 
     private static double NormalizeHeadingDelta(double a, double b)
@@ -1213,7 +1228,7 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
         EventFrame = 7,
         SimobjectData = 8,
         SimobjectDataByType = 9,
-        CommBus = 44
+        CommBus = 43
     }
 
     private enum SimConnectException : uint

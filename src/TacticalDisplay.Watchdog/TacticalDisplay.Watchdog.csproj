@@ -1,5 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <AssemblyTitle>VTSD</AssemblyTitle>
+    <Product>VTSD</Product>
+    <Company>Virtual Tactical Situation Display</Company>
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
@@ -10,4 +13,7 @@
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\TacticalDisplay.App\Services\WindowsAppIdentity.cs" Link="WindowsAppIdentity.cs" />
+  </ItemGroup>
 </Project>

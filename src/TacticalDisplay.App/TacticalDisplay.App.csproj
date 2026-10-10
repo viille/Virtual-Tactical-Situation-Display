@@ -85,7 +85,10 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
-    <Version>0.16.0-alpha.4</Version>
+    <Version>0.16.2</Version>
+    <AssemblyTitle>VTSD</AssemblyTitle>
+    <Product>VTSD</Product>
+    <Company>Virtual Tactical Situation Display</Company>
     <ApplicationIcon>Assets\VTSD.ico</ApplicationIcon>
     <PublishSingleFile>true</PublishSingleFile>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

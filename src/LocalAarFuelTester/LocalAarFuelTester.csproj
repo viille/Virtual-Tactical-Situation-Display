@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>VTSD.LocalAarFuelTester</AssemblyName>
+    <RootNamespace>VTSD.LocalAarFuelTester</RootNamespace>
+    <_AarTesterSdkRoot Condition="'$(MSFS2024_SDK)' != ''">$(MSFS2024_SDK)</_AarTesterSdkRoot>
+    <_AarTesterSdkRoot Condition="'$(_AarTesterSdkRoot)' == ''">F:\MSFS2024SDK</_AarTesterSdkRoot>
+    <_AarTesterSimConnectDll Condition="Exists('$(_AarTesterSdkRoot)\SimConnect SDK\lib\x64\SimConnect.dll')">$(_AarTesterSdkRoot)\SimConnect SDK\lib\x64\SimConnect.dll</_AarTesterSimConnectDll>
+    <_AarTesterSimConnectDll Condition="'$(_AarTesterSimConnectDll)' == '' and Exists('$(_AarTesterSdkRoot)\SimConnect SDK\lib\SimConnect.dll')">$(_AarTesterSdkRoot)\SimConnect SDK\lib\SimConnect.dll</_AarTesterSimConnectDll>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="..\TacticalDisplay.App\Data\AarBridgeProtocol.cs" Link="AarBridgeProtocol.cs" />
+    <Content Include="$(_AarTesterSimConnectDll)" Condition="'$(_AarTesterSimConnectDll)' != ''">
+      <Link>SimConnect.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+</Project>

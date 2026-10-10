@@ -18,7 +18,8 @@ public sealed record AarBridgeRequest(
     [property: JsonPropertyName("action")] string Action,
     [property: JsonPropertyName("protocolVersion")] int ProtocolVersion,
     [property: JsonPropertyName("clientVersion")] string ClientVersion,
-    [property: JsonPropertyName("deltaKg")] double? DeltaKg = null);
+    [property: JsonPropertyName("deltaKg")] double? DeltaKg = null,
+    [property: JsonPropertyName("writeMethod")] string? WriteMethod = null);
 
 public sealed record AarBridgeResponse
 {
@@ -37,8 +38,10 @@ public sealed record AarBridgeResponse
 
 public sealed record AarBridgeDiagnostics
 {
+    [JsonPropertyName("fuelReadDiagnostic")] public string? FuelReadDiagnostic { get; init; }
     [JsonPropertyName("fuelReadOnlyReason")] public string? FuelReadOnlyReason { get; init; }
     [JsonPropertyName("writeProbe")] public string[] WriteProbe { get; init; } = [];
+    [JsonPropertyName("writeMethods")] public string[] WriteMethods { get; init; } = [];
 }
 
 public sealed record AarBridgeFuelState

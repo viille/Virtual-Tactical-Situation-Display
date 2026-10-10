@@ -2,6 +2,7 @@ using System.Windows;
 using System.Windows.Threading;
 using TacticalDisplay.App.Services;
 using TacticalDisplay.App.Cloud;
+using VirtualTacticalSituationDisplay;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace TacticalDisplay.App;
@@ -13,6 +14,7 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        WindowsAppIdentity.SetForCurrentProcess();
         DispatcherUnhandledException += OnDispatcherUnhandledException;
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTaskException;

@@ -141,22 +141,36 @@ public sealed class MsfsAarBridgeInstaller
         DataSourceDebugLog.Info("MSFS-AAR", $"Bridge install | community={root} bundledVersion={sourceVersion} installedVersion={previousVersion ?? "<none>"} action={(hasPrevious ? "update" : "install")}");
         var previousMoved = false;
         var stagedPackagePromoted = false;
+        var installStage = "copying package to staging";
         try
         {
             CopyDirectory(sourcePackageDirectory, staging, cancellationToken);
             DataSourceDebugLog.Debug("MSFS-AAR", $"Bridge install stage=copy staging={staging}");
             cancellationToken.ThrowIfCancellationRequested();
+            installStage = "validating staged package";
             if (!TryValidatePackage(staging, out var stagedVersion) || stagedVersion != sourceVersion)
                 throw new InvalidDataException("The staged AAR Bridge package failed integrity validation.");
             DataSourceDebugLog.Debug("MSFS-AAR", $"Bridge install stage=staging-validation version={stagedVersion}");
 
+            installStage = "replacing installed package";
             if (hasPrevious)
             {
-                Directory.Move(destination, backup);
-                previousMoved = true;
+                try
+                {
+                    Directory.Move(destination, backup);
+                    previousMoved = true;
+                }
+                catch (Exception moveError) when (IsAccessDenied(moveError))
+                {
+                    DataSourceDebugLog.Important("MSFS-AAR", $"Bridge directory rename denied; using verified in-place update | package={destination} exception={moveError.GetType().Name} hresult=0x{moveError.HResult:X8}");
+                    InstallInPlace(staging, destination, backup, sourceVersion, cancellationToken, moveError);
+                    DataSourceDebugLog.Important("MSFS-AAR", $"Bridge install succeeded with in-place update | community={root} version={sourceVersion}");
+                    return new AarBridgePackageInfo(sourceVersion, destination);
+                }
             }
             Directory.Move(staging, destination);
             stagedPackagePromoted = true;
+            installStage = "verifying installed package";
             if (!TryValidatePackage(destination, out var installedVersion) || installedVersion != sourceVersion)
                 throw new InvalidDataException("The installed AAR Bridge package failed verification.");
             DataSourceDebugLog.Info("MSFS-AAR", $"Bridge install succeeded | community={root} version={sourceVersion}");
@@ -174,7 +188,7 @@ public sealed class MsfsAarBridgeInstaller
                     new AggregateException(installError, rollbackError));
             }
             DataSourceDebugLog.Error("MSFS-AAR", $"Bridge install failed | stage=replace oldInstallPreserved={Directory.Exists(destination)}", installError);
-            throw;
+            throw new IOException($"Bridge installation failed while {installStage}: {installError.Message}", installError);
         }
         finally
         {
@@ -201,6 +215,10 @@ public sealed class MsfsAarBridgeInstaller
     }
 
     private static string GetPackagePath(string communityFolder) => Path.Combine(Path.GetFullPath(communityFolder), PackageName);
+
+    private static bool IsAccessDenied(Exception exception) =>
+        exception is UnauthorizedAccessException ||
+        exception is IOException && (exception.HResult & 0xFFFF) == 5;
 
     private static bool TryValidatePackage(string packageDirectory, out string version)
     {
@@ -263,6 +281,87 @@ public sealed class MsfsAarBridgeInstaller
             var target = Path.Combine(destination, Path.GetRelativePath(sourceRoot, file));
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             File.Copy(file, target, overwrite: false);
+        }
+    }
+
+    private static void InstallInPlace(
+        string stagedPackage,
+        string destination,
+        string backup,
+        string expectedVersion,
+        CancellationToken cancellationToken,
+        Exception moveError)
+    {
+        CopyDirectory(destination, backup, cancellationToken);
+        try
+        {
+            SynchronizeDirectory(stagedPackage, destination, cancellationToken);
+            if (!TryValidatePackage(destination, out var installedVersion) || installedVersion != expectedVersion)
+                throw new InvalidDataException("The in-place AAR Bridge update failed integrity validation.");
+        }
+        catch (Exception updateError)
+        {
+            try
+            {
+                SynchronizeDirectory(backup, destination, CancellationToken.None);
+                if (!TryValidatePackage(destination, out _))
+                    throw new InvalidDataException("The restored AAR Bridge package failed integrity validation.");
+            }
+            catch (Exception rollbackError)
+            {
+                throw new IOException(
+                    $"Bridge update failed after directory rename was denied. The previous package could not be restored; its backup remains at '{backup}'. Update error: {updateError.Message}",
+                    new AggregateException(moveError, updateError, rollbackError));
+            }
+
+            throw new IOException(
+                $"Bridge directory rename was denied and the in-place update failed. The previous package was restored. Update error: {updateError.Message}",
+                new AggregateException(moveError, updateError));
+        }
+
+        try { Directory.Delete(backup, recursive: true); }
+        catch (IOException ex) { DataSourceDebugLog.Important("MSFS-AAR", $"In-place update succeeded; backup cleanup failed | path={backup} error={ex.Message}"); }
+        catch (UnauthorizedAccessException ex) { DataSourceDebugLog.Important("MSFS-AAR", $"In-place update succeeded; backup cleanup failed | path={backup} error={ex.Message}"); }
+    }
+
+    private static void SynchronizeDirectory(string source, string destination, CancellationToken cancellationToken)
+    {
+        var sourceRoot = Path.GetFullPath(source);
+        var destinationRoot = Path.GetFullPath(destination);
+        var sourceDirectories = Directory.EnumerateDirectories(sourceRoot, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(sourceRoot, path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var sourceFiles = Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories)
+            .Select(path => Path.GetRelativePath(sourceRoot, path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        Directory.CreateDirectory(destinationRoot);
+        foreach (var relativeDirectory in sourceDirectories)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Directory.CreateDirectory(Path.Combine(destinationRoot, relativeDirectory));
+        }
+        foreach (var relativeFile in sourceFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var target = Path.Combine(destinationRoot, relativeFile);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            File.Copy(Path.Combine(sourceRoot, relativeFile), target, overwrite: true);
+        }
+
+        foreach (var existingFile in Directory.EnumerateFiles(destinationRoot, "*", SearchOption.AllDirectories))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!sourceFiles.Contains(Path.GetRelativePath(destinationRoot, existingFile)))
+                File.Delete(existingFile);
+        }
+        foreach (var existingDirectory in Directory.EnumerateDirectories(destinationRoot, "*", SearchOption.AllDirectories)
+                     .OrderByDescending(path => path.Length))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!sourceDirectories.Contains(Path.GetRelativePath(destinationRoot, existingDirectory)) &&
+                !Directory.EnumerateFileSystemEntries(existingDirectory).Any())
+                Directory.Delete(existingDirectory);
         }
     }
 }

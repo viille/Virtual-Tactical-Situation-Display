@@ -85,7 +85,7 @@ public sealed class AarFuelAdapterFeed : ITrafficDataFeed, IAarPoseSource, IAarF
     {
         var wasConnected = false;
         var nextConnectionAttemptAt = DateTimeOffset.MinValue;
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
         while (await timer.WaitForNextTickAsync(cancellationToken).ConfigureAwait(false))
         {
             if (!_inner.IsConnected)

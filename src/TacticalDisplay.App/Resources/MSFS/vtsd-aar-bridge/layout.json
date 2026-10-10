@@ -2,15 +2,15 @@
   "content": [
     {
       "path": "manifest.json",
-      "size": 223,
-      "date": 1791375638,
-      "hash": "732cf581ebb5497f9cb3b1e7e429e0cd"
+      "size": 232,
+      "date": 1791666633,
+      "hash": "d3fc6504b98f2f668b9101d29a2647d7"
     },
     {
       "path": "modules/vtsd_aar_bridge.wasm",
-      "size": 163861,
-      "date": 1791472576,
-      "hash": "cc8afeed205776c12748cea60eb2aa80"
+      "size": 196806,
+      "date": 1791666641,
+      "hash": "411ebdf33108e50803faada7c774e330"
     }
   ]
 }
