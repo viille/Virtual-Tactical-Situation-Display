@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.1 - 2026-10-10
+
+- Fix duplicate ownship targets in MSFS by filtering traffic mirrors using horizontal distance.
+
 ## Unreleased (v0.16.0 draft)
 
 - Added tanker-controlled AAR queue management, planned onload changes, astern clearance, HOLD, explicit transfer start/stop, and DryHookup mode to TacticalLink.Server.
