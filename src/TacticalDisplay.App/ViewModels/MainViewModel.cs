@@ -84,11 +84,12 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         DataSourceDebugLog.Info("App", $"Application startup | configDir={configPath} logFile={DataSourceDebugLog.CurrentLogFilePath}");
         _configStore = new JsonConfigStore(configPath);
         Settings = _configStore.LoadDisplaySettings();
+        // High-volume diagnostics must always start disabled, regardless of the saved setting.
+        Settings.EnableDataSourceDebugLogging = false;
+        DataSourceDebugLog.SetEnabled(false);
         Settings.AarFuelUnit = string.Equals(Settings.AarFuelUnit, "LB", StringComparison.OrdinalIgnoreCase) ? "LB" : "KG";
         Settings.Msfs2024CommunityFolder = _msfsPackagePathResolver.ResolveCommunity2024(Settings.Msfs2024CommunityFolder) ?? Settings.Msfs2024CommunityFolder;
         RefreshMsfsAarBridgeStatus();
-        DataSourceDebugLog.SetEnabled(Settings.EnableDataSourceDebugLogging);
-        DataSourceDebugLog.Info("App", $"Debug logging enabled={Settings.EnableDataSourceDebugLogging}");
         _classification = _configStore.LoadClassification();
         _manualTargetMetadata = _configStore.LoadManualTargetMetadata();
         Settings.DataSourceMode = DataSourceModes.Normalize(Settings.DataSourceMode);
@@ -1954,6 +1955,7 @@ public sealed class MainViewModel : ViewModelBase, IAsyncDisposable
         }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException or ArgumentException)
         {
+            DataSourceDebugLog.Important("MSFS-AAR", $"Bridge installation failed | {ex.GetType().Name}: {ex.Message}");
             MsfsAarBridgeStatusText = $"Bridge installation failed: {ex.Message}";
         }
     }

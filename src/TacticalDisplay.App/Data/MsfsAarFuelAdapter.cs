@@ -12,12 +12,16 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
     private static readonly TimeSpan FuelFreshness = TimeSpan.FromSeconds(5);
     private readonly TimeProvider _clock = timeProvider ?? TimeProvider.System;
     private readonly object _gate = new();
+    private readonly SemaphoreSlim _fuelMutationGate = new(1, 1);
     private AarBridgeRuntimeState _runtimeState = AarBridgeRuntimeState.InstalledNotRunning;
     private AarBridgeFuelState? _fuelState;
     private string? _bridgeVersion;
     private string? _diagnostic;
     private bool _canRead;
     private bool _canWrite;
+    private string[] _writeMethods = [];
+    private string? _preferredWriteMethod;
+    private string? _writeProfileSignature;
 
     public event EventHandler<AarFuelReading>? FuelSampled;
     public event EventHandler<AarBridgeRuntimeState>? RuntimeStateChanged;
@@ -27,13 +31,14 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
     public bool IsAvailable => transport.IsConnected && RuntimeState is AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable;
     public bool CanReadFuel => IsAvailable && _canRead && ReadFuel() is not null;
     public bool CanWriteFuel => IsAvailable && RuntimeState == AarBridgeRuntimeState.ConnectedWritable && _canWrite &&
-        CanReadFuel && _fuelState is { Tanks.Length: > 0 } fuel && fuel.Tanks.All(tank => tank.Writable);
+        CanReadFuel && _fuelState is { Tanks.Length: > 0 };
 
     public AarFuelReading? ReadFuel()
     {
         lock (_gate)
         {
-            if (_fuelState is not { } fuel || !IsValid(fuel) || _clock.GetUtcNow() - fuel.SampledAtUtc > FuelFreshness || fuel.SampledAtUtc - _clock.GetUtcNow() > TimeSpan.FromSeconds(1)) return null;
+            if (_fuelState is not { } fuel || !IsValid(fuel) || fuel.SampledAtUtc == default ||
+                _clock.GetUtcNow() - fuel.SampledAtUtc > FuelFreshness || fuel.SampledAtUtc - _clock.GetUtcNow() > TimeSpan.FromSeconds(1)) return null;
             return new AarFuelReading(fuel.CurrentFuelKg, fuel.CapacityKg, fuel.SampledAtUtc);
         }
     }
@@ -45,9 +50,12 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
             _canRead = false;
             _canWrite = false;
             _fuelState = null;
+            _writeMethods = [];
+            _preferredWriteMethod = null;
+            _writeProfileSignature = null;
         }
         SetRuntime(AarBridgeRuntimeState.Connecting, null);
-        DataSourceDebugLog.Important(LogSource, $"===== MSFS AAR runtime session started | VTSD={ClientVersion} bridge=unknown protocol={SupportedProtocolVersion} =====");
+        DataSourceDebugLog.Info(LogSource, $"MSFS AAR bridge connection attempt started | VTSD={ClientVersion} protocol={SupportedProtocolVersion}");
         try
         {
             DataSourceDebugLog.Debug(LogSource, "CommBus transport available");
@@ -75,18 +83,29 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
             {
                 _canRead = capabilities.Capabilities.Contains("fuel.read", StringComparer.Ordinal);
                 _canWrite = capabilities.Capabilities.Contains("fuel.write", StringComparer.Ordinal);
+                _writeMethods = capabilities.Diagnostics?.WriteMethods ?? [];
+            }
+            var fuelReadDiagnostic = capabilities.Diagnostics?.FuelReadDiagnostic;
+            var fuelReadOnlyReason = capabilities.Diagnostics?.FuelReadOnlyReason;
+            if (!_canRead)
+            {
+                var detail = !string.IsNullOrWhiteSpace(fuelReadDiagnostic) ? fuelReadDiagnostic : fuelReadOnlyReason ?? "the bridge did not report a reason";
+                DataSourceDebugLog.Important(LogSource, $"Aircraft fuel read unavailable | diagnostic={detail}");
             }
             if (_canRead) await RefreshFuelStateAsync(cancellationToken).ConfigureAwait(false);
-            var canWrite = _canRead && _canWrite && _fuelState is { Tanks.Length: > 0 } fuelState && fuelState.Tanks.All(tank => tank.Writable);
+            // GET_CAPABILITIES performs the bridge's same-value setter/read-back probe. Each
+            // APPLY_FUEL_DELTA request probes again before writing, so a normal state snapshot
+            // must not independently revoke that advertised capability based on per-tank flags.
+            var canWrite = _canRead && _canWrite && _fuelState is { Tanks.Length: > 0 };
             DataSourceDebugLog.Debug(LogSource, $"Capabilities | fuelRead={_canRead} fuelWrite={_canWrite}");
             if (!canWrite)
             {
                 var reason = !_canRead ? "protocol capability did not advertise fuel.read" : !_canWrite ? "protocol capability did not advertise fuel.write" :
-                    _fuelState is not { Tanks.Length: > 0 } ? "no tanks discovered" : "one or more discovered tanks failed the write probe";
+                    "no valid fuel tank state is available";
                 DataSourceDebugLog.Warn(LogSource, $"Fuel write unavailable | reason={reason}");
             }
             SetRuntime(canWrite ? AarBridgeRuntimeState.ConnectedWritable : AarBridgeRuntimeState.ConnectedReadOnly,
-                !_canRead ? "The bridge is connected, but this aircraft does not expose readable fuel state. Dry Hookup is available." :
+                !_canRead ? $"Fuel read unavailable: {fuelReadDiagnostic ?? fuelReadOnlyReason ?? "the bridge did not report a reason"}. Dry Hookup is available." :
                 !canWrite ? "This aircraft does not expose a verified writable fuel system. Dry Hookup is available." : null);
             DataSourceDebugLog.Debug(LogSource, $"Runtime readiness | bridgeVersion={BridgeVersion ?? "unknown"} protocol={SupportedProtocolVersion} fuelRead={_canRead} fuelWrite={canWrite} tanks={_fuelState?.Tanks.Length ?? 0} currentKg={_fuelState?.CurrentFuelKg:0.00} capacityKg={_fuelState?.CapacityKg:0.00} reason={Diagnostic ?? "none"}");
         }
@@ -104,16 +123,26 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
         var response = await SendAsync("GET_FUEL_STATE", cancellationToken).ConfigureAwait(false);
         if (response.FuelState is null || !IsValid(response.FuelState))
             throw new InvalidDataException(response.Error ?? "The bridge returned invalid fuel state.");
+        UpdateWriteMethods(response.Diagnostics);
         UpdateFuelState(response.FuelState);
         LogFuelState(response.FuelState, logTanks: true);
-        if (response.Diagnostics?.FuelReadOnlyReason is { Length: > 0 } reason)
+        if (response.Diagnostics is { WriteMethods.Length: 0, FuelReadOnlyReason.Length: > 0 } diagnostics &&
+            response.FuelState.Tanks.Any(tank => !tank.Writable))
         {
-            DataSourceDebugLog.Warn(LogSource, $"Fuel capability diagnostic | reason={reason}");
+            var reason = diagnostics.FuelReadOnlyReason!;
+            DataSourceDebugLog.Warn(LogSource, $"Fuel write capability revoked by tank state | reason={reason}");
             SetRuntime(AarBridgeRuntimeState.ConnectedReadOnly, reason);
         }
     }
 
     public async Task<AarFuelApplyResult> ApplyFuelDeltaKgAsync(double deltaKg, CancellationToken cancellationToken)
+    {
+        await _fuelMutationGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try { return await ApplyFuelDeltaCoreAsync(deltaKg, cancellationToken).ConfigureAwait(false); }
+        finally { _fuelMutationGate.Release(); }
+    }
+
+    private async Task<AarFuelApplyResult> ApplyFuelDeltaCoreAsync(double deltaKg, CancellationToken cancellationToken)
     {
         if (!double.IsFinite(deltaKg) || deltaKg == 0)
             return new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, "Fuel delta must be finite and non-zero.");
@@ -125,7 +154,7 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
 
         AarBridgeFuelState? before;
         lock (_gate) before = _fuelState;
-        if (before is null || _clock.GetUtcNow() - before.SampledAtUtc > FuelFreshness)
+        if (before is null || ReadFuel() is null)
         {
             DataSourceDebugLog.Warn(LogSource, $"Fuel mutation rejected | requestedKg={deltaKg:0.00} reason=fuel state stale");
             return new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, "Fuel state is stale.");
@@ -133,54 +162,129 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
 
         try
         {
+            var liveCapabilities = await SendAsync("GET_FUEL_STATE", cancellationToken).ConfigureAwait(false);
+            UpdateWriteMethods(liveCapabilities.Diagnostics);
+            if (liveCapabilities.FuelState is { } liveState && IsValid(liveState))
+            {
+                before = liveState;
+                UpdateFuelState(liveState);
+            }
             DataSourceDebugLog.Debug(LogSource, $"Fuel mutation started | requestedKg={deltaKg:0.00} beforeKg={before.CurrentFuelKg:0.00} tanks={before.Tanks.Length}");
-            var response = await SendAsync("APPLY_FUEL_DELTA", cancellationToken, deltaKg, allowFailedResponse: true).ConfigureAwait(false);
-            if (response.FuelState is null || !IsValid(response.FuelState))
+            var profileSignature = string.Join("|", before.Tanks.Select(tank => $"{tank.TankId}:{tank.CapacityKg:0.0}"));
+            string? preferredMethod;
+            lock (_gate)
             {
-                DataSourceDebugLog.Error(LogSource, $"Fuel mutation failed | requestId={response.RequestId} requestedKg={deltaKg:0.00} beforeKg={before.CurrentFuelKg:0.00} afterKg=unknown appliedKg={response.AppliedKg?.ToString("0.00") ?? "unknown"} status={response.Status ?? "unknown"} error={response.Error ?? "bridge omitted valid read-back"}");
-                return new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, response.Error ?? "Bridge omitted the mandatory post-write fuel readback.");
-            }
-
-            if (response.AppliedKg is not { } actual || !double.IsFinite(actual))
-            {
-                DataSourceDebugLog.Error(LogSource, $"Fuel mutation failed | requestId={response.RequestId} requestedKg={deltaKg:0.00} beforeKg={before.CurrentFuelKg:0.00} afterKg={response.FuelState.CurrentFuelKg:0.00} appliedKg=unknown status={response.Status ?? "unknown"} error=bridge omitted applied mass");
-                return new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, "Bridge omitted the actual applied mass from its read-after-write result.");
-            }
-
-            UpdateFuelState(response.FuelState);
-            if (!double.IsFinite(actual) || Math.Abs(actual) > Math.Abs(deltaKg) + 0.05 || actual != 0 && Math.Sign(actual) != Math.Sign(deltaKg))
-            {
-                DataSourceDebugLog.Error(LogSource, $"Fuel mutation failed | requestId={response.RequestId} requestedKg={deltaKg:0.00} beforeKg={before.CurrentFuelKg:0.00} afterKg={response.FuelState.CurrentFuelKg:0.00} appliedKg={actual:0.00} status=invalid-readback error=direction-or-bound-mismatch");
-                return new AarFuelApplyResult(deltaKg, actual, AarFuelApplyStatus.Failed, "Simulator readback did not match the requested fuel direction or bound.");
-            }
-
-            var status = string.Equals(response.Status, "Failed", StringComparison.OrdinalIgnoreCase) || Math.Abs(actual) < 0.001
-                ? AarFuelApplyStatus.Failed
-                : string.Equals(response.Status, "Partial", StringComparison.OrdinalIgnoreCase) || Math.Abs(actual - deltaKg) > 0.05
-                    ? AarFuelApplyStatus.Partial
-                    : AarFuelApplyStatus.Success;
-            var mutationMessage = $"Fuel mutation | requestId={response.RequestId} requestedKg={deltaKg:0.00} beforeKg={before.CurrentFuelKg:0.00} afterKg={response.FuelState.CurrentFuelKg:0.00} appliedKg={actual:0.00} status={status} error={response.Error ?? "none"}";
-            if (status == AarFuelApplyStatus.Success) DataSourceDebugLog.Debug(LogSource, mutationMessage);
-            else DataSourceDebugLog.Warn(LogSource, mutationMessage);
-            LogFuelState(response.FuelState, logTanks: true, response.RequestId);
-            if (DataSourceDebugLog.IsEnabled)
-            {
-                IReadOnlyDictionary<string, double> targetDeltas;
-                try { targetDeltas = AarBridgeFuelDistributionPolicy.Distribute(before.Tanks, deltaKg).ToDictionary(item => item.TankId, item => item.DeltaKg, StringComparer.Ordinal); }
-                catch { targetDeltas = new Dictionary<string, double>(StringComparer.Ordinal); }
-                var previousTanks = before.Tanks.ToDictionary(tank => tank.TankId, StringComparer.Ordinal);
-                foreach (var tank in response.FuelState.Tanks)
+                if (!string.Equals(_writeProfileSignature, profileSignature, StringComparison.Ordinal))
                 {
-                    var beforeKg = previousTanks.TryGetValue(tank.TankId, out var oldTank) ? oldTank.CurrentKg : 0;
-                    var targetKg = beforeKg + targetDeltas.GetValueOrDefault(tank.TankId);
-                    DataSourceDebugLog.Debug(LogSource, $"Fuel mutation tank | requestId={response.RequestId} tank={tank.TankId} beforeKg={beforeKg:0.00} targetKg={targetKg:0.00} readBackKg={tank.CurrentKg:0.00} appliedKg={tank.CurrentKg - beforeKg:0.00}");
+                    _preferredWriteMethod = null;
+                    _writeProfileSignature = profileSignature;
                 }
+                preferredMethod = _preferredWriteMethod;
             }
-            return new AarFuelApplyResult(deltaKg, actual, status, response.Error);
+            var configuredMethods = _writeMethods.Length == 0 ? new[] { "auto" } : _writeMethods;
+            IReadOnlyList<string> methods = preferredMethod is null ? configuredMethods :
+                new[] { preferredMethod }.Concat(configuredMethods.Where(method => method != preferredMethod)).ToArray();
+            var lastError = "No supported write method produced a persistent fuel change.";
+            foreach (var method in methods)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var baselineResponse = await SendAsync("GET_FUEL_STATE", cancellationToken).ConfigureAwait(false);
+                UpdateWriteMethods(baselineResponse.Diagnostics);
+                var attemptBefore = baselineResponse.FuelState is { } baseline && IsValid(baseline) ? baseline : before;
+                UpdateFuelState(attemptBefore);
+                DataSourceDebugLog.Important(LogSource, $"Fuel write strategy | method={method} requestedKg={deltaKg:0.00} beforeKg={attemptBefore.CurrentFuelKg:0.00}");
+                var movementToleranceKg = Math.Max(0.01, Math.Min(0.25, Math.Abs(deltaKg) * 0.001));
+                var requestToleranceKg = Math.Max(0.01, Math.Min(0.25, Math.Abs(deltaKg) * 0.001));
+                var stableToleranceKg = Math.Max(0.05, Math.Min(3, Math.Abs(deltaKg) * 0.01));
+                AarBridgeResponse response;
+                var requestError = (string?)null;
+                try
+                {
+                    response = await SendAsync("APPLY_FUEL_DELTA", cancellationToken, deltaKg,
+                        allowFailedResponse: true, writeMethod: method).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    requestError = $"{method}: {ex.Message}";
+                    lastError = requestError;
+                    DataSourceDebugLog.Warn(LogSource, $"Fuel write strategy request failed | method={method} error={ex.Message}");
+                    response = new AarBridgeResponse();
+                }
+
+                if (response.FuelState is { } immediate && IsValid(immediate)) UpdateFuelState(immediate);
+                else if (string.Equals(response.Status, "Failed", StringComparison.OrdinalIgnoreCase))
+                    lastError = $"{method}: {response.Error ?? "bridge rejected the strategy"}";
+
+                AarBridgeFuelState? previousSample = null;
+                AarBridgeFuelState? verifiedState = null;
+                AarBridgeFuelState? lastObservedState = response.FuelState is { } responseState && IsValid(responseState)
+                    ? responseState
+                    : null;
+                var possibleMutationObserved = lastObservedState is not null &&
+                    Math.Abs(lastObservedState.CurrentFuelKg - attemptBefore.CurrentFuelKg) >= movementToleranceKg;
+                var isAircraftNativeMethod = string.Equals(method, "a32nx-native", StringComparison.Ordinal);
+                var sampleCount = isAircraftNativeMethod ? 30 : method == preferredMethod ? 2 : 3;
+                for (var sample = 0; sample < sampleCount; sample++)
+                {
+                    await Task.Delay(isAircraftNativeMethod
+                        ? TimeSpan.FromMilliseconds(500)
+                        : sample == 0 ? TimeSpan.FromMilliseconds(450) : TimeSpan.FromMilliseconds(650), _clock, cancellationToken).ConfigureAwait(false);
+                    var stateResponse = await SendAsync("GET_FUEL_STATE", cancellationToken).ConfigureAwait(false);
+                    UpdateWriteMethods(stateResponse.Diagnostics);
+                    if (stateResponse.FuelState is not { } current || !IsValid(current)) continue;
+                    UpdateFuelState(current);
+                    var applied = current.CurrentFuelKg - attemptBefore.CurrentFuelKg;
+                    possibleMutationObserved |= Math.Abs(applied) >= movementToleranceKg;
+                    var directionMatches = Math.Abs(applied) >= movementToleranceKg && Math.Sign(applied) == Math.Sign(deltaKg);
+                    var withinRequest = Math.Abs(applied) <= Math.Abs(deltaKg) + requestToleranceKg;
+                    var stable = previousSample is not null && Math.Abs(current.CurrentFuelKg - previousSample.CurrentFuelKg) <= stableToleranceKg;
+                    DataSourceDebugLog.Debug(LogSource, $"Fuel write verification | method={method} sample={sample + 1} beforeKg={attemptBefore.CurrentFuelKg:0.00} readKg={current.CurrentFuelKg:0.00} appliedKg={applied:0.00} direction={directionMatches} stable={stable}");
+                    previousSample = current;
+                    lastObservedState = current;
+                    verifiedState = directionMatches && withinRequest && stable ? current : null;
+                    if (verifiedState is not null) break;
+                }
+
+                if (isAircraftNativeMethod) await FinishFuelOperationAsync(cancellationToken).ConfigureAwait(false);
+                if (verifiedState is null)
+                {
+                    lastError = $"{method}: the simulator did not retain a stable change in the requested direction.";
+                    DataSourceDebugLog.Warn(LogSource, $"Fuel write strategy not retained | method={method}");
+                    if (possibleMutationObserved && lastObservedState is not null)
+                    {
+                        var observedDelta = lastObservedState.CurrentFuelKg - attemptBefore.CurrentFuelKg;
+                        var directionMatches = Math.Abs(observedDelta) >= movementToleranceKg && Math.Sign(observedDelta) == Math.Sign(deltaKg);
+                        var withinRequest = Math.Abs(observedDelta) <= Math.Abs(deltaKg) + requestToleranceKg;
+                        var reconciledStatus = directionMatches && withinRequest ? AarFuelApplyStatus.Partial : AarFuelApplyStatus.Failed;
+                        var error = $"{method} changed fuel, but the result did not settle to a verified value; no fallback write was attempted.";
+                        DataSourceDebugLog.Warn(LogSource, $"Fuel write strategy reconciled without retry | method={method} observedKg={observedDelta:0.00} status={reconciledStatus}");
+                        return new AarFuelApplyResult(deltaKg, observedDelta, reconciledStatus, error);
+                    }
+                    if (requestError is not null) lastError = requestError;
+                    continue;
+                }
+
+                var actual = verifiedState.CurrentFuelKg - attemptBefore.CurrentFuelKg;
+                lock (_gate) _preferredWriteMethod = method;
+                var status = Math.Abs(actual - deltaKg) <= requestToleranceKg ? AarFuelApplyStatus.Success : AarFuelApplyStatus.Partial;
+                var mutationMessage = $"Fuel mutation verified | method={method} beforeKg={attemptBefore.CurrentFuelKg:0.00} afterKg={verifiedState.CurrentFuelKg:0.00} requestedKg={deltaKg:0.00} appliedKg={actual:0.00} status={status}";
+                if (status == AarFuelApplyStatus.Success) DataSourceDebugLog.Important(LogSource, mutationMessage);
+                else DataSourceDebugLog.Warn(LogSource, mutationMessage);
+                LogFuelState(verifiedState, logTanks: true);
+                return new AarFuelApplyResult(deltaKg, actual, status,
+                    status == AarFuelApplyStatus.Partial ? $"{method} applied a stable partial change." : null);
+            }
+
+            return new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, lastError);
         }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            await FinishFuelOperationAsync(CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
         catch (Exception ex)
         {
+            await FinishFuelOperationAsync(CancellationToken.None).ConfigureAwait(false);
             DataSourceDebugLog.Error(LogSource, $"Fuel mutation failed | requestedKg={deltaKg:0.00} beforeKg={before.CurrentFuelKg:0.00} afterKg=unknown appliedKg=unknown", ex);
             return new AarFuelApplyResult(deltaKg, 0, AarFuelApplyStatus.Failed, ex.Message);
         }
@@ -196,18 +300,27 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
         SetRuntime(AarBridgeRuntimeState.InstalledNotRunning, "Bridge installed. Restart Microsoft Flight Simulator to activate it.");
     }
 
-    private async Task<AarBridgeResponse> SendAsync(string action, CancellationToken cancellationToken, double? deltaKg = null, bool allowFailedResponse = false)
+    private async Task FinishFuelOperationAsync(CancellationToken cancellationToken)
+    {
+        try { await SendAsync("FINISH_FUEL_OPERATION", CancellationToken.None, allowFailedResponse: true).ConfigureAwait(false); }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        { DataSourceDebugLog.Warn(LogSource, $"Fuel operation cleanup request failed | error={ex.Message}"); }
+    }
+
+    private async Task<AarBridgeResponse> SendAsync(string action, CancellationToken cancellationToken, double? deltaKg = null,
+        bool allowFailedResponse = false, string? writeMethod = null)
     {
         if (!transport.IsConnected) throw new IOException("Microsoft Flight Simulator is not connected.");
-        var request = new AarBridgeRequest(Guid.NewGuid().ToString("N"), action, SupportedProtocolVersion, ClientVersion, deltaKg);
+        var request = new AarBridgeRequest(Guid.NewGuid().ToString("N"), action, SupportedProtocolVersion, ClientVersion, deltaKg, writeMethod);
         var timer = Stopwatch.StartNew();
         DataSourceDebugLog.Debug(LogSource, $"Request | action={action} requestId={request.RequestId}{(deltaKg.HasValue ? $" requestedKg={deltaKg.Value:0.00}" : string.Empty)}");
         AarBridgeResponse response;
         try { response = await transport.SendAsync(request, cancellationToken).ConfigureAwait(false); }
-        catch (TimeoutException)
+        catch (TimeoutException ex)
         {
-            DataSourceDebugLog.Warn(LogSource, $"Bridge request timeout | action={action} requestId={request.RequestId} timeoutMs={timer.ElapsedMilliseconds} simConnectConnected={transport.IsConnected}");
-            throw;
+            var diagnostic = $"AAR Bridge did not respond to {action} within {timer.ElapsedMilliseconds} ms.";
+            DataSourceDebugLog.Important(LogSource, $"Bridge request timeout | action={action} requestId={request.RequestId} timeoutMs={timer.ElapsedMilliseconds} simConnectConnected={transport.IsConnected}");
+            throw new TimeoutException(diagnostic, ex);
         }
         catch (Exception ex)
         {
@@ -229,7 +342,25 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
     private void UpdateFuelState(AarBridgeFuelState state)
     {
         lock (_gate) _fuelState = state;
-        FuelSampled?.Invoke(this, new AarFuelReading(state.CurrentFuelKg, state.CapacityKg, state.SampledAtUtc));
+        if (IsValid(state) && state.SampledAtUtc != default)
+            FuelSampled?.Invoke(this, new AarFuelReading(state.CurrentFuelKg, state.CapacityKg, state.SampledAtUtc));
+    }
+
+    private void UpdateWriteMethods(AarBridgeDiagnostics? diagnostics)
+    {
+        if (diagnostics is null) return;
+        bool canWrite;
+        lock (_gate)
+        {
+            _writeMethods = diagnostics.WriteMethods ?? [];
+            _canWrite = _writeMethods.Length > 0;
+            canWrite = _canWrite;
+        }
+        if (RuntimeState is not (AarBridgeRuntimeState.ConnectedReadOnly or AarBridgeRuntimeState.ConnectedWritable)) return;
+        if (canWrite && RuntimeState == AarBridgeRuntimeState.ConnectedReadOnly)
+            SetRuntime(AarBridgeRuntimeState.ConnectedWritable, null);
+        else if (!canWrite && RuntimeState == AarBridgeRuntimeState.ConnectedWritable)
+            SetRuntime(AarBridgeRuntimeState.ConnectedReadOnly, "The current aircraft has no detected fuel write method. Dry Hookup is available.");
     }
 
     private static void LogFuelState(AarBridgeFuelState state, bool logTanks, string? requestId = null)
@@ -264,7 +395,7 @@ public sealed class MsfsAarFuelAdapter(IAarBridgeTransport transport, TimeProvid
                 DataSourceDebugLog.Warn(LogSource, "Writable fuel capability lost | " + message);
             else DataSourceDebugLog.Debug(LogSource, message);
             if (state is AarBridgeRuntimeState.NotInstalled or AarBridgeRuntimeState.InstalledNotRunning or AarBridgeRuntimeState.Error)
-                DataSourceDebugLog.Important(LogSource, "===== MSFS AAR runtime session ended =====");
+                DataSourceDebugLog.Warn(LogSource, "===== MSFS AAR runtime session ended =====");
         }
         if (changed) RuntimeStateChanged?.Invoke(this, state);
     }

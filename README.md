@@ -19,6 +19,7 @@ Virtual Tactical Situation Display (VTSD) is a Windows app that shows a simple t
 - kneepad for mission text, images, URL pages, and Cloud pages
 - tablet web display on the local network
 - global keyboard and gamepad hotkeys
+- a scrollable in-app guide opened with `?`
 
 ## Requirements
 
@@ -44,6 +45,8 @@ Open `SET` > `VTSD Cloud` to sign in with VATSIM.
 Cloud can sync authorized collections, redeem share codes, cache content for offline use, and show synced kneepad pages or map features in VTSD.
 
 ## Main Controls
+
+Press `?` in the display for the in-app guide to setup, scope controls, traffic labels, TacticalLink and AAR, kneepad, tablet display, and settings.
 
 - `RNG +` / `RNG -`: change range
 - `N/HDG`: switch north-up / heading-up

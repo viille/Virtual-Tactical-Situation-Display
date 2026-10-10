@@ -1,7 +1,9 @@
 using System.Diagnostics;
+using VirtualTacticalSituationDisplay;
 
 const string watchdogEnvironmentVariable = "TACTICALDISPLAY_WATCHDOG_ACTIVE";
 const string applicationDirectoryName = "VirtualTacticalSituationDisplay";
+WindowsAppIdentity.SetForCurrentProcess();
 
 try
 {

@@ -16,13 +16,13 @@ The script builds `vtsd_aar_bridge.wasm`, prepares a versioned package with a ge
 
 ## Build and SDK verification status
 
-The package was built with the locally installed Microsoft Flight Simulator 2024 SDK at `F:\MSFS2024SDK` using its bundled WASM toolchain. The C++ source compiled and linked successfully, including `MSFS_WasmVersions.a`. This proves source/toolchain compatibility only: the simulator has not loaded the module, and no runtime `fsVarsAVarGet` / `fsVarsAVarSet` result, fuel setter result, aircraft fuel-system behavior, or simulator read-back has been observed. The bridge targets `NEW FUEL SYSTEM`, `FUELSYSTEM TANK QUANTITY`, `FUELSYSTEM TANK USABLE CAPACITY`, and `FUEL WEIGHT PER GALLON`. Do not infer runtime support from compilation or desktop fake-bridge tests.
+The package is built with the locally installed Microsoft Flight Simulator 2024 SDK at `F:\MSFS2024SDK` using its bundled WASM toolchain and `MSFS_WasmVersions.a`. The fallback `clang-cl` build disables stack-protector instrumentation and exports the indirect function table plus `malloc` and `free`, which MSFS's WASM-to-DLL loader looks up. It also forces and exports `GetSimConnectVersion`; otherwise the archive member is discarded by the standalone linker and MSFS falls back to the last MSFS 2020 SimConnect version. The current package statically exports `__indirect_function_table`, `malloc`, `free`, and `GetSimConnectVersion`. Install it and reload the module to confirm MSFS no longer reports the MSFS 2020 fallback. No runtime fuel setter result, aircraft fuel-system behavior, or simulator read-back has been accepted. The bridge detects `NEW FUEL SYSTEM` and selects either indexed `FUELSYSTEM TANK QUANTITY` / `FUELSYSTEM TANK USABLE CAPACITY` values or named legacy `FUEL TANK ... QUANTITY` / `FUEL TANK ... CAPACITY` values. Legacy discovery must match `FUEL TOTAL QUANTITY` and `FUEL TOTAL CAPACITY` before it is accepted. Do not infer runtime support from compilation or desktop fake-bridge tests.
 
 ## Runtime safeguards
 
 - The bridge uses the MSFS 2024 CommBus for `VTSD_AAR_REQUEST` and `VTSD_AAR_RESPONSE`.
-- Only the modern `[FUEL_SYSTEM]` path is considered. Legacy fuel systems remain read-only/unavailable.
-- Tank quantity and usable capacity are read per index. The bridge refuses writable capability if tank discovery is incomplete, any tank cannot pass a same-value setter/read-back probe, or there are more tanks than the bounded scan can verify.
+- The bridge supports both modern `[FUEL_SYSTEM]` and legacy `[FUEL]` aircraft. It selects the path from `NEW FUEL SYSTEM`.
+- Modern tank quantity and usable capacity are read per index. Legacy named tank quantities/capacities are enumerated and checked against aggregate fuel SimVars. The bridge refuses writable capability if discovery is incomplete, aggregates disagree, or any discovered tank cannot pass a same-value setter/read-back probe.
 - Fuel deltas are distributed proportionally to tank headroom for additions and current quantity for removals. Every tank write is read back; a final aggregate read-back determines the actual applied mass. Partial or failed writes must stop the current transfer.
 - Duplicate fuel-mutation request IDs return the cached original result. Conflicting payload reuse is rejected. The in-memory cache is limited to 256 entries with a 24-hour TTL; a simulator/module restart clears it, and active operations are not recoverable across that restart.
 - The bridge does not use aircraft add-on names as an allow-list. If simulator metadata or writes cannot be verified, `fuel.write` is withheld.
@@ -31,11 +31,15 @@ The package was built with the locally installed Microsoft Flight Simulator 2024
 
 These checks require MSFS 2024, the SDK-built package, and a real aircraft. They have not been run in this development environment.
 
-Before every runtime test, enable **data-source debug logging** in VTSD. The diagnostics are written to:
+Data-source debug logging is optional and should only be enabled for a focused diagnostic run. The WASM Debug window and VTSD's bridge status provide the basic runtime signal without enabling the high-volume data-feed diagnostics. When enabled, the log is written to:
 
 ```text
 %APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log
 ```
+
+When built with the MSFS 2024 SDK installed, VTSD bundles that SDK's native SimConnect client so end users do not need the SDK. Runtime prefers any configured or discovered client exposing both required CommBus functions over older clients. The log records the selected DLL and whether `SimConnect_CallCommBusEvent` and `SimConnect_SubscribeToCommBusEvent` were found. If CommBus is unavailable, check the `Loaded SimConnect API` line first; a DLL without both exports cannot support AAR bridge communication.
+
+An MSFS SimConnect internal exception while an AAR CommBus request is pending now fails that bridge request without closing the telemetry session. Inspect the MSFS DevMode **Debug > WASM Debug** window for the `vtsd-aar-bridge` module status and error details if it is not running.
 
 For the first smoke test, inspect the `[MSFS-AAR]` entries and confirm that SimConnect opens, the CommBus response subscription succeeds, `HELLO` returns a matching protocol, `GET_CAPABILITIES` and `GET_FUEL_STATE` succeed, discovered tanks and capacity look plausible, and the same-value write probe either succeeds or records a concrete read-only reason. Then perform a controlled `+10 kg` mutation (or another small amount appropriate to the aircraft), confirm the returned `AppliedKg`, and compare the read-back with the simulator fuel state. Keep the log if any step fails, along with the aircraft used, MSFS build/version, VTSD version and build SHA, and bridge version. Do not rely on screenshots when the log contains the failure details.
 
@@ -48,6 +52,7 @@ For the first smoke test, inspect the `[MSFS-AAR]` entries and confirm that SimC
 | CommBus `HELLO` and protocol match | Bridge version and protocol 1 are reported | Pending |
 | Protocol mismatch | Runtime reports mismatch; no write capability | Pending |
 | Read fuel state | Per-tank quantity/capacity and total kg are fresh and finite | Pending |
+| Legacy `[FUEL]` aircraft | Named tank discovery matches aggregate capacity and quantity; unsupported writes stay read-only | Pending |
 | Receiver `+100 kg` | Tank quantities increase within usable capacities; read-back reports actual kg | Pending |
 | Tanker `-100 kg` | Tank quantities decrease without going negative; read-back reports actual kg | Pending |
 | Capacity/empty boundary | Applied mass is partial or zero and never exceeds available headroom/fuel | Pending |

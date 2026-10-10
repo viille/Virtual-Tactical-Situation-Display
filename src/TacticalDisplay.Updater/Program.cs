@@ -1,11 +1,13 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Windows.Forms;
+using VirtualTacticalSituationDisplay;
 
 const int maxAttempts = 60;
 const int delayMs = 500;
 const int gracefulExitMs = 15_000;
 const int forcedExitMs = 5_000;
+WindowsAppIdentity.SetForCurrentProcess();
 Application.EnableVisualStyles();
 Application.SetCompatibleTextRenderingDefault(false);
 using var statusWindow = new UpdateStatusWindow();

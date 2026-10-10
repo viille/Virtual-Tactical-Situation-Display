@@ -1,15 +1,58 @@
 # Changelog
 
+## 0.16.2 - 2026-10-11
+- Route recognized five-tank Headwind A339X/FBW aircraft through their native refuel controller only; prevent a transient direct SimVar write from being reported as a successful transfer.
+- Keep the native refuel controller active while verifying settled simulator fuel read-back, up to 15 seconds, and make the local AAR tester use and verify the same method.
+- Initialize the numeric unit required by the A339X/FBW LVar refuel controller.
+- Smoke-test fuel addition and removal on the Headwind A339X locally.
+- Upgrade the embedded MSFS AAR Bridge to 1.1.9.
+- Detect active MSFS fuel write methods and try them in order, accepting a method only after delayed stable read-back confirms the requested direction; continue from a fresh fuel snapshot if a method is rejected or reverted.
+- Add Headwind A339X/A32NX native refuel control through its tank target LVars and user-refuel flag, temporarily selecting instant mode for in-flight AAR and restoring the prior rate after verification.
+- Expose detected write strategies in AAR bridge capability diagnostics.
+
 ## 0.16.1 - 2026-10-10
 
 - Fix duplicate ownship targets in MSFS by filtering traffic mirrors using horizontal distance.
 
 ## Unreleased (v0.16.0 draft)
 
+## 0.16.0-alpha.4 - 2026-10-10
+
+- Expand the in-app ? help from a control list into a scrollable guide to setup, traffic, map, TacticalLink/AAR, kneepad, web display and settings.
+- Keep previously confirmed callsign labels visible through temporary matcher gaps for 30 seconds; revoke them if supporting evidence does not return.
+- Keep range rings at exactly 25%, 50%, 75% and 100% of the selected range and show distinct whole-number NM labels.
+- Skip throttled debug message construction entirely when diagnostic logging is disabled.
+- Restore WebView2 map message handlers after control reload and recover the map after a WebView2 process failure.
+- Detect an unresponsive Mapbox WebView2 renderer with an idle-safe heartbeat and reload it when necessary.
+- Index historical traffic samples once per matcher pass and retry failed AAR bridge handshakes at a bounded interval.
+- Align the outer selected-range ring and plotted tactical contacts with the compass rose perimeter.
+- Keep debug logging lightweight by removing repeated full VATSIM candidate ranking and historical rematching from the live snapshot path.
+- Recover the Mapbox WebView2 layer when WebGL context is lost, render frames stop, or map state acknowledgements stop.
+- Keep the TacticalLink tanker join control visible and explain when connection or aircraft registry capability prevents joining.
+- Export the WASM indirect function table required for MSFS to convert the AAR bridge module to a DLL.
+- Export the WASM `malloc` and `free` functions required by MSFS's module loader.
+- Retain and export the MSFS 2024 SimConnect version marker from the SDK archive.
+- Log AAR CommBus subscription failures and bridge response timeouts even when high-volume debug logging is disabled.
+- Print focused WASM CommBus listener and HELLO diagnostics to the MSFS developer console.
+- Log each AAR fuel mutation request with its verified read-back or specific rejection reason in the MSFS developer console.
+- Restore fuel capability and probe diagnostics in GET_CAPABILITIES responses so writable aircraft are recognized by the desktop adapter.
+- Write the recognized five-tank A330 fuel layout through its aircraft fuel quantity aliases instead of directly setting the read-only modern tank SimVars.
+- Dispatch MSFS 2024 CommBus responses using the receive ID defined by its SimConnect SDK.
+- Report precise MSFS fuel AVar discovery/read failures in the bridge response, app status, and developer console.
+- Support both modern and legacy MSFS fuel systems with aggregate-checked legacy tank discovery and per-tank write/readback probes.
+- Give VTSD, its watchdog, and updater one Windows app identity and VTSD executable metadata for clearer process identification and taskbar grouping.
+- Fall back to a verified in-place bridge update if Windows denies renaming the existing package directory.
+- Keep verified AAR fuel write capability when a healthy tank snapshot carries a stale read-only diagnostic.
+- Force high-volume data-source debug logging off at application startup; it can still be enabled manually for a diagnostic session.
+- Match VATSIM callsigns for simulator traffic up to 100 NM when altitude, motion, and global assignment identify a unique pilot; position-only fallback remains short-range.
+- Prefer an MSFS/SDK-specific SimConnect DLL before the bundled client and log whether the loaded DLL exposes the MSFS 2024 CommBus functions needed by the AAR bridge.
+- Bundle the MSFS 2024 SDK SimConnect client automatically when the SDK is available at build time, so end users do not need the SDK installed.
+- Keep a live SimConnect feed open when an AAR CommBus call produces MSFS's internal exception; fail the bridge request without recycling telemetry and identify the pending bridge action in the error.
 - Added tanker-controlled AAR queue management, planned onload changes, astern clearance, HOLD, explicit transfer start/stop, and DryHookup mode to TacticalLink.Server.
 - Added receiver-side internal transfer proposal data and cumulative application acknowledgements with operation revision validation.
 - Added local KG/LB presentation and specific-amount or FULL receiver requests.
 - Added the MSFS 2024 VTSD AAR Bridge, versioned CommBus protocol, desktop adapter, and read-after-write fuel acknowledgement path. The WASM module builds with the installed MSFS 2024 SDK; in-simulator validation is still pending.
+- Removed the fallback WASM build's `env.__stack_chk_fail` import, which was present in the module MSFS reported as Failed.
 - Routed AAR protocol state through typed `AarClient`/`AarState` modules, kept operational presentation in `AarViewModel`, and moved proposal application into `AarFuelTransferCoordinator`.
 - Added the X-Plane 12 built-in Local Web API fuel adapter and a separate 10 Hz ownship pose sampler that does not accelerate normal traffic polling; API unit/capacity assumptions and runtime read/write behavior still require simulator validation. XP12 API negotiation fails closed for unknown versions. The MSFS SDK is not used for XP12.
 - Restored the receiver's pending request after reconnect, made queue source and request intent visible, and added tanker-authoritative TOP/UP/DOWN/BOTTOM ordering.

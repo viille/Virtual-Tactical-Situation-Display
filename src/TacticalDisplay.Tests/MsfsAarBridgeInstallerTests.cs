@@ -141,7 +141,7 @@ public sealed class MsfsAarBridgeInstallerTests
         var installed = await new MsfsAarBridgeInstaller().InstallBundledAsync(
             typeof(MsfsAarBridgeInstaller).Assembly, community, CancellationToken.None);
 
-        Assert.Equal("1.0.0", installed.Version);
+        Assert.Equal("1.1.9", installed.Version);
         Assert.True(File.Exists(Path.Combine(installed.PackageDirectory, "modules", "vtsd_aar_bridge.wasm")));
     }
 

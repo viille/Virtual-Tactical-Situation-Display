@@ -58,6 +58,11 @@ public static class DataSourceDebugLog
 
     public static void ThrottledDebug(string source, string key, TimeSpan interval, Func<string> messageFactory)
     {
+        if (!_isEnabled)
+        {
+            return;
+        }
+
         var now = DateTimeOffset.UtcNow;
         PruneThrottleKeysIfNeeded(now);
         if (LastWriteByKey.TryGetValue(key, out var lastWrite) && now - lastWrite < interval)

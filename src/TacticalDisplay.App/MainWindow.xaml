@@ -358,39 +358,33 @@
                                                Margin="0,0,0,8" />
                                     <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
                                         <StackPanel>
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="RNG + / RNG - : Change visible range" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="N/HDG : Switch north-up / heading-up" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Scope : 1/4 range rings, circular compass, HDG at top" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="MAP : Show or hide map layer" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="DCLR : Reduce display clutter" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TRAIL : Show or hide target trails" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="BE : Set bullseye coordinates or clear active bullseye" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="INT : Select or clear intercept target" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="LARA : Show or hide active V-LARA airspace boundaries" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="AREA : Switch base map / TMA-CTR-CTA map" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="PIN : Toggle always-on-top" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="SET : Show or hide settings panel" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="WEB : Turn tablet web server on or off" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="KNEE / Ctrl+K : Show or hide kneepad" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Ctrl+PageUp / Ctrl+PageDown : Previous or next kneepad page" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="TGT + / TGT - : Increase or decrease target symbol size" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Top arrows : Increase or decrease map opacity" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Bottom arrows : Increase or decrease label background opacity" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="? : Show this help" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="- : Minimize" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="FULL / Esc : Toggle fullscreen on the current monitor" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="X : Close" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="LBL : Cycle label detail level" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Label example:" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="A3 20.9 +35" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="HOT 170 479" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="( Name / Distance / Altitude difference ft )" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="( Aspect / Heading / Closure kt )" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="INT mode:" Margin="0,0,0,4" />
-                                            <TextBlock FontFamily="Consolas" FontSize="12" Foreground="#D9F2EC" Text="Click INT, then left click a target to select or clear intercept guidance." Margin="0,0,0,4" />
+                                            <TextBlock Text="GET STARTED" FontWeight="Bold" Foreground="#9AFAD7" Margin="0,4,0,4" />
+                                            <TextBlock Text="Choose SET, select a source under Data Source, then press Apply Source. Use Demo to explore without a simulator. The footer shows source and connection status." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8" />
+                                            <TextBlock Text="MSFS uses bundled SimConnect. X-Plane 12 uses its local Web API (default http://localhost:8086/). Xplane Legacy requires XPUIPC in the simulator's Resources/plugins folder." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8" />
+
+                                            <TextBlock Text="SCOPE AND MAP" FontWeight="Bold" Foreground="#9AFAD7" Margin="0,4,0,4" />
+                                            <TextBlock Text="RNG + / RNG - change range. The four rings mark 25%, 50%, 75% and 100% of that range. N/HDG switches north-up and heading-up. MAP toggles the map." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                                            <TextBlock Text="Top arrows change map opacity; bottom arrows change overlay and label-background opacity. DCLR reduces clutter. TRAIL toggles target trails. TGT + / TGT - resize target symbols." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                                            <TextBlock Text="LARA shows active V-LARA boundaries. AREA switches the map to the controlled-airspace style. PIN keeps the window above other windows. FULL toggles fullscreen; Esc exits fullscreen." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8" />
+
+                                            <TextBlock Text="TRAFFIC AND LABELS" FontWeight="Bold" Foreground="#9AFAD7" Margin="0,4,0,4" />
+                                            <TextBlock Text="Click a target to cycle its affiliation. Right-click a target or label to rename it. Drag a label to move it. Middle-click a target or label to hide or show its label. LBL cycles label detail." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                                            <TextBlock Text="Labels show callsign/name, range and altitude difference; detailed labels can also show aspect, heading and closure. Enable Use VATSIM callsigns in SET to enrich simulator contacts with matching VATSIM callsigns. Set your own callsign there if you fly without a signed-in VATSIM identity." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                                            <TextBlock Text="INT arms intercept selection. Then click a target to show or clear intercept guidance. BE sets a bullseye by coordinates or clears the active bullseye." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8" />
+
+                                            <TextBlock Text="TACTICAL LINK AND AAR" FontWeight="Bold" Foreground="#9AFAD7" Margin="0,4,0,4" />
+                                            <TextBlock Text="Open TAC for TacticalLink. Sign in to VTSD Cloud, then choose CONNECT TO TACTICAL LINK to share simulator position with nearby connected VTSD users. Cloud sign-in alone does not share position; DISCONNECT stops sharing." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                                            <TextBlock Text="JOIN AS TANKER makes your aircraft available to receivers when its registry profile allows it. A receiver selects an available tanker, enters an amount or chooses FULL, then requests refuel. Tankers manage requests in the queue and control the operation from the AAR controls. Availability depends on the aircraft profile and connection." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                                            <TextBlock Text="Live fuel transfer in MSFS 2024 also requires the AAR Bridge installed in the Community2024 folder and an aircraft fuel system the bridge can read and write. Use INSTALL / UPDATE, then restart MSFS to load an updated WASM module. Dry Hookup remains available without live fuel support." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8" />
+
+                                            <TextBlock Text="KNEEPAD, WEB AND CLOUD" FontWeight="Bold" Foreground="#9AFAD7" Margin="0,4,0,4" />
+                                            <TextBlock Text="KNEE / Ctrl+K opens the kneepad. Add pages with New; pages can contain mission text, an image, a URL or synced Cloud content. Use the arrows or Ctrl+PageUp / Ctrl+PageDown to change pages." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                                            <TextBlock Text="WEB starts or stops the tablet display. When enabled, open the Web address in the footer on a device on the same local network. Sign in through VTSD Cloud to sync authorized collections, share codes, kneepad pages and map features." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8" />
+
+                                            <TextBlock Text="SETTINGS AND HELP" FontWeight="Bold" Foreground="#9AFAD7" Margin="0,4,0,4" />
+                                            <TextBlock Text="SET contains display, data-source, V-LARA, TacticalLink, AAR Bridge, Cloud, privacy, hotkey and debug settings. Configure keyboard and XInput bindings under Hotkeys. Debug starts disabled; enable it only when diagnosing an issue, then use Open Debug Log Folder to find the log." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,4" />
+                                            <TextBlock Text="Ctrl+H opens settings. Ctrl+D toggles declutter. Ctrl+T pins the window. Ctrl+K opens the kneepad. ? opens this guide. Click anywhere here to close it." TextWrapping="Wrap" Foreground="#D9F2EC" Margin="0,0,0,8" />
+                                            <TextBlock Text="VTSD is for simulator use only. It is not for real-world aviation, air traffic control or operational decision-making." TextWrapping="Wrap" Foreground="#9AFAD7" FontWeight="SemiBold" Margin="0,4,0,4" />
                                         </StackPanel>
                                     </ScrollViewer>
                                     <TextBlock Grid.Row="2"
@@ -969,22 +963,22 @@
                                 </Style>
                             </Button.Style>
                         </Button>
-                        <Button Content="JOIN AS TANKER" Command="{Binding Path=Aar.ToggleTankerAvailabilityCommand}" Margin="0,0,0,12">
+                        <Button Content="JOIN AS TANKER" Command="{Binding Path=Aar.ToggleTankerAvailabilityCommand}"
+                                IsEnabled="{Binding Path=Aar.CanToggleTankerMode}"
+                                ToolTip="{Binding Path=Aar.TankerJoinStatusText}" Margin="0,0,0,2">
                             <Button.Style>
                                 <Style TargetType="Button">
-                                    <Setter Property="Visibility" Value="Collapsed" />
                                     <Setter Property="Content" Value="{Binding Path=Aar.TankerButtonText}" />
                                     <Setter Property="Margin" Value="0,4" />
                                     <Setter Property="Padding" Value="6,4" />
                                     <Setter Property="Foreground" Value="#D9F2EC" />
                                     <Setter Property="Background" Value="#283843" />
                                     <Setter Property="BorderBrush" Value="#617480" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Path=Aar.CanOfferTanker}" Value="True"><Setter Property="Visibility" Value="Visible" /></DataTrigger>
-                                    </Style.Triggers>
                                 </Style>
                             </Button.Style>
                         </Button>
+                        <TextBlock Text="{Binding Path=Aar.TankerJoinStatusText}" TextWrapping="Wrap"
+                                   Foreground="#D9F2EC" FontSize="11" Margin="0,0,0,10" />
                         <TextBlock Text="AAR STATUS" Foreground="#83F2D0" Margin="0,0,0,4" FontWeight="Bold">
                             <TextBlock.Style>
                                 <Style TargetType="TextBlock">
@@ -1420,7 +1414,7 @@
                             <Button Content="Send Debug Report"
                                     Margin="0,8,0,0"
                                     Click="OnSendDebugReportClicked" />
-                            <TextBlock Text="Writes flight, data source, VATSIM callsign, airspace, web display, and app diagnostics to %APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log"
+                            <TextBlock Text="Starts disabled on every launch. When enabled, writes flight, data source, VATSIM callsign, airspace, web display, and app diagnostics to %APPDATA%\VirtualTacticalSituationDisplay\logs\debug.log"
                                        Foreground="#7CB9A9"
                                        TextWrapping="Wrap"
                                        Margin="0,4,0,0" />

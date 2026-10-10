@@ -9,26 +9,23 @@ public static class VatsimCallsignMatcher
     private const double MaxMatchAltitudeFt = 800;
     private const double MaxMatchHeadingDeltaDeg = 45;
     private const double MaxMatchSpeedDeltaKt = 100;
-    // MSFS multiplayer traffic can be several miles away from the VATSIM
-    // feed position even when its motion is an excellent match. This is a
-    // deliberately conservative second-pass gate, never used by the
-    // position-only matcher.
-    private const double FallbackMaxDistanceNm = 6.0;
+    // MSFS multiplayer traffic can be substantially offset from the VATSIM
+    // feed position. Permit long-range matches only when altitude and motion
+    // agree and the global assignment remains unambiguous.
+    private const double FallbackMaxDistanceNm = 100.0;
     private const double FallbackMaxAltitudeDeltaFt = 800;
     private const double FallbackMaxHeadingDeltaDeg = 25;
     private const double FallbackMaxSpeedDeltaKt = 80;
-    // A short-range contact is much safer to identify than a distant one.
-    // MSFS sometimes omits one or both motion values for multiplayer objects;
-    // allow that only in this tight envelope and still require uniqueness and
-    // repeated confirmation in the app layer.
+    // If MSFS omits motion data, only allow position-only matches nearby.
     private const double NearFallbackMaxDistanceNm = 2.0;
     private const double NearFallbackMaxAltitudeDeltaFt = 500;
-    private const double MinFallbackScoreMargin = 1.5;
+    private const double MinFallbackScoreMargin = 0.5;
     private const double MinAirborneSpeedForMotionCheckKt = 40;
     private const double MinBestScoreMargin = 0.75;
     private const double MinGlobalAssignmentMargin = 0.25;
     private const double DirectMatchUnmatchedPenalty = 1.5;
     private const double FallbackMatchUnmatchedPenalty = 7.5;
+    private const double DistantFallbackUnmatchedPenalty = 110.0;
     // Keep the historical match bounded so stale positions cannot be assigned
     // to a current VATSIM pilot. Interpolation handles the normal update gap.
     private static readonly TimeSpan MaxHistoricalMatchAge = TimeSpan.FromSeconds(20);
@@ -100,12 +97,11 @@ public static class VatsimCallsignMatcher
                 string.IsNullOrWhiteSpace(contact.Callsign) &&
                 !assignedCallsigns.ContainsKey(contact.Id))
             .ToList();
-        var timestampedPilotIndexes = FindTimestampedPilotIndexes(pilots);
         var assignedPilotIndexes = assignedCallsigns.Values
             .Select(callsign => FindPilotIndexByCallsign(pilots, callsign))
             .Where(static index => index >= 0)
             .ToHashSet();
-        foreach (var pair in AssignCurrentMatches(unresolvedContacts, pilots, timestampedPilotIndexes, assignedPilotIndexes))
+        foreach (var pair in AssignCurrentMatches(unresolvedContacts, pilots, null, assignedPilotIndexes))
         {
             assignedCallsigns[pair.Key] = pair.Value;
         }
@@ -152,6 +148,12 @@ public static class VatsimCallsignMatcher
                     continue;
                 }
 
+                if (pilots[pilotIndex].LastUpdated is DateTimeOffset lastUpdated &&
+                    (contact.Timestamp - lastUpdated).Duration() > MaxHistoricalMatchAge)
+                {
+                    continue;
+                }
+
                 if (IsCandidate(contact, pilots[pilotIndex], out var score))
                 {
                     candidates.Add(new MatchCandidate(contactIndex, pilotIndex, score));
@@ -167,6 +169,7 @@ public static class VatsimCallsignMatcher
         IReadOnlyList<TrafficSnapshot> history,
         IReadOnlyList<VatsimPilotCandidate> pilots)
     {
+        var historicalContacts = BuildHistoricalContactIndex(history);
         var candidates = new List<MatchCandidate>();
         for (var contactIndex = 0; contactIndex < contacts.Count; contactIndex++)
         {
@@ -184,7 +187,7 @@ public static class VatsimCallsignMatcher
                     continue;
                 }
 
-                var historicalContact = FindHistoricalContact(contact, history, lastUpdated);
+                var historicalContact = FindHistoricalContact(contact, historicalContacts, lastUpdated);
                 if (historicalContact is not null && IsCandidate(historicalContact, pilot, out var score))
                 {
                     candidates.Add(new MatchCandidate(contactIndex, pilotIndex, score));
@@ -214,7 +217,7 @@ public static class VatsimCallsignMatcher
                     continue;
                 }
 
-                var historicalContact = FindHistoricalContact(contacts[contactIndex], history, lastUpdated);
+                var historicalContact = FindHistoricalContact(contacts[contactIndex], historicalContacts, lastUpdated);
                 if (historicalContact is not null &&
                     IsFallbackCandidate(historicalContact, pilots[pilotIndex], out var score))
                 {
@@ -223,7 +226,43 @@ public static class VatsimCallsignMatcher
             }
         }
 
-        foreach (var pair in BuildAssignedCallsigns(contacts, pilots, fallbackCandidates, MinFallbackScoreMargin, FallbackMatchUnmatchedPenalty))
+        foreach (var pair in BuildAssignedCallsigns(contacts, pilots, fallbackCandidates, MinFallbackScoreMargin, DistantFallbackUnmatchedPenalty))
+        {
+            assignments[pair.Key] = pair.Value;
+        }
+
+        // Current simulator position can also be well offset from the VATSIM
+        // position. Use live kinematics for distant matches when timestamped
+        // historical alignment is unavailable, with the same global ambiguity check.
+        var currentFallbackCandidates = new List<MatchCandidate>();
+        var currentAssignedPilotIndexes = assignments.Values
+            .Select(callsign => FindPilotIndexByCallsign(pilots, callsign))
+            .Where(static index => index >= 0)
+            .ToHashSet();
+        var currentContacts = contacts
+            .Where(contact => string.IsNullOrWhiteSpace(contact.Callsign) && !assignments.ContainsKey(contact.Id))
+            .ToArray();
+        for (var contactIndex = 0; contactIndex < currentContacts.Length; contactIndex++)
+        {
+            for (var pilotIndex = 0; pilotIndex < pilots.Count; pilotIndex++)
+            {
+                if (pilots[pilotIndex].LastUpdated is not null)
+                {
+                    continue;
+                }
+
+                if (currentAssignedPilotIndexes.Contains(pilotIndex) ||
+                    !IsFallbackCandidate(currentContacts[contactIndex], pilots[pilotIndex], out var score))
+                {
+                    continue;
+                }
+
+                currentFallbackCandidates.Add(new MatchCandidate(contactIndex, pilotIndex, score));
+            }
+        }
+
+        foreach (var pair in BuildAssignedCallsigns(currentContacts, pilots, currentFallbackCandidates,
+                     MinFallbackScoreMargin, DistantFallbackUnmatchedPenalty))
         {
             assignments[pair.Key] = pair.Value;
         }
@@ -348,6 +387,7 @@ public static class VatsimCallsignMatcher
         IReadOnlyList<TrafficSnapshot> history,
         IReadOnlyList<VatsimPilotCandidate> pilots)
     {
+        var historicalContacts = BuildHistoricalContactIndex(history);
         VatsimMatchDiagnostics? best = null;
         for (var i = 0; i < pilots.Count; i++)
         {
@@ -357,7 +397,7 @@ public static class VatsimCallsignMatcher
                 continue;
             }
 
-            var historicalContact = FindHistoricalContact(currentContact, history, lastUpdated);
+            var historicalContact = FindHistoricalContact(currentContact, historicalContacts, lastUpdated);
             if (historicalContact is null)
             {
                 continue;
@@ -635,50 +675,63 @@ public static class VatsimCallsignMatcher
         return timestampedPilotIndexes;
     }
 
-    private static TrafficContactState? FindHistoricalContact(
-        TrafficContactState currentContact,
-        IReadOnlyList<TrafficSnapshot> history,
-        DateTimeOffset targetTime)
+    private static Dictionary<string, TrafficContactState[]> BuildHistoricalContactIndex(
+        IReadOnlyList<TrafficSnapshot> history)
     {
-        var samples = new List<TrafficContactState>();
+        var samplesByContact = new Dictionary<string, List<TrafficContactState>>(StringComparer.OrdinalIgnoreCase);
         foreach (var snapshot in history)
         {
-            var contact = snapshot.Contacts.FirstOrDefault(item =>
-                string.Equals(item.Id, currentContact.Id, StringComparison.OrdinalIgnoreCase) &&
-                item.Generation == currentContact.Generation);
-            if (contact is not null)
+            foreach (var contact in snapshot.Contacts)
             {
+                var key = ContactIdentityKey(contact);
+                if (!samplesByContact.TryGetValue(key, out var samples))
+                {
+                    samples = [];
+                    samplesByContact.Add(key, samples);
+                }
+
                 samples.Add(contact);
             }
         }
 
-        if (samples.Count == 0)
+        return samplesByContact.ToDictionary(
+            static pair => pair.Key,
+            static pair => pair.Value.OrderBy(static sample => sample.Timestamp).ToArray(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static TrafficContactState? FindHistoricalContact(
+        TrafficContactState currentContact,
+        IReadOnlyDictionary<string, TrafficContactState[]> history,
+        DateTimeOffset targetTime)
+    {
+        if (!history.TryGetValue(ContactIdentityKey(currentContact), out var samples) || samples.Length == 0)
         {
             return null;
         }
 
-        var ordered = samples
-            .OrderBy(static sample => sample.Timestamp)
-            .ToList();
-        var exact = ordered.FirstOrDefault(sample => sample.Timestamp == targetTime);
-        if (exact is not null)
+        var low = 0;
+        var high = samples.Length;
+        while (low < high)
         {
-            return exact;
-        }
-
-        TrafficContactState? before = null;
-        TrafficContactState? after = null;
-        foreach (var sample in ordered)
-        {
-            if (sample.Timestamp < targetTime)
+            var middle = low + ((high - low) / 2);
+            if (samples[middle].Timestamp < targetTime)
             {
-                before = sample;
-                continue;
+                low = middle + 1;
             }
-
-            after = sample;
-            break;
+            else
+            {
+                high = middle;
+            }
         }
+
+        if (low < samples.Length && samples[low].Timestamp == targetTime)
+        {
+            return samples[low];
+        }
+
+        var before = low > 0 ? samples[low - 1] : null;
+        var after = low < samples.Length ? samples[low] : null;
 
         // Interpolating between the two surrounding observations is more
         // accurate than selecting a nearby sample for fast-moving traffic.
@@ -696,13 +749,13 @@ public static class VatsimCallsignMatcher
             }
         }
 
-        var nearest = ordered
-            .OrderBy(sample => (sample.Timestamp - targetTime).Duration())
-            .First();
-        return (nearest.Timestamp - targetTime).Duration() <= MaxHistoricalMatchAge
-            ? nearest
-            : null;
+        var nearest = before is null ? after
+            : after is null ? before
+            : (before.Timestamp - targetTime).Duration() <= (after.Timestamp - targetTime).Duration() ? before : after;
+        return nearest is not null && (nearest.Timestamp - targetTime).Duration() <= MaxHistoricalMatchAge ? nearest : null;
     }
+
+    private static string ContactIdentityKey(TrafficContactState contact) => $"{contact.Id}@{contact.Generation}";
 
     private static TrafficContactState Interpolate(
         TrafficContactState before,
@@ -821,6 +874,8 @@ public static class VatsimCallsignMatcher
             ? System.Math.Abs(contact.SpeedKt!.Value - pilot.GroundspeedKt)
             : 0;
         var hasReliableMotion = ShouldCheckMotion(contact, pilot);
+        var timestampAligned = pilot.LastUpdated is not DateTimeOffset lastUpdated ||
+            (contact.Timestamp - lastUpdated).Duration() <= MaxHistoricalMatchAge;
         var score = distanceNm + altitudeDeltaFt / 1000.0 +
             (hasReliableMotion ? headingDeltaDeg / 90.0 + speedDeltaKt / 180.0 : 0);
         var isNearPositionMatch = distanceNm <= NearFallbackMaxDistanceNm &&
@@ -828,9 +883,11 @@ public static class VatsimCallsignMatcher
             (!hasReliableMotion ||
                 ((!hasHeading || headingDeltaDeg <= MaxMatchHeadingDeltaDeg) &&
                  (!hasSpeed || speedDeltaKt <= MaxMatchSpeedDeltaKt)));
-        var isMatch = (hasReliableMotion &&
+        var altitudeWithinFallback = altitudeDeltaFt <= FallbackMaxAltitudeDeltaFt ||
+            (distanceNm > NearFallbackMaxDistanceNm && hasReliableMotion);
+        var isMatch = (timestampAligned && hasReliableMotion &&
             distanceNm <= FallbackMaxDistanceNm &&
-            altitudeDeltaFt <= FallbackMaxAltitudeDeltaFt &&
+            altitudeWithinFallback &&
             headingDeltaDeg <= FallbackMaxHeadingDeltaDeg &&
             speedDeltaKt <= FallbackMaxSpeedDeltaKt) ||
             (!hasReliableMotion && isNearPositionMatch);
