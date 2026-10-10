@@ -10,6 +10,12 @@
 - Add Headwind A339X/A32NX native refuel control through its tank target LVars and user-refuel flag, temporarily selecting instant mode for in-flight AAR and restoring the prior rate after verification.
 - Expose detected write strategies in AAR bridge capability diagnostics.
 
+## 0.16.1 - 2026-10-10
+
+- Fix duplicate ownship targets in MSFS by filtering traffic mirrors using horizontal distance.
+
+## Unreleased (v0.16.0 draft)
+
 ## 0.16.0-alpha.4 - 2026-10-10
 
 - Expand the in-app ? help from a control list into a scrollable guide to setup, traffic, map, TacticalLink/AAR, kneepad, web display and settings.
