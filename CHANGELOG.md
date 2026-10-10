@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.1 - 2026-10-10
+
+- Fix duplicate ownship targets in MSFS by filtering traffic mirrors using horizontal distance.
+
 ## 0.16.0-alpha.4 - 2026-10-10
 
 - Keep previously confirmed callsign labels visible through temporary matcher gaps for 30 seconds; revoke them if supporting evidence does not return.
