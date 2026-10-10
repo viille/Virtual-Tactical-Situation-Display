@@ -728,15 +728,18 @@ public sealed class SimConnectTrafficFeed : ITrafficDataFeed, IAarPoseSource, IA
 
     private static bool IsLikelyOwnshipMirror(OwnshipState ownship, TrafficContactState target)
     {
-        var dLat = System.Math.Abs(ownship.LatitudeDeg - target.LatitudeDeg);
-        var dLon = System.Math.Abs(ownship.LongitudeDeg - target.LongitudeDeg);
+        var rangeNm = GeoMath.DistanceNm(
+            ownship.LatitudeDeg,
+            ownship.LongitudeDeg,
+            target.LatitudeDeg,
+            target.LongitudeDeg);
         var dAlt = System.Math.Abs(ownship.AltitudeFt - target.AltitudeFt);
         var dSpd = System.Math.Abs((ownship.SpeedKt ?? 0) - (target.SpeedKt ?? 0));
         var dHdg = target.HeadingDeg.HasValue
             ? System.Math.Abs(NormalizeHeadingDelta(ownship.HeadingDeg, target.HeadingDeg.Value))
             : 180.0;
 
-        return dLat < 0.0002 && dLon < 0.0002 && dAlt < 300 && dSpd < 40 && dHdg < 12;
+        return rangeNm < 0.1 && dAlt < 300 && dSpd < 40 && dHdg < 12;
     }
 
     private static double NormalizeHeadingDelta(double a, double b)
